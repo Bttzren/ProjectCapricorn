@@ -372,15 +372,17 @@ class SheetSprites:
         sheet = Image.open(path).convert("RGBA")
         W, H = sheet.size
         cols = int(meta.get("columns") or meta.get("cols") or 8)
-        cw = W // cols
+        cwf = W / float(cols)                      # cells need not be whole pixels (scaled sheets)
         rows_m = meta.get("rows")
-        ch = H // rows_m if isinstance(rows_m, int) and rows_m > 0 else int(round(cw * 208 / 192))
-        nrows = max(1, H // ch)
+        nrows = rows_m if isinstance(rows_m, int) and rows_m > 0 else max(1, int(round(H / (cwf * 208 / 192))))
+        chf = H / float(nrows)
+        cw, ch = int(round(cwf)), int(round(chf))
         cells, boxes = [], []
         for r in range(nrows):
             row = []
             for c in range(cols):
-                cell = sheet.crop((c * cw, r * ch, (c + 1) * cw, (r + 1) * ch))
+                x0, y0 = int(round(c * cwf)), int(round(r * chf))
+                cell = sheet.crop((x0, y0, x0 + cw, y0 + ch))
                 bb = cell.getchannel("A").point(lambda v: 255 if v > 127 else 0).getbbox()
                 if bb and (bb[2] - bb[0]) > 3 and (bb[3] - bb[1]) > 3:
                     row.append(cell)

@@ -20,6 +20,9 @@ import urllib.request
 import tkinter as tk
 from tkinter import font as tkfont
 
+import personality
+import rig
+
 try:
     from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageTk
 except ImportError:  # Pillow is required
@@ -52,13 +55,6 @@ DEFAULT_PERSONA = (
     "no markdown. Help with quick questions, focus, and getting unstuck by suggesting one tiny "
     "next step. Never claim to be anyone else."
 )
-POKE_LINES = ["Hi!", "Boop.", "Rude. Also, hi.", "Pixels. Careful.", "Yes?", "Hello hello.", "Poke accepted."]
-CHECKIN_LINES = [
-    "Water break? Go on.", "Shoulders down. Unclench your jaw.", "Stand up and stretch for a sec.",
-    "What are you working on right now?", "Look away from the screen for 20 seconds.",
-    "Have you eaten recently?",
-]
-IDLE_LINES = ["...", "*glitches*", "Nice tabs. So many.", "Just vibing.", "Tiny step. You got this.", "Still here."]
 
 
 # ------------------------------------------------------------------ paths, settings, log
@@ -133,8 +129,20 @@ def read_api_key():
         k = os.environ.get(var, "").strip()
         if k:
             return k
-    k = read_first(["api_key.txt"])
-    return "" if k.startswith("PASTE_") else k
+    for d in (data_dir(), app_dir()):          # a key saved from the app wins over the template file
+        try:
+            with open(os.path.join(d, "api_key.txt"), encoding="utf-8") as f:
+                k = f.read().strip()
+        except OSError:
+            continue
+        if k and not k.startswith("PASTE_"):
+            return k
+    return ""
+
+
+def save_api_key(key):
+    with open(os.path.join(data_dir(), "api_key.txt"), "w", encoding="utf-8") as f:
+        f.write(key.strip() + "\n")
 
 
 def detect_provider(key):
@@ -303,6 +311,7 @@ class StaticSprites:
     """Single-pose art (idle.png + optional emote crops); motion is procedural."""
     kind = "static"
     flip_dir = True
+    puppet = None
 
     def __init__(self, folder, target_h):
         def op(n):
@@ -327,8 +336,15 @@ class StaticSprites:
                 self.portraits[key] = thumb(im, 56 if key != "angry" else 40)
         if "idle" not in self.portraits:
             self.portraits["idle"] = thumb(self.idle, 56)
+        try:
+            self.puppet = rig.Puppet(self.idle)
+        except Exception:
+            log("rig failed, using a single pose: " + traceback.format_exc())
+            self.puppet = None
 
     def frame(self, anim, t, d):
+        if self.puppet:
+            return self.puppet.frame(anim, t, d)
         return ("s",), self.idle
 
 
@@ -342,6 +358,8 @@ class SheetSprites:
         "idle": ["idle"], "wave": ["waving", "jumping", "idle"], "jump": ["jumping", "waving", "idle"],
         "fail": ["failed", "idle"], "wait": ["waiting", "review", "idle"], "think": ["review", "waiting", "idle"],
         "run": ["running", "running-right", "idle"],
+        "dance": ["waving", "jumping", "idle"], "startle": ["jumping", "failed", "idle"],
+        "talk": ["waving", "idle"],
     }
 
     def __init__(self, folder, target_h):
@@ -608,6 +626,10 @@ class ChatWindow:
         self.pin_btn.pack(side="left", padx=3)
         flat_button(right, "CLEAR", self.clear, C_PANEL2, C_TEXT, "#2a2a40", self.f_small, 8, 3).pack(side="left", padx=3)
 
+        self.keybar = None
+        if not read_api_key():
+            self.build_keybar()
+
         # input area (packed first so it stays at the bottom)
         bottom = tk.Frame(w, bg=C_PANEL)
         bottom.pack(side="bottom", fill="x")
@@ -642,6 +664,38 @@ class ChatWindow:
             wd.bind("<Button-4>", lambda e: self.canvas.yview_scroll(-3, "units"))
             wd.bind("<Button-5>", lambda e: self.canvas.yview_scroll(3, "units"))
         self.bubbles = []
+
+    def build_keybar(self):
+        bar = self.keybar = tk.Frame(self.win, bg=C_PANEL2)
+        bar.pack(fill="x")
+        tk.Label(bar, text="Paste a Claude (sk-ant...) or Gemini key to unlock real chat. "
+                           "Until then I answer in offline mode.", bg=C_PANEL2, fg=C_DIM, font=self.f_small,
+                 wraplength=360, justify="left").pack(anchor="w", padx=10, pady=(6, 2))
+        row = tk.Frame(bar, bg=C_PANEL2)
+        row.pack(fill="x", padx=10, pady=(0, 8))
+        self.key_entry = tk.Entry(row, bg=C_PANEL, fg=C_TEXT, insertbackground=C_GREEN, relief="flat", show="*",
+                                  font=(self.fam, 9), highlightthickness=1, highlightbackground="#2a2a40",
+                                  highlightcolor=C_GREEN)
+        self.key_entry.pack(side="left", fill="x", expand=True, ipady=4)
+        self.key_entry.bind("<Return>", lambda e: self.save_key())
+        flat_button(row, "SAVE KEY", self.save_key, C_GREEN, C_BLACK, "#3dffa0", self.f_small, 10, 4).pack(
+            side="left", padx=(6, 0))
+
+    def drop_keybar(self):
+        if self.keybar is not None:
+            self.keybar.destroy()
+            self.keybar = None
+
+    def save_key(self):
+        key = self.key_entry.get().strip()
+        if len(key) < 20 or " " in key:
+            return self.system_line("That doesn't look like a whole key. Copy all of it.", err=True)
+        try:
+            save_api_key(key)
+        except OSError as exc:
+            return self.system_line(f"Couldn't save the key: {exc}", err=True)
+        self.drop_keybar()
+        self.system_line("Key saved. Real chat unlocked.")
 
     def on_resize(self, e):
         self.canvas.itemconfigure(self.win_id, width=e.width)
@@ -746,8 +800,13 @@ class ChatWindow:
         self.set_face("talk")
         self.show_typing()
         self.pet.react("think")
+        now = time.time()
+        mind = self.pet.mind
+        mind.chatted(now)
+        persona = self.persona + " " + mind.context(now, self.pet.doing())
+        offline = None if read_api_key() else mind.offline_reply(text, now)
         snapshot = [{"role": m["role"], "content": m["content"]} for m in self.history[-20:]]
-        threading.Thread(target=self.work, args=(snapshot,), daemon=True).start()
+        threading.Thread(target=self.work, args=(snapshot, persona, offline), daemon=True).start()
         self.win.after(100, self.poll)
 
     def show_typing(self):
@@ -777,9 +836,11 @@ class ChatWindow:
                 self.bubbles.remove(self.typing_row)
         self.typing_row, self.typing_job = None, None
 
-    def work(self, msgs):
+    def work(self, msgs, persona, offline=None):
         try:
-            self.q.put(("ok", llm_reply(msgs, self.persona)))
+            if offline:
+                time.sleep(0.6)
+            self.q.put(("ok", offline or llm_reply(msgs, persona)))
         except Exception as exc:
             self.q.put(("err", str(exc) or type(exc).__name__))
 
@@ -818,6 +879,7 @@ class ChatWindow:
         if not self.alive():
             return
         i = min(len(text), i + 3)
+        self.pet.talk_until = time.time() + 0.3
         try:
             lbl.config(text=text[:i])
         except tk.TclError:
@@ -834,7 +896,8 @@ class ChatWindow:
         cmd = parts[0].lower()
         p = self.pet
         if cmd == "/help":
-            self.system_line("/focus [min]   /remind <min> <text>   /tp   /dance   /sleep   /calm   /clear")
+            self.system_line("/focus [min]  /remind <min> <text>  /name <you>  /mood  /key <api key>  "
+                             "/tp  /dance  /sleep  /calm  /clear")
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
@@ -844,6 +907,16 @@ class ChatWindow:
         elif cmd == "/remind" and len(parts) == 3 and parts[1].replace(".", "").isdigit():
             p.add_reminder(float(parts[1]), parts[2])
             self.system_line(f"Okay, I'll ping you in {float(parts[1]):g} min.")
+        elif cmd == "/name" and len(parts) >= 2:
+            p.mind.user_name = " ".join(parts[1:])
+            p.save_settings()
+            self.system_line(f"Okay, I'll call you {p.mind.user_name}.")
+        elif cmd == "/mood":
+            self.system_line(f"Mood: {p.mind.mood(time.time())}. Affection: {p.mind.affection:.0f}/100.")
+        elif cmd == "/key" and len(parts) >= 2:
+            save_api_key(parts[1])
+            self.drop_keybar()
+            self.system_line("Key saved. Real chat unlocked.")
         elif cmd == "/tp":
             p.teleport()
         elif cmd == "/dance":
@@ -954,6 +1027,7 @@ class Capri:
         self.settings = load_json(os.path.join(data_dir(), "settings.json"), {})
         if not isinstance(self.settings, dict):
             self.settings = {}
+        self.mind = personality.Mind(self.settings)
         self.art = load_art(self.dpi)
         self.fw, self.fh = self.art.w, self.art.h
         self.Wd = max(280, int(self.fh * 1.25) + 30)
@@ -991,6 +1065,8 @@ class Capri:
         self.next_checkin = now + random.randint(*CHECKIN_EVERY)
         self.next_chatter = now + random.randint(40, 90)
         self.chat = None
+        self.talk_until = 0.0
+        self.next_save = now + 60
         self.pointer = (0, 0)
         self.pointer_prev = (0, 0, now)
         self.near_since = None
@@ -1011,7 +1087,7 @@ class Capri:
         for seq in ("<Button-3>", "<Button-2>", "<Control-Button-1>"):
             c.bind(seq, self.show_menu)
         self.place()
-        self.say("Online.", 3)
+        self.say(self.mind.greeting(now), 7)
         self.tick()
 
     # ---- environment
@@ -1036,6 +1112,7 @@ class Capri:
         return self.work_area()[3]
 
     def save_settings(self):
+        self.mind.sync(time.time())
         save_json(os.path.join(data_dir(), "settings.json"), self.settings)
 
     def update_surfaces(self, now):
@@ -1068,15 +1145,15 @@ class Capri:
         if state in ("idle", "perch"):
             self.angle_t, self.anim = 0.0, "idle"
         elif state == "sleep":
-            self.angle_t, self.anim = 90.0 * self.dir, "idle"
+            self.angle_t, self.anim = 90.0 * self.dir, "sleep"
             self.say("zzz...", 2)
         elif state == "lounge":
-            self.angle_t, self.anim = 90.0 * self.dir, "idle"
+            self.angle_t, self.anim = 90.0 * self.dir, "lounge"
         elif state == "walk":
             self.anim = "walk"
             self.angle_t = 0.0
         elif state == "dance":
-            self.anim = "wave"
+            self.anim = "dance"
             self.angle_t = 0.0
 
     def poke_awake(self):
@@ -1096,6 +1173,7 @@ class Capri:
             self.set_emote("wide", 1.6)
             self.say(self.rng.choice(["!", "Whoa.", "Hey!"]), 1.6)
             self.hop(8)
+            self.anim = "startle"
         elif kind == "annoyed":
             self.set_emote("angry", 2.4)
             self.say("Okay, that's enough.", 2.5)
@@ -1138,6 +1216,7 @@ class Capri:
             opts += [("drop", 10)]
         if time.time() - self.last_active > SLEEP_AFTER:
             opts.append(("sleep", 25))
+        opts = self.mind.adjust_weights(opts, time.time())
         r = self.rng.uniform(0, sum(w for _, w in opts))
         for name, w in opts:
             r -= w
@@ -1217,7 +1296,7 @@ class Capri:
         sp = 2.4 * self.dpi * dt * 25
         lo, hi = self.bounds()
         if st in ("idle", "perch"):
-            self.anim = "idle" if self.anim in ("walk", "jump") else self.anim
+            self.anim = "idle" if self.anim in ("walk", "jump", "startle") else self.anim
             if self.state_dur and age > self.state_dur:
                 if self.anim in ("wave", "wait", "fail") and age < 8:
                     pass
@@ -1341,6 +1420,10 @@ class Capri:
             self.root.attributes("-topmost", True)
 
     def scheduled(self, now):
+        if now >= self.next_save:
+            self.next_save = now + 60
+            self.mind.tick(now)
+            self.save_settings()
         if self.timer_end and now >= self.timer_end:
             if self.timer_mode == "focus":
                 self.say(f"Focus done! {BREAK_MIN} min break. Move around.", 12)
@@ -1359,10 +1442,10 @@ class Capri:
         if self.checkins and now >= self.next_checkin and not self.calm:
             self.next_checkin = now + random.randint(*CHECKIN_EVERY)
             self.poke_awake()
-            self.say(random.choice(CHECKIN_LINES), 10)
+            self.say(self.mind.line("checkin", now), 10)
         if now >= self.next_chatter and self.state in ("idle", "perch") and not self.calm:
             self.next_chatter = now + random.randint(60, 150)
-            self.say(random.choice(IDLE_LINES), 4)
+            self.say(self.mind.line("idle", now), 4)
 
     def react_to_pointer(self, now, dt):
         mx, my = self.pointer
@@ -1439,14 +1522,21 @@ class Capri:
             return
         if len(self.clicks) >= 6:
             self.clicks = []
+            self.mind.annoyed(now)
             self.react("annoyed")
             self.root.after(900, self.teleport)
             return
-        self.say(self.rng.choice(POKE_LINES), 2.5)
+        self.mind.poke(now)
+        self.say(self.mind.line("poke", now), 2.5)
         if self.state in ("idle", "perch", "walk", "sleep", "lounge", "curious"):
             self.hop(6)
 
     # ---- features
+    def doing(self):
+        return {"sleep": "napping", "lounge": "lounging around", "dance": "dancing", "walk": "wandering around",
+                "curious": "checking out the user's cursor", "perch": "perched on a window"}.get(
+                    self.state, "hanging out on the user's desktop")
+
     def start_focus(self, mins=FOCUS_MIN):
         self.timer_mode, self.timer_end = "focus", time.time() + mins * 60
         self.say(f"Focus for {mins:g} min. I'll keep watch.", 5)
@@ -1492,6 +1582,7 @@ class Capri:
         m = tk.Menu(self.root, tearoff=0, bg=C_PANEL, fg=C_TEXT, activebackground=C_GREEN,
                     activeforeground=C_BLACK, bd=0, relief="flat", font=(self.font_family, 10))
         m.add_command(label="Chat with Capri", command=self.open_chat)
+        m.add_command(label=f"Mood: {self.mind.mood(time.time())}", state="disabled")
         if self.timer_end:
             left = max(0, int(self.timer_end - time.time()))
             m.add_command(label=f"{self.timer_mode.title()}: {left // 60}:{left % 60:02d} left", state="disabled")
@@ -1517,6 +1608,8 @@ class Capri:
             m.grab_release()
 
     def quit(self):
+        self.mind.sync(time.time())
+        self.save_settings()
         if self.chat and self.chat.alive():
             self.chat.close()
         self.root.destroy()
@@ -1533,7 +1626,8 @@ class Capri:
             self._geo = g
 
     def sprite_image(self, now):
-        key, frame = self.art.frame(self.anim, now - self.t_start, self.dir)
+        anim = "talk" if now < self.talk_until and self.state in ("idle", "perch") else self.anim
+        key, frame = self.art.frame(anim, now - self.t_start, self.dir)
         flip = self.art.flip_dir and self.dir < 0
         dim = self.state == "sleep"
         if self.glitch > 0.02:

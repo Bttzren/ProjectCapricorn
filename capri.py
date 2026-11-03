@@ -1,0 +1,1644 @@
+#!/usr/bin/env python3
+"""Capri - a desktop companion.
+
+She roams your screen, glitch-teleports, lounges, perches on your windows,
+reacts to your cursor, runs focus timers, and chats (Claude or Gemini key).
+
+Run:  python capri.py          Preview a Codex/Petdex sheet:  python capri.py --pet-preview
+"""
+import json
+import math
+import os
+import queue
+import random
+import sys
+import threading
+import time
+import traceback
+import urllib.error
+import urllib.request
+import tkinter as tk
+from tkinter import font as tkfont
+
+try:
+    from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageTk
+except ImportError:  # Pillow is required
+    r = tk.Tk()
+    r.withdraw()
+    from tkinter import messagebox
+    messagebox.showerror("Capri", "Capri needs Pillow.\n\nRun:  pip install pillow")
+    sys.exit(1)
+
+NAME = "Capri"
+IS_WIN = sys.platform.startswith("win")
+IS_MAC = sys.platform == "darwin"
+TICK_MS = 40
+SPRITE_HEIGHT = 170            # on-screen sprite height at 100% display scaling
+SLEEP_AFTER = 300              # seconds without poking her before she naps
+FOCUS_MIN, BREAK_MIN = 25, 5
+CHECKIN_EVERY = (40 * 60, 70 * 60)
+MODEL = os.environ.get("CAPRI_MODEL", "claude-sonnet-5-5")
+GEMINI_MODELS = [m for m in (os.environ.get("CAPRI_GEMINI_MODEL"),) if m] or [
+    "gemini-flash-latest", "gemini-3.8-flash", "gemini-2.5-flash"]
+KEY = "#ff00ff"               # Windows transparency key
+
+C_BG, C_PANEL, C_PANEL2 = "#0b0b14", "#14141f", "#1d1d2d"
+C_GREEN, C_RED, C_BLUE = "#05f56f", "#fb0948", "#1969eb"
+C_TEXT, C_DIM, C_BLACK = "#eaeaf5", "#8a8aa3", "#0c0a16"
+
+DEFAULT_PERSONA = (
+    "You are Capri, a small glitchy pixel-art companion who lives on the user's desktop. "
+    "You're playful and a bit cheeky, warm underneath. Reply in 1-3 short sentences, plain text, "
+    "no markdown. Help with quick questions, focus, and getting unstuck by suggesting one tiny "
+    "next step. Never claim to be anyone else."
+)
+POKE_LINES = ["Hi!", "Boop.", "Rude. Also, hi.", "Pixels. Careful.", "Yes?", "Hello hello.", "Poke accepted."]
+CHECKIN_LINES = [
+    "Water break? Go on.", "Shoulders down. Unclench your jaw.", "Stand up and stretch for a sec.",
+    "What are you working on right now?", "Look away from the screen for 20 seconds.",
+    "Have you eaten recently?",
+]
+IDLE_LINES = ["...", "*glitches*", "Nice tabs. So many.", "Just vibing.", "Tiny step. You got this.", "Still here."]
+
+
+# ------------------------------------------------------------------ paths, settings, log
+def app_dir():
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def data_dir():
+    d = os.path.join(os.path.expanduser("~"), ".capri")
+    try:
+        os.makedirs(d, exist_ok=True)
+    except OSError:
+        pass
+    return d
+
+
+def log(msg):
+    try:
+        with open(os.path.join(data_dir(), "capri.log"), "a", encoding="utf-8") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S ") + msg + "\n")
+    except OSError:
+        pass
+
+
+def load_json(path, default):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return default
+
+
+def save_json(path, obj):
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(obj, f)
+    except OSError:
+        pass
+
+
+def read_first(names):
+    for d in (app_dir(), data_dir()):
+        for n in names:
+            try:
+                with open(os.path.join(d, n), encoding="utf-8") as f:
+                    t = f.read().strip()
+                if t:
+                    return t
+            except OSError:
+                pass
+    return ""
+
+
+def enable_dpi_awareness():
+    if not IS_WIN:
+        return
+    try:
+        import ctypes
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except Exception:
+            ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
+
+
+# ------------------------------------------------------------------ chat backends
+def read_api_key():
+    for var in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
+        k = os.environ.get(var, "").strip()
+        if k:
+            return k
+    k = read_first(["api_key.txt"])
+    return "" if k.startswith("PASTE_") else k
+
+
+def detect_provider(key):
+    forced = os.environ.get("CAPRI_PROVIDER", "").strip().lower()
+    if forced in ("claude", "anthropic"):
+        return "anthropic"
+    if forced == "gemini":
+        return "gemini"
+    return "anthropic" if key.startswith("sk-ant") else "gemini"
+
+
+def http_json(req, timeout=45):
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        try:
+            detail = json.loads(exc.read().decode("utf-8"))["error"]["message"]
+        except Exception:
+            detail = str(exc.reason)
+        raise RuntimeError(f"{exc.code}: {detail}")
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"Can't reach the server ({exc.reason}). Check your internet.")
+
+
+def clean_history(messages):
+    out = []
+    for m in messages:
+        role = "user" if m["role"] == "user" else "assistant"
+        if out and out[-1]["role"] == role:
+            out[-1]["content"] += "\n" + m["content"]
+        else:
+            out.append({"role": role, "content": m["content"]})
+    while out and out[0]["role"] != "user":
+        out.pop(0)
+    return out
+
+
+def claude_reply(key, messages, persona):
+    body = json.dumps({"model": MODEL, "max_tokens": 400, "system": persona,
+                       "messages": clean_history(messages)}).encode()
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages", data=body,
+        headers={"content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01"})
+    data = http_json(req)
+    text = "".join(p.get("text", "") for p in data.get("content", []) if p.get("type") == "text").strip()
+    return text or "(empty reply, try again)"
+
+
+def gemini_reply(key, messages, persona):
+    contents = [{"role": "user" if m["role"] == "user" else "model", "parts": [{"text": m["content"]}]}
+                for m in clean_history(messages)]
+    body = json.dumps({"systemInstruction": {"parts": [{"text": persona}]}, "contents": contents,
+                       "generationConfig": {"maxOutputTokens": 800}}).encode()
+    last = "no Gemini model worked"
+    for model in list(GEMINI_MODELS):
+        req = urllib.request.Request(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent", data=body,
+            headers={"Content-Type": "application/json", "x-goog-api-key": key})
+        try:
+            data = http_json(req)
+        except RuntimeError as exc:
+            last = str(exc)
+            if last[:3] in ("400:", "404:") and "key" not in last.lower():
+                continue
+            raise
+        parts = ((data.get("candidates") or [{}])[0].get("content") or {}).get("parts") or []
+        text = "".join(p.get("text", "") for p in parts).strip()
+        if model != GEMINI_MODELS[0]:
+            GEMINI_MODELS.remove(model)
+            GEMINI_MODELS.insert(0, model)
+        return text or "(Gemini sent an empty reply, try again)"
+    raise RuntimeError(last)
+
+
+def llm_reply(messages, persona):
+    key = read_api_key()
+    if not key:
+        raise RuntimeError("No API key yet. Put your key in api_key.txt next to me and restart.")
+    fn = gemini_reply if detect_provider(key) == "gemini" else claude_reply
+    return fn(key, messages, persona)
+
+
+# ------------------------------------------------------------------ Windows helpers
+class Win32:
+    def __init__(self):
+        self.ok = False
+        if not IS_WIN:
+            return
+        try:
+            import ctypes
+            from ctypes import wintypes
+            self.ct, self.wt = ctypes, wintypes
+            self.u = ctypes.windll.user32
+            try:
+                self.dwm = ctypes.windll.dwmapi
+            except Exception:
+                self.dwm = None
+            self.ok = True
+        except Exception:
+            log("win32 init failed: " + traceback.format_exc())
+
+    def work_area(self):
+        if not self.ok:
+            return None
+        try:
+            r = self.wt.RECT()
+            if self.u.SystemParametersInfoW(0x0030, 0, self.ct.byref(r), 0):
+                return (r.left, r.top, r.right, r.bottom)
+        except Exception:
+            pass
+        return None
+
+    def foreground(self):
+        """(l, t, r, b, hwnd) of the active normal window, or None."""
+        if not self.ok:
+            return None
+        try:
+            ct, wt, u = self.ct, self.wt, self.u
+            hwnd = u.GetForegroundWindow()
+            if not hwnd or u.IsIconic(hwnd) or not u.IsWindowVisible(hwnd) or u.IsZoomed(hwnd):
+                return None
+            pid = wt.DWORD()
+            u.GetWindowThreadProcessId(hwnd, ct.byref(pid))
+            if pid.value == os.getpid():
+                return None
+            cls = ct.create_unicode_buffer(64)
+            u.GetClassNameW(hwnd, cls, 64)
+            if cls.value in ("Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"):
+                return None
+            r = wt.RECT()
+            if not (self.dwm and self.dwm.DwmGetWindowAttribute(hwnd, 9, ct.byref(r), ct.sizeof(r)) == 0):
+                u.GetWindowRect(hwnd, ct.byref(r))
+            if r.right - r.left < 200 or r.bottom - r.top < 100:
+                return None
+            return (r.left, r.top, r.right, r.bottom, int(hwnd))
+        except Exception:
+            return None
+
+
+# ------------------------------------------------------------------ art
+def hard_alpha(img):
+    r, g, b, a = img.split()
+    return Image.merge("RGBA", (r, g, b, a.point(lambda v: 255 if v > 127 else 0)))
+
+
+def scale_to(img, h, pixel=True):
+    k = h / img.height
+    if 0.92 <= k <= 1.08:
+        return img
+    if k > 1:
+        return hard_alpha(img.resize((max(1, round(img.width * round(k))), img.height * round(k)), Image.NEAREST)) \
+            if pixel and round(k) >= 2 else hard_alpha(img.resize((round(img.width * k), h), Image.NEAREST))
+    return hard_alpha(img.resize((max(1, round(img.width * k)), h), Image.LANCZOS))
+
+
+def thumb(img, h):
+    return img.resize((max(1, round(img.width * h / img.height)), h), Image.BOX)
+
+
+def norm(name):
+    return str(name).lower().replace("_", "-").replace(" ", "-")
+
+
+class StaticSprites:
+    """Single-pose art (idle.png + optional emote crops); motion is procedural."""
+    kind = "static"
+    flip_dir = True
+
+    def __init__(self, folder, target_h):
+        def op(n):
+            p = os.path.join(folder, n + ".png")
+            return Image.open(p).convert("RGBA") if os.path.isfile(p) else None
+        idle = op("idle")
+        if idle is None:
+            raise FileNotFoundError("idle.png")
+        k = max(1, round(target_h / idle.height))
+        self.idle = hard_alpha(idle.resize((idle.width * k, idle.height * k), Image.NEAREST))
+        self.w, self.h = self.idle.size
+        self.emotes = {}
+        for key, name in (("wide", "eyes_wide"), ("angry", "eyes_angry"), ("talk", "face_small")):
+            im = op(name)
+            if im is not None:
+                self.emotes[key] = hard_alpha(im.resize((int(self.w * 0.62), int(self.w * 0.62 * im.height / im.width)),
+                                                        Image.NEAREST))
+        self.portraits = {}
+        for key, name in (("idle", "face_a"), ("talk", "talk"), ("angry", "eyes_angry")):
+            im = op(name)
+            if im is not None:
+                self.portraits[key] = thumb(im, 56 if key != "angry" else 40)
+        if "idle" not in self.portraits:
+            self.portraits["idle"] = thumb(self.idle, 56)
+
+    def frame(self, anim, t, d):
+        return ("s",), self.idle
+
+
+class SheetSprites:
+    """Codex/Petdex style pet: spritesheet.webp|png (8 columns) + pet.json, one row per state."""
+    kind = "sheet"
+    flip_dir = False
+    DEFAULT_ROWS = ["idle", "running-right", "running-left", "waving", "jumping", "failed",
+                    "waiting", "running", "review"]
+    FALLBACK = {
+        "idle": ["idle"], "wave": ["waving", "jumping", "idle"], "jump": ["jumping", "waving", "idle"],
+        "fail": ["failed", "idle"], "wait": ["waiting", "review", "idle"], "think": ["review", "waiting", "idle"],
+        "run": ["running", "running-right", "idle"],
+    }
+
+    def __init__(self, folder, target_h):
+        path = next((os.path.join(folder, n) for n in ("spritesheet.webp", "spritesheet.png")
+                     if os.path.isfile(os.path.join(folder, n))), None)
+        if not path:
+            raise FileNotFoundError("spritesheet")
+        meta = load_json(os.path.join(folder, "pet.json"), {})
+        meta = meta if isinstance(meta, dict) else {}
+        sheet = Image.open(path).convert("RGBA")
+        W, H = sheet.size
+        cols = int(meta.get("columns") or meta.get("cols") or 8)
+        cw = W // cols
+        rows_m = meta.get("rows")
+        ch = H // rows_m if isinstance(rows_m, int) and rows_m > 0 else int(round(cw * 208 / 192))
+        nrows = max(1, H // ch)
+        cells, boxes = [], []
+        for r in range(nrows):
+            row = []
+            for c in range(cols):
+                cell = sheet.crop((c * cw, r * ch, (c + 1) * cw, (r + 1) * ch))
+                bb = cell.getchannel("A").point(lambda v: 255 if v > 127 else 0).getbbox()
+                if bb and (bb[2] - bb[0]) > 3 and (bb[3] - bb[1]) > 3:
+                    row.append(cell)
+                    boxes.append(bb)
+            cells.append(row)
+        if not boxes:
+            raise ValueError("empty spritesheet")
+        box = (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
+        self.rows = [[scale_to(c.crop(box), target_h) for c in row] for row in cells]
+        self.w, self.h = next(f for row in self.rows for f in row).size
+        mapping = {n: i for i, n in enumerate(self.DEFAULT_ROWS)}
+        for key in ("states", "animations", "rows"):
+            v = meta.get(key)
+            if isinstance(v, dict):
+                for n, spec in v.items():
+                    row = spec.get("row") if isinstance(spec, dict) else spec
+                    if isinstance(row, int):
+                        mapping[norm(n)] = row
+            elif isinstance(v, list):
+                for i, spec in enumerate(v):
+                    if isinstance(spec, str):
+                        mapping[norm(spec)] = i
+                    elif isinstance(spec, dict):
+                        n = spec.get("name") or spec.get("id") or spec.get("state")
+                        if n:
+                            mapping[norm(n)] = spec.get("row", i) if isinstance(spec.get("row", i), int) else i
+        override = load_json(os.path.join(folder, "pet_map.json"), None) or load_json(
+            os.path.join(app_dir(), "pet_map.json"), {})
+        if isinstance(override, dict):
+            for n, row in override.items():
+                if isinstance(row, int):
+                    mapping[norm(n)] = row
+        self.map = mapping
+        self.emotes = {}
+        idle_row = self.rows[mapping.get("idle", 0)] if mapping.get("idle", 0) < len(self.rows) else []
+        base = (idle_row or next(r for r in self.rows if r))[0]
+        self.portraits = {"idle": thumb(base, 56)}
+
+    def row_frames(self, name):
+        i = self.map.get(name)
+        return self.rows[i] if i is not None and 0 <= i < len(self.rows) and self.rows[i] else None
+
+    def frame(self, anim, t, d):
+        if anim == "walk":
+            order = ["running-right", "running", "idle"] if d > 0 else ["running-left", "running", "idle"]
+        else:
+            order = self.FALLBACK.get(anim, ["idle"])
+        for name in order + ["idle"]:
+            fr = self.row_frames(name)
+            if fr:
+                i = int(t * (5 if name == "idle" else 9)) % len(fr)
+                return (name, i), fr[i]
+        fr = next(r for r in self.rows if r)
+        return ("any", 0), fr[0]
+
+
+def placeholder_sprites(target_h):
+    im = Image.new("RGBA", (40, 64), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    d.rectangle((8, 10, 32, 60), fill=(251, 9, 72, 255), outline=(12, 10, 22, 255))
+    d.rectangle((8, 10, 32, 28), fill=(5, 245, 111, 255), outline=(12, 10, 22, 255))
+    d.rectangle((12, 16, 17, 22), fill=(25, 105, 235, 255))
+    d.rectangle((23, 16, 28, 22), fill=(25, 105, 235, 255))
+    k = max(1, round(target_h / 64))
+    s = StaticSprites.__new__(StaticSprites)
+    s.idle = im.resize((40 * k, 64 * k), Image.NEAREST)
+    s.w, s.h = s.idle.size
+    s.emotes, s.portraits = {}, {"idle": thumb(s.idle, 56)}
+    return s
+
+
+def find_pet_dir():
+    home = os.path.expanduser("~")
+    cands = [os.environ.get("CAPRI_PET_DIR"), os.path.join(app_dir(), "pet"), os.path.join(data_dir(), "pet"),
+             os.path.join(home, ".codex", "pets", "capri")]
+    pets = os.path.join(home, ".codex", "pets")
+    if os.path.isdir(pets):
+        cands += [os.path.join(pets, n) for n in sorted(os.listdir(pets)) if "capri" in n.lower()]
+    for c in cands:
+        if c and any(os.path.isfile(os.path.join(c, n)) for n in ("spritesheet.webp", "spritesheet.png")):
+            return c
+    return None
+
+
+def static_dir():
+    beside = os.path.join(app_dir(), "sprites")
+    if os.path.isfile(os.path.join(beside, "idle.png")):
+        return beside
+    return os.path.join(getattr(sys, "_MEIPASS", app_dir()), "sprites")
+
+
+def load_art(dpi):
+    target = int(SPRITE_HEIGHT * dpi)
+    folder = find_pet_dir()
+    if folder:
+        try:
+            art = SheetSprites(folder, target)
+            log(f"loaded sheet pet from {folder}, rows={len(art.rows)} map={art.map}")
+            return art
+        except Exception:
+            log("sheet pet failed: " + traceback.format_exc())
+    try:
+        return StaticSprites(static_dir(), target)
+    except Exception:
+        log("static sprites failed: " + traceback.format_exc())
+        return placeholder_sprites(target)
+
+
+# ------------------------------------------------------------------ posing and glitch
+def glitch_fx(img, ax, amt, rng):
+    p = int(6 + 18 * amt)
+    w, h = img.size
+    base = Image.new("RGBA", (w + 2 * p, h), (0, 0, 0, 0))
+    base.paste(img, (p, 0))
+    out = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    y = 0
+    while y < h:
+        bh = rng.randint(3, 16)
+        dx = rng.randint(-p, p) if rng.random() < 0.25 + 0.6 * amt else 0
+        band = base.crop((0, y, base.width, min(h, y + bh)))
+        out.paste(band, (dx, y))
+        y += bh
+    r, g, b, a = out.split()
+    d = max(1, int(2 + 5 * amt))
+    r, b = ImageChops.offset(r, d, 0), ImageChops.offset(b, -d, 0)
+    a = ImageChops.lighter(ImageChops.lighter(a, ImageChops.offset(a, d, 0)), ImageChops.offset(a, -d, 0))
+    out = Image.merge("RGBA", (r, g, b, a))
+    px = out.load()
+    for yy in range(0, h, 2):
+        if rng.random() < 0.18 * amt:
+            for xx in range(out.width):
+                px[xx, yy] = (0, 0, 0, 0)
+    return hard_alpha(out), ax + p
+
+
+def pose(img, angle=0.0, sx=1.0, sy=1.0, flip=False, dim=False, glitch=0.0, rng=random):
+    """Returns (image, pivot_x, pivot_y): pivot is the feet point inside the image."""
+    if flip:
+        img = img.transpose(Image.FLIP_LEFT_RIGHT)
+    if abs(sx - 1) > 0.01 or abs(sy - 1) > 0.01:
+        img = img.resize((max(2, round(img.width * sx)), max(2, round(img.height * sy))), Image.NEAREST)
+    if dim:
+        r, g, b, a = img.split()
+        rgb = ImageEnhance.Brightness(Image.merge("RGB", (r, g, b))).enhance(0.62)
+        img = Image.merge("RGBA", (*rgb.split(), a))
+    w, h = img.size
+    ax, ay = w / 2.0, float(h)
+    if abs(angle) > 0.5:
+        th = math.radians(angle)
+        py = h / 2.0
+        rx, ry = py * math.sin(th), py * math.cos(th)
+        rot = img.rotate(angle, expand=True, resample=Image.NEAREST)
+        ax, ay = rot.width / 2.0 + rx, rot.height / 2.0 + ry
+        img = hard_alpha(rot)
+    if glitch > 0.02:
+        img, ax = glitch_fx(img, ax, glitch, rng)
+    return img, ax, ay
+
+
+# ------------------------------------------------------------------ small ui helpers
+def pick_font(root, *families):
+    have = set(tkfont.families(root))
+    for f in families:
+        if f in have:
+            return f
+    return "TkDefaultFont"
+
+
+def round_rect(c, x1, y1, x2, y2, r, **kw):
+    pts = [x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r, x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2,
+           x1, y2, x1, y2 - r, x1, y1 + r, x1, y1]
+    return c.create_polygon(pts, smooth=True, **kw)
+
+
+def flat_button(parent, text, command, bg, fg, hover, font, padx=12, pady=5):
+    b = tk.Label(parent, text=text, bg=bg, fg=fg, font=font, padx=padx, pady=pady, cursor="hand2")
+    b.bind("<Button-1>", lambda e: command())
+    b.bind("<Enter>", lambda e: b.config(bg=hover))
+    b.bind("<Leave>", lambda e: b.config(bg=bg))
+    return b
+
+
+# ------------------------------------------------------------------ chat window
+class ChatWindow:
+    CHIPS = [("Focus 25", "/focus"), ("Break it down", "Help me break what I'm working on into tiny steps."),
+             ("I'm stuck", "I'm stuck. Ask me one question to get me moving."), ("Surprise me", "Tell me something fun.")]
+
+    def __init__(self, pet):
+        self.pet = pet
+        root = pet.root
+        self.fam = pet.font_family
+        self.win = tk.Toplevel(root)
+        self.win.title("Capri")
+        self.win.configure(bg=C_BG)
+        self.win.minsize(340, 460)
+        self.win.geometry(pet.settings.get("chat_geom", "400x600"))
+        self.topmost = pet.settings.get("chat_topmost", True)
+        self.win.attributes("-topmost", self.topmost)
+        self.win.protocol("WM_DELETE_WINDOW", self.close)
+        self.q = queue.Queue()
+        self.busy = False
+        self.images = {}
+        self.typing_job = None
+        self.typing_row = None
+        self.history = load_json(os.path.join(data_dir(), "chat_history.json"), [])
+        if not isinstance(self.history, list):
+            self.history = []
+        self.persona = read_first(["persona.txt"]) or DEFAULT_PERSONA
+        self.f_body = (self.fam, 10)
+        self.f_small = (self.fam, 8)
+        self.f_bold = (self.fam, 9, "bold")
+        self.build()
+        for m in self.history[-40:]:
+            self.add_bubble(m["role"], m["content"], m.get("ts", ""), animate=False)
+        if not self.history:
+            self.add_bubble("assistant", "Hey. I'm here. Type something, or tap a button below.", animate=False)
+        self.win.after(60, self.scroll_end)
+        self.entry.focus_set()
+
+    # ---- layout
+    def photo(self, key):
+        img = self.pet.art.portraits.get(key) or self.pet.art.portraits["idle"]
+        if key not in self.images:
+            self.images[key] = ImageTk.PhotoImage(img)
+        return self.images[key]
+
+    def build(self):
+        w = self.win
+        head = tk.Frame(w, bg=C_PANEL)
+        head.pack(fill="x")
+        tk.Frame(w, bg=C_GREEN, height=2).pack(fill="x")
+        self.portrait = tk.Label(head, image=self.photo("idle"), bg=C_PANEL)
+        self.portrait.pack(side="left", padx=(14, 10), pady=8)
+        col = tk.Frame(head, bg=C_PANEL)
+        col.pack(side="left")
+        tk.Label(col, text="CAPRI", bg=C_PANEL, fg=C_GREEN, font=(self.fam, 14, "bold")).pack(anchor="w")
+        self.status = tk.Label(col, text="● online", bg=C_PANEL, fg=C_DIM, font=self.f_small)
+        self.status.pack(anchor="w")
+        right = tk.Frame(head, bg=C_PANEL)
+        right.pack(side="right", padx=10)
+        self.pin_btn = flat_button(right, "PINNED" if self.topmost else "PIN", self.toggle_pin, C_PANEL2, C_TEXT,
+                                   "#2a2a40", self.f_small, 8, 3)
+        self.pin_btn.pack(side="left", padx=3)
+        flat_button(right, "CLEAR", self.clear, C_PANEL2, C_TEXT, "#2a2a40", self.f_small, 8, 3).pack(side="left", padx=3)
+
+        # input area (packed first so it stays at the bottom)
+        bottom = tk.Frame(w, bg=C_PANEL)
+        bottom.pack(side="bottom", fill="x")
+        chips = tk.Frame(bottom, bg=C_PANEL)
+        chips.pack(fill="x", padx=10, pady=(8, 2))
+        for label, payload in self.CHIPS:
+            flat_button(chips, label, lambda p=payload: self.chip(p), C_PANEL2, C_GREEN, "#26263a",
+                        self.f_small, 9, 3).pack(side="left", padx=(0, 6))
+        row = tk.Frame(bottom, bg=C_PANEL)
+        row.pack(fill="x", padx=10, pady=(4, 10))
+        box = tk.Frame(row, bg=C_PANEL2, highlightthickness=1, highlightbackground="#2a2a40", highlightcolor=C_GREEN)
+        box.pack(side="left", fill="x", expand=True)
+        self.entry = tk.Text(box, height=1, wrap="word", bg=C_PANEL2, fg=C_TEXT, insertbackground=C_GREEN,
+                             relief="flat", bd=0, padx=10, pady=8, font=(self.fam, 10), undo=True, width=1)
+        self.entry.pack(fill="x", expand=True)
+        self.entry.bind("<Return>", self.on_enter)
+        self.entry.bind("<KeyRelease>", self.autogrow)
+        flat_button(row, "SEND", self.send, C_GREEN, C_BLACK, "#3dffa0", (self.fam, 9, "bold"), 14, 9).pack(
+            side="left", padx=(8, 0), fill="y")
+
+        # messages
+        mid = tk.Frame(w, bg=C_BG)
+        mid.pack(fill="both", expand=True)
+        self.canvas = tk.Canvas(mid, bg=C_BG, highlightthickness=0, bd=0)
+        self.canvas.pack(fill="both", expand=True)
+        self.inner = tk.Frame(self.canvas, bg=C_BG)
+        self.win_id = self.canvas.create_window(0, 0, window=self.inner, anchor="nw")
+        self.canvas.bind("<Configure>", self.on_resize)
+        self.inner.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
+        for wd in (self.canvas, self.inner):
+            wd.bind("<MouseWheel>", self.on_wheel)
+            wd.bind("<Button-4>", lambda e: self.canvas.yview_scroll(-3, "units"))
+            wd.bind("<Button-5>", lambda e: self.canvas.yview_scroll(3, "units"))
+        self.bubbles = []
+
+    def on_resize(self, e):
+        self.canvas.itemconfigure(self.win_id, width=e.width)
+        wrap = max(160, int(e.width * 0.70))
+        for lbl in self.bubbles:
+            try:
+                lbl.config(wraplength=wrap)
+            except tk.TclError:
+                pass
+
+    def on_wheel(self, e):
+        self.canvas.yview_scroll(-1 if e.delta > 0 else 1, "units" if abs(e.delta) < 120 else "units")
+
+    def scroll_end(self):
+        self.win.update_idletasks()
+        self.canvas.yview_moveto(1.0)
+
+    def autogrow(self, _e=None):
+        lines = int(self.entry.index("end-1c").split(".")[0])
+        self.entry.config(height=max(1, min(5, lines)))
+
+    # ---- bubbles
+    def add_bubble(self, role, text, ts="", animate=False):
+        mine = role == "user"
+        row = tk.Frame(self.inner, bg=C_BG)
+        row.pack(fill="x", padx=12, pady=(8, 0))
+        side = "right" if mine else "left"
+        holder = tk.Frame(row, bg=C_BG)
+        holder.pack(side=side)
+        accent = C_RED if mine else C_GREEN
+        bg = "#2a0f1b" if mine else "#0f2219"
+        fg = "#ffe3ea" if mine else "#dcffea"
+        line = tk.Frame(holder, bg=bg)
+        line.pack()
+        if mine:
+            lbl = tk.Label(line, text=text, bg=bg, fg=fg, font=self.f_body, justify="left", anchor="w",
+                           padx=12, pady=8, wraplength=int(max(160, self.canvas.winfo_width() * 0.70)))
+            lbl.pack(side="left")
+            tk.Frame(line, bg=accent, width=3).pack(side="left", fill="y")
+        else:
+            tk.Frame(line, bg=accent, width=3).pack(side="left", fill="y")
+            lbl = tk.Label(line, text="" if animate else text, bg=bg, fg=fg, font=self.f_body, justify="left",
+                           anchor="w", padx=12, pady=8,
+                           wraplength=int(max(160, self.canvas.winfo_width() * 0.70)))
+            lbl.pack(side="left")
+        stamp = ts or time.strftime("%H:%M")
+        tk.Label(holder, text=stamp, bg=C_BG, fg=C_DIM, font=(self.fam, 7)).pack(anchor="e" if mine else "w")
+        self.bubbles.append(lbl)
+        for wd in (row, holder, line, lbl):
+            wd.bind("<MouseWheel>", self.on_wheel)
+        lbl.bind("<Button-1>", lambda e, t=text: self.copy(t))
+        self.win.after(30, self.scroll_end)
+        return lbl
+
+    def system_line(self, text, err=False):
+        row = tk.Frame(self.inner, bg=C_BG)
+        row.pack(fill="x", padx=12, pady=(10, 0))
+        lbl = tk.Label(row, text=text, bg=C_BG, fg=C_RED if err else C_DIM, font=(self.fam, 8, "italic"),
+                       wraplength=int(max(160, self.canvas.winfo_width() * 0.85)), justify="center")
+        lbl.pack()
+        self.bubbles.append(lbl)
+        self.win.after(30, self.scroll_end)
+
+    def copy(self, text):
+        self.win.clipboard_clear()
+        self.win.clipboard_append(text)
+        self.set_status("copied to clipboard", C_GREEN)
+        self.win.after(1200, lambda: self.set_status("● online"))
+
+    def set_status(self, text, color=C_DIM):
+        self.status.config(text=text, fg=color)
+
+    def set_face(self, key):
+        self.portrait.config(image=self.photo(key if key in self.pet.art.portraits else "idle"))
+
+    # ---- sending
+    def on_enter(self, e):
+        if e.state & 0x1:  # shift
+            return None
+        self.send()
+        return "break"
+
+    def chip(self, payload):
+        self.submit(payload)
+
+    def send(self):
+        text = self.entry.get("1.0", "end").strip()
+        self.entry.delete("1.0", "end")
+        self.autogrow()
+        if text:
+            self.submit(text)
+
+    def submit(self, text):
+        if text.startswith("/"):
+            return self.command(text)
+        if self.busy:
+            return self.system_line("Hold on, still thinking about the last one.")
+        self.add_bubble("user", text)
+        self.history.append({"role": "user", "content": text, "ts": time.strftime("%H:%M")})
+        self.busy = True
+        self.set_status("typing…", C_GREEN)
+        self.set_face("talk")
+        self.show_typing()
+        self.pet.react("think")
+        snapshot = [{"role": m["role"], "content": m["content"]} for m in self.history[-20:]]
+        threading.Thread(target=self.work, args=(snapshot,), daemon=True).start()
+        self.win.after(100, self.poll)
+
+    def show_typing(self):
+        self.typing_row = self.add_bubble("assistant", "●", animate=False)
+        self.dots = 0
+
+        def step():
+            if self.typing_row is None:
+                return
+            self.dots = (self.dots + 1) % 4
+            try:
+                self.typing_row.config(text="● " * max(1, self.dots))
+            except tk.TclError:
+                return
+            self.typing_job = self.win.after(350, step)
+        step()
+
+    def hide_typing(self):
+        if self.typing_job:
+            self.win.after_cancel(self.typing_job)
+        if self.typing_row is not None:
+            try:
+                self.typing_row.master.master.master.destroy()  # row frame
+            except tk.TclError:
+                pass
+            if self.typing_row in self.bubbles:
+                self.bubbles.remove(self.typing_row)
+        self.typing_row, self.typing_job = None, None
+
+    def work(self, msgs):
+        try:
+            self.q.put(("ok", llm_reply(msgs, self.persona)))
+        except Exception as exc:
+            self.q.put(("err", str(exc) or type(exc).__name__))
+
+    def poll(self):
+        try:
+            kind, text = self.q.get_nowait()
+        except queue.Empty:
+            if self.alive():
+                self.win.after(100, self.poll)
+            return
+        self.busy = False
+        if not self.alive():
+            return
+        self.hide_typing()
+        if kind == "ok":
+            self.history.append({"role": "assistant", "content": text, "ts": time.strftime("%H:%M")})
+            self.save_history()
+            lbl = self.add_bubble("assistant", text, animate=True)
+            self.typewrite(lbl, text, 0)
+            self.pet.react("happy")
+        else:
+            if self.history and self.history[-1]["role"] == "user":
+                self.history.pop()
+            self.system_line("Couldn't reach the AI: " + text, err=True)
+            self.set_status("● error", C_RED)
+            self.set_face("angry")
+            self.pet.react("error")
+            self.win.after(2500, self.reset_face)
+
+    def reset_face(self):
+        if self.alive():
+            self.set_face("idle")
+            self.set_status("● online")
+
+    def typewrite(self, lbl, text, i):
+        if not self.alive():
+            return
+        i = min(len(text), i + 3)
+        try:
+            lbl.config(text=text[:i])
+        except tk.TclError:
+            return
+        self.scroll_end()
+        if i < len(text):
+            self.win.after(16, lambda: self.typewrite(lbl, text, i))
+        else:
+            lbl.bind("<Button-1>", lambda e, t=text: self.copy(t))
+            self.reset_face()
+
+    def command(self, text):
+        parts = text.split(None, 2)
+        cmd = parts[0].lower()
+        p = self.pet
+        if cmd == "/help":
+            self.system_line("/focus [min]   /remind <min> <text>   /tp   /dance   /sleep   /calm   /clear")
+        elif cmd == "/clear":
+            self.clear()
+        elif cmd == "/focus":
+            mins = float(parts[1]) if len(parts) > 1 and parts[1].replace(".", "").isdigit() else FOCUS_MIN
+            p.start_focus(mins)
+            self.system_line(f"Focus timer started: {mins:g} min.")
+        elif cmd == "/remind" and len(parts) == 3 and parts[1].replace(".", "").isdigit():
+            p.add_reminder(float(parts[1]), parts[2])
+            self.system_line(f"Okay, I'll ping you in {float(parts[1]):g} min.")
+        elif cmd == "/tp":
+            p.teleport()
+        elif cmd == "/dance":
+            p.go("dance", 3.5)
+        elif cmd == "/sleep":
+            p.go("sleep")
+        elif cmd == "/calm":
+            p.toggle_calm()
+        else:
+            self.system_line("Unknown command. Try /help")
+
+    # ---- misc
+    def clear(self):
+        self.history = []
+        self.save_history()
+        for ch in self.inner.winfo_children():
+            ch.destroy()
+        self.bubbles = []
+        self.add_bubble("assistant", "Fresh start. What's up?", animate=False)
+
+    def toggle_pin(self):
+        self.topmost = not self.topmost
+        self.win.attributes("-topmost", self.topmost)
+        self.pin_btn.config(text="PINNED" if self.topmost else "PIN")
+        self.pet.settings["chat_topmost"] = self.topmost
+        self.pet.save_settings()
+
+    def save_history(self):
+        save_json(os.path.join(data_dir(), "chat_history.json"), self.history[-200:])
+
+    def alive(self):
+        try:
+            return bool(self.win.winfo_exists())
+        except tk.TclError:
+            return False
+
+    def rect(self):
+        try:
+            if not self.alive() or self.win.state() == "withdrawn":
+                return None
+            x, y = self.win.winfo_rootx(), self.win.winfo_rooty()
+            return (x, y, x + self.win.winfo_width(), y + self.win.winfo_height(), "chat")
+        except tk.TclError:
+            return None
+
+    def close(self):
+        try:
+            self.pet.settings["chat_geom"] = self.win.geometry()
+            self.pet.save_settings()
+            self.save_history()
+            self.win.destroy()
+        except tk.TclError:
+            pass
+        self.pet.chat = None
+
+
+class ReminderDialog:
+    def __init__(self, pet):
+        self.pet = pet
+        f = pet.font_family
+        w = self.win = tk.Toplevel(pet.root)
+        w.title("Remind me")
+        w.configure(bg=C_PANEL)
+        w.attributes("-topmost", True)
+        w.resizable(False, False)
+        tk.Label(w, text="REMIND ME", bg=C_PANEL, fg=C_GREEN, font=(f, 11, "bold")).pack(padx=16, pady=(14, 6), anchor="w")
+        self.what = self.field("About what?", "", 32)
+        self.mins = self.field("In how many minutes?", "10", 8)
+        row = tk.Frame(w, bg=C_PANEL)
+        row.pack(fill="x", padx=16, pady=14)
+        flat_button(row, "SET", self.ok, C_GREEN, C_BLACK, "#3dffa0", (f, 9, "bold"), 16, 6).pack(side="right")
+        flat_button(row, "CANCEL", w.destroy, C_PANEL2, C_TEXT, "#2a2a40", (f, 9), 12, 6).pack(side="right", padx=8)
+        w.bind("<Return>", lambda e: self.ok())
+        w.bind("<Escape>", lambda e: w.destroy())
+        w.geometry(f"+{max(0, int(pet.fx) - 150)}+{max(0, int(pet.fy) - 330)}")
+        self.what.focus_force()
+
+    def field(self, label, initial, width):
+        f = self.pet.font_family
+        tk.Label(self.win, text=label, bg=C_PANEL, fg=C_DIM, font=(f, 8)).pack(padx=16, anchor="w")
+        e = tk.Entry(self.win, width=width, bg=C_PANEL2, fg=C_TEXT, insertbackground=C_GREEN, relief="flat",
+                     font=(f, 10), highlightthickness=1, highlightbackground="#2a2a40", highlightcolor=C_GREEN)
+        e.insert(0, initial)
+        e.pack(padx=16, pady=(2, 8), ipady=5, fill="x")
+        return e
+
+    def ok(self):
+        try:
+            m = float(self.mins.get())
+        except ValueError:
+            return
+        what = self.what.get().strip() or "Time's up"
+        self.win.destroy()
+        self.pet.add_reminder(m, what)
+
+
+# ------------------------------------------------------------------ the pet
+class Capri:
+    def __init__(self):
+        enable_dpi_awareness()
+        self.root = tk.Tk()
+        self.root.title(NAME)
+        self.root.report_callback_exception = lambda *a: log("tk error: " + "".join(traceback.format_exception(*a)))
+        self.root.overrideredirect(True)
+        self.root.attributes("-topmost", True)
+        self.font_family = pick_font(self.root, "Segoe UI", "SF Pro Text", "Helvetica Neue", "Helvetica", "DejaVu Sans")
+        self.dpi = max(1.0, self.root.winfo_fpixels("1i") / 96.0)
+        self.settings = load_json(os.path.join(data_dir(), "settings.json"), {})
+        if not isinstance(self.settings, dict):
+            self.settings = {}
+        self.art = load_art(self.dpi)
+        self.fw, self.fh = self.art.w, self.art.h
+        self.Wd = max(280, int(self.fh * 1.25) + 30)
+        self.Hd = self.fh + 150
+        self.canvas = tk.Canvas(self.root, width=self.Wd, height=self.Hd, highlightthickness=0, bd=0)
+        self.canvas.pack()
+        self.setup_transparency()
+        self.win32 = Win32()
+        self.sw, self.sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+
+        self.calm = bool(self.settings.get("calm", False))
+        self.checkins = bool(self.settings.get("checkins", True))
+        now = time.time()
+        self.t_start = now
+        self.last_tick = now
+        self.last_active = now
+        self.fx = float(random.randint(150, max(151, self.sw - 150)))
+        self.fy = float(self.ground())
+        self.vx = self.vy = 0.0
+        self.dir = 1
+        self.state, self.state_t0, self.state_dur = "idle", now, 3.0
+        self.anim = "idle"
+        self.angle = self.angle_t = 0.0
+        self.sx = self.sy = self.sxt = self.syt = 1.0
+        self.glitch = 0.0
+        self.hop_y = 0.0
+        self.surf = None            # (id, left_at_last_seen) when standing on a window
+        self.surfaces = []
+        self.surf_check = 0.0
+        self.tp_dest = None
+        self.bubble, self.bubble_t0, self.bubble_until = "", 0.0, 0.0
+        self.emote = None
+        self.timer_end = self.timer_mode = None
+        self.reminders = []
+        self.next_checkin = now + random.randint(*CHECKIN_EVERY)
+        self.next_chatter = now + random.randint(40, 90)
+        self.chat = None
+        self.pointer = (0, 0)
+        self.pointer_prev = (0, 0, now)
+        self.near_since = None
+        self.last_startle = 0.0
+        self.clicks = []
+        self.press = None
+        self.drag_hist = []
+        self.pcache = {}
+        self.cur_img = None
+        self.rng = random.Random()
+        self.land_squash = 0.0
+        self.last_top = 0.0
+
+        c = self.canvas
+        c.bind("<ButtonPress-1>", self.on_press)
+        c.bind("<B1-Motion>", self.on_drag)
+        c.bind("<ButtonRelease-1>", self.on_release)
+        for seq in ("<Button-3>", "<Button-2>", "<Control-Button-1>"):
+            c.bind(seq, self.show_menu)
+        self.place()
+        self.say("Online.", 3)
+        self.tick()
+
+    # ---- environment
+    def setup_transparency(self):
+        if IS_WIN:
+            self.root.config(bg=KEY)
+            self.canvas.config(bg=KEY)
+            self.root.attributes("-transparentcolor", KEY)
+        elif IS_MAC:
+            self.root.attributes("-transparent", True)
+            self.root.config(bg="systemTransparent")
+            self.canvas.config(bg="systemTransparent")
+        else:
+            self.root.config(bg="#101018")
+            self.canvas.config(bg="#101018")
+
+    def work_area(self):
+        wa = self.win32.work_area() if self.win32.ok else None
+        return wa or (0, 0, self.sw, self.sh - (0 if IS_MAC else 48))
+
+    def ground(self):
+        return self.work_area()[3]
+
+    def save_settings(self):
+        save_json(os.path.join(data_dir(), "settings.json"), self.settings)
+
+    def update_surfaces(self, now):
+        if now - self.surf_check < 0.25:
+            return
+        self.surf_check = now
+        s = []
+        if self.chat and self.chat.alive():
+            r = self.chat.rect()
+            if r:
+                s.append(r)
+        fg = self.win32.foreground() if self.win32.ok else None
+        if fg:
+            s.append(fg)
+        wa = self.work_area()
+        self.surfaces = [r for r in s if wa[1] + 40 < r[1] < wa[3] - 80 and r[2] - r[0] > 160]
+
+    def pointer_xy(self):
+        try:
+            return self.root.winfo_pointerxy()
+        except tk.TclError:
+            return self.pointer
+
+    # ---- state machine
+    def go(self, state, dur=None, **kw):
+        now = time.time()
+        if state == "dance" and dur is None:
+            dur = 3.0
+        self.state, self.state_t0, self.state_dur = state, now, dur
+        if state in ("idle", "perch"):
+            self.angle_t, self.anim = 0.0, "idle"
+        elif state == "sleep":
+            self.angle_t, self.anim = 90.0 * self.dir, "idle"
+            self.say("zzz...", 2)
+        elif state == "lounge":
+            self.angle_t, self.anim = 90.0 * self.dir, "idle"
+        elif state == "walk":
+            self.anim = "walk"
+            self.angle_t = 0.0
+        elif state == "dance":
+            self.anim = "wave"
+            self.angle_t = 0.0
+
+    def poke_awake(self):
+        self.last_active = time.time()
+        if self.state in ("sleep", "lounge"):
+            self.angle_t = 0.0
+            self.go("idle", 2.0)
+
+    def hop(self, power=9.0):
+        self.vy = -power * max(1.0, self.dpi)
+        self.go("air")
+        self.anim = "jump"
+
+    def react(self, kind):
+        now = time.time()
+        if kind == "startle":
+            self.set_emote("wide", 1.6)
+            self.say(self.rng.choice(["!", "Whoa.", "Hey!"]), 1.6)
+            self.hop(8)
+        elif kind == "annoyed":
+            self.set_emote("angry", 2.4)
+            self.say("Okay, that's enough.", 2.5)
+        elif kind == "think":
+            self.anim = "wait"
+        elif kind == "happy" and self.state in ("idle", "perch", "walk"):
+            self.set_emote("talk", 1.4)
+            self.anim = "wave"
+            self.state_dur = max(self.state_dur or 0, 2.0)
+        elif kind == "error":
+            self.set_emote("angry", 2.0)
+            self.anim = "fail"
+
+    def set_emote(self, name, secs):
+        if name in self.art.emotes:
+            self.emote = (name, time.time(), time.time() + secs)
+
+    def say(self, text, secs=6.0):
+        text = text if len(text) <= 140 else text[:137] + "..."
+        self.bubble, self.bubble_t0, self.bubble_until = text, time.time(), time.time() + secs
+
+    def bounds(self):
+        wa = self.work_area()
+        l, r = wa[0], wa[2]
+        if self.surf:
+            sf = next((s for s in self.surfaces if s[4] == self.surf[0]), None)
+            if sf:
+                l, r = max(l, sf[0]), min(r, sf[2])
+        m = self.fw * 0.35
+        return l + m, r - m
+
+    def choose_next(self):
+        if self.calm:
+            self.go("idle", self.rng.uniform(4, 9))
+            return
+        opts = [("walk", 30), ("lounge", 12), ("teleport", 14), ("curious", 10), ("dance", 4), ("idle", 14)]
+        if self.surfaces and not self.surf:
+            opts.append(("perch", 16))
+        if self.surf:
+            opts += [("drop", 10)]
+        if time.time() - self.last_active > SLEEP_AFTER:
+            opts.append(("sleep", 25))
+        r = self.rng.uniform(0, sum(w for _, w in opts))
+        for name, w in opts:
+            r -= w
+            if r <= 0:
+                break
+        if name == "walk":
+            self.dir = self.rng.choice((-1, 1))
+            self.go("walk", self.rng.uniform(2, 7))
+        elif name == "lounge":
+            self.dir = self.rng.choice((-1, 1))
+            self.go("lounge", self.rng.uniform(8, 22))
+        elif name == "teleport":
+            self.teleport()
+        elif name == "curious":
+            self.go("curious", 8)
+        elif name == "dance":
+            self.go("dance", 3.2)
+        elif name == "perch":
+            self.teleport(mode="perch")
+        elif name == "drop":
+            self.vx = self.rng.choice((-1, 1)) * 2.5
+            self.surf = None
+            self.vy = -3
+            self.go("air")
+        elif name == "sleep":
+            self.go("sleep")
+        else:
+            self.go("idle", self.rng.uniform(2, 6))
+
+    def teleport(self, mode=None):
+        if self.state in ("tp_out", "tp_in", "drag"):
+            return
+        mode = mode or self.rng.choice(["ground", "ground", "sky", "cursor"])
+        self.tp_dest = mode
+        self.say(self.rng.choice(["Glitching...", "brb", "Don't look."]), 1.2)
+        self.go("tp_out", 0.5)
+
+    def finish_teleport(self):
+        wa = self.work_area()
+        mode = self.tp_dest
+        self.surf = None
+        l, r = wa[0] + self.fw * 0.5, wa[2] - self.fw * 0.5
+        if mode == "perch" and self.surfaces:
+            s = self.rng.choice(self.surfaces)
+            self.fx = self.rng.uniform(s[0] + self.fw * 0.4, max(s[0] + self.fw * 0.5, s[2] - self.fw * 0.4))
+            self.fy = s[1]
+            self.surf = (s[4], s[0])
+        elif mode == "sky":
+            self.fx = self.rng.uniform(l, r)
+            self.fy = self.rng.uniform(wa[1] + self.fh + 20, (wa[1] + wa[3]) * 0.5)
+        elif mode == "cursor":
+            mx, my = self.pointer_xy()
+            self.fx = min(max(l, mx + self.rng.choice((-1, 1)) * 140), r)
+            self.fy = self.ground()
+        else:
+            self.fx = self.rng.uniform(l, r)
+            self.fy = self.ground()
+        self.vx = self.vy = 0.0
+        self.angle = self.angle_t = 0.0
+        self.go("tp_in", 0.5)
+
+    def land(self, surface=None):
+        self.vy = 0.0
+        self.vx *= 0.2
+        self.land_squash = 1.0
+        if surface:
+            self.surf = (surface[4], surface[0])
+            self.fy = surface[1]
+            self.go("perch", self.rng.uniform(6, 16))
+        else:
+            self.surf = None
+            self.fy = self.ground()
+            self.go("idle", self.rng.uniform(1.5, 4))
+
+    def step_state(self, now, dt, age):
+        st = self.state
+        sp = 2.4 * self.dpi * dt * 25
+        lo, hi = self.bounds()
+        if st in ("idle", "perch"):
+            self.anim = "idle" if self.anim in ("walk", "jump") else self.anim
+            if self.state_dur and age > self.state_dur:
+                if self.anim in ("wave", "wait", "fail") and age < 8:
+                    pass
+                self.anim = "idle"
+                self.choose_next()
+        elif st == "walk":
+            self.fx += self.dir * sp
+            if self.fx < lo or self.fx > hi:
+                self.fx = min(max(self.fx, lo), hi)
+                self.dir *= -1
+            self.hop_y = -abs(math.sin(now * 9)) * 3 * self.dpi
+            if age > self.state_dur:
+                self.hop_y = 0
+                self.go("perch" if self.surf else "idle", self.rng.uniform(2, 5))
+        elif st in ("lounge", "sleep"):
+            if st == "lounge" and age > self.state_dur:
+                self.go("idle", 2.0)
+            elif st == "lounge" and age > 6 and self.rng.random() < 0.004:
+                self.go("sleep")
+            if st == "sleep" and now - self.last_active < 3 and age > 1:
+                self.go("idle", 2.0)
+        elif st == "curious":
+            mx, my = self.pointer
+            target = mx + (-1 if self.fx > mx else 1) * self.fw * 0.9
+            if abs(target - self.fx) > 20:
+                self.dir = 1 if target > self.fx else -1
+                self.fx = min(max(self.fx + self.dir * sp * 1.8, lo), hi)
+                self.anim = "walk"
+                self.hop_y = -abs(math.sin(now * 12)) * 3 * self.dpi
+            else:
+                self.hop_y = 0
+                self.anim = "idle"
+                self.dir = 1 if mx > self.fx else -1
+                self.angle_t = 5.0 * self.dir
+            if age > self.state_dur:
+                self.hop_y = 0
+                self.go("idle", 2.0)
+        elif st == "dance":
+            self.hop_y = -abs(math.sin(age * 8)) * 18 * self.dpi
+            self.angle_t = 10.0 * math.sin(age * 8)
+            if age > (self.state_dur or 3):
+                self.hop_y = 0
+                self.go("perch" if self.surf else "idle", 2.0)
+        elif st == "tp_out":
+            self.glitch = min(1.0, age / self.state_dur)
+            if age > self.state_dur:
+                self.finish_teleport()
+        elif st == "tp_in":
+            self.glitch = max(0.0, 1 - age / self.state_dur)
+            if age > self.state_dur:
+                self.glitch = 0
+                if self.fy < self.ground() - 2 and not self.surf:
+                    self.go("air")
+                else:
+                    if self.rng.random() < 0.5:
+                        self.react("startle" if False else "happy")
+                    self.go("perch" if self.surf else "idle", 2.0)
+        elif st == "air":
+            prev = self.fy
+            self.vy = min(self.vy + 1.1 * self.dpi * dt * 25, 38 * self.dpi)
+            self.fy += self.vy * dt * 25
+            self.fx += self.vx * dt * 25
+            wa = self.work_area()
+            if self.fx < wa[0] + self.fw * 0.4 or self.fx > wa[2] - self.fw * 0.4:
+                self.fx = min(max(self.fx, wa[0] + self.fw * 0.4), wa[2] - self.fw * 0.4)
+                self.vx *= -0.6
+            if self.fy - self.fh < wa[1]:
+                self.fy, self.vy = wa[1] + self.fh, abs(self.vy) * 0.5
+            self.angle_t = max(-30, min(30, self.vx * 3))
+            if self.vy > 0:
+                for s in self.surfaces:
+                    if prev <= s[1] + 2 and self.fy >= s[1] and s[0] - 4 <= self.fx <= s[2] + 4:
+                        return self.land(s)
+            if self.fy >= self.ground():
+                self.land()
+
+    # ---- main loop
+    def tick(self):
+        try:
+            self._tick()
+        except Exception:
+            log("tick error: " + traceback.format_exc())
+        self.root.after(TICK_MS, self.tick)
+
+    def _tick(self):
+        now = time.time()
+        dt = max(0.001, min(0.2, now - self.last_tick))
+        self.last_tick = now
+        self.update_surfaces(now)
+        self.pointer = self.pointer_xy()
+        self.react_to_pointer(now, dt)
+        # keep following the window we're standing on
+        if self.surf and self.state not in ("air", "drag", "tp_out", "tp_in"):
+            sf = next((s for s in self.surfaces if s[4] == self.surf[0]), None)
+            if not sf or not (sf[0] - 10 <= self.fx <= sf[2] + 10):
+                self.surf = None
+                self.go("air")
+            else:
+                self.fx += sf[0] - self.surf[1]
+                self.fy = sf[1]
+                self.surf = (self.surf[0], sf[0])
+        elif self.state in ("idle", "walk", "lounge", "sleep", "curious", "dance") and self.fy < self.ground() - 2:
+            self.go("air")
+        age = now - self.state_t0
+        if self.state != "drag":
+            self.step_state(now, dt, age)
+        # smoothing
+        self.angle += (self.angle_t - self.angle) * min(1.0, 0.22 * dt * 25)
+        self.land_squash = max(0.0, self.land_squash - dt * 5)
+        self.sy = 1.0 - 0.16 * self.land_squash
+        self.sx = 1.0 + 0.12 * self.land_squash
+        if self.state in ("tp_out", "tp_in"):
+            self.sx = max(0.12, 1.0 - 0.9 * self.glitch ** 1.5)
+            self.sy = 1.0 + 0.12 * self.glitch
+        self.scheduled(now)
+        self.place()
+        self.draw(now)
+        if int(now) % 3 == 0 and not self.root.winfo_ismapped():
+            self.root.deiconify()
+        if int(now * 2) % 6 == 0:
+            self.root.attributes("-topmost", True)
+
+    def scheduled(self, now):
+        if self.timer_end and now >= self.timer_end:
+            if self.timer_mode == "focus":
+                self.say(f"Focus done! {BREAK_MIN} min break. Move around.", 12)
+                self.timer_mode, self.timer_end = "break", now + BREAK_MIN * 60
+                self.poke_awake()
+                self.go("dance", 3.0)
+            else:
+                self.say("Break's over. Another round?", 12)
+                self.timer_mode = self.timer_end = None
+                self.react("happy")
+        for r in [r for r in self.reminders if now >= r[0]]:
+            self.reminders.remove(r)
+            self.poke_awake()
+            self.say("Reminder: " + r[1], 15)
+            self.hop(7)
+        if self.checkins and now >= self.next_checkin and not self.calm:
+            self.next_checkin = now + random.randint(*CHECKIN_EVERY)
+            self.poke_awake()
+            self.say(random.choice(CHECKIN_LINES), 10)
+        if now >= self.next_chatter and self.state in ("idle", "perch") and not self.calm:
+            self.next_chatter = now + random.randint(60, 150)
+            self.say(random.choice(IDLE_LINES), 4)
+
+    def react_to_pointer(self, now, dt):
+        mx, my = self.pointer
+        px, py, pt = self.pointer_prev
+        speed = math.hypot(mx - px, my - py) / max(0.001, now - pt)
+        self.pointer_prev = (mx, my, now)
+        cx, cy = self.fx, self.fy - self.fh * 0.5
+        dist = math.hypot(mx - cx, my - cy)
+        passive = self.state in ("idle", "perch", "walk", "lounge", "sleep", "curious")
+        if passive and dist < self.fw * 0.8 and speed > 2200 and now - self.last_startle > 10 and self.state != "sleep":
+            self.last_startle = now
+            self.react("startle")
+        if passive and dist < self.fw * 0.7:
+            self.near_since = self.near_since or now
+            if now - self.near_since > 1.6:
+                self.near_since = None
+                if self.state in ("sleep", "lounge"):
+                    self.say("...hm? Oh. Hi.", 3)
+                    self.poke_awake()
+                elif self.state in ("idle", "perch"):
+                    self.dir = 1 if mx > self.fx else -1
+                    self.say("Hm?", 2)
+                    self.angle_t = 5.0 * self.dir
+        else:
+            self.near_since = None
+
+    # ---- mouse
+    def on_press(self, e):
+        self.press = (e.x_root, e.y_root, time.time(), False)
+        self.drag_hist = []
+        self.poke_awake()
+
+    def on_drag(self, e):
+        if not self.press:
+            return
+        x0, y0, t0, dragging = self.press
+        if not dragging and math.hypot(e.x_root - x0, e.y_root - y0) > 6:
+            dragging = True
+            self.press = (x0, y0, t0, True)
+            self.surf = None
+            self.go("drag")
+            self.anim = "jump"
+        if dragging:
+            now = time.time()
+            wa = self.work_area()
+            self.fx = min(max(e.x_root, wa[0] + 20), wa[2] - 20)
+            self.fy = min(max(e.y_root + self.fh * 0.45, wa[1] + self.fh), self.ground())
+            self.drag_hist = (self.drag_hist + [(now, e.x_root, e.y_root)])[-5:]
+            if len(self.drag_hist) >= 2:
+                a, b = self.drag_hist[0], self.drag_hist[-1]
+                vx = (b[1] - a[1]) / max(0.001, b[0] - a[0])
+                self.angle_t = max(-28, min(28, -vx * 0.02))
+            self.place()
+
+    def on_release(self, e):
+        if not self.press:
+            return
+        dragging = self.press[3]
+        self.press = None
+        now = time.time()
+        if dragging:
+            vx = vy = 0.0
+            if len(self.drag_hist) >= 2:
+                a, b = self.drag_hist[0], self.drag_hist[-1]
+                dtm = max(0.001, b[0] - a[0])
+                if now - b[0] < 0.15:
+                    vx, vy = (b[1] - a[1]) / dtm / 25.0, (b[2] - a[2]) / dtm / 25.0
+            self.vx, self.vy = max(-30, min(30, vx * 0.6)), max(-30, min(30, vy * 0.6))
+            self.go("air")
+            return
+        self.clicks = [t for t in self.clicks if now - t < 6] + [now]
+        if len(self.clicks) >= 2 and now - self.clicks[-2] < 0.4:
+            self.open_chat()
+            return
+        if len(self.clicks) >= 6:
+            self.clicks = []
+            self.react("annoyed")
+            self.root.after(900, self.teleport)
+            return
+        self.say(self.rng.choice(POKE_LINES), 2.5)
+        if self.state in ("idle", "perch", "walk", "sleep", "lounge", "curious"):
+            self.hop(6)
+
+    # ---- features
+    def start_focus(self, mins=FOCUS_MIN):
+        self.timer_mode, self.timer_end = "focus", time.time() + mins * 60
+        self.say(f"Focus for {mins:g} min. I'll keep watch.", 5)
+
+    def stop_timer(self):
+        self.timer_end = self.timer_mode = None
+        self.say("Timer stopped.", 3)
+
+    def add_reminder(self, mins, text):
+        self.reminders.append((time.time() + mins * 60, text))
+        self.say(f"Got it. Pinging you in {mins:g} min.", 4)
+
+    def toggle_calm(self):
+        self.calm = not self.calm
+        self.settings["calm"] = self.calm
+        self.save_settings()
+        self.say("Calm mode on. I'll stay put." if self.calm else "Roaming again!", 3)
+        if self.calm:
+            self.go("idle", 4)
+
+    def toggle_checkins(self):
+        self.checkins = not self.checkins
+        self.settings["checkins"] = self.checkins
+        self.save_settings()
+        self.say("Check-ins on." if self.checkins else "Check-ins off.", 3)
+
+    def open_chat(self):
+        self.poke_awake()
+        if self.chat and self.chat.alive():
+            self.chat.win.deiconify()
+            self.chat.win.lift()
+            self.chat.entry.focus_set()
+            return
+        self.chat = ChatWindow(self)
+        if "chat_geom" not in self.settings or "+" not in self.settings.get("chat_geom", ""):
+            w, h = 400, 600
+            x = int(self.fx + self.fw) if self.fx < self.sw / 2 else int(self.fx - self.fw - w)
+            y = max(20, min(self.sh - h - 60, int(self.fy - h)))
+            self.chat.win.geometry(f"{w}x{h}+{max(0, x)}+{y}")
+
+    def show_menu(self, e):
+        self.poke_awake()
+        m = tk.Menu(self.root, tearoff=0, bg=C_PANEL, fg=C_TEXT, activebackground=C_GREEN,
+                    activeforeground=C_BLACK, bd=0, relief="flat", font=(self.font_family, 10))
+        m.add_command(label="Chat with Capri", command=self.open_chat)
+        if self.timer_end:
+            left = max(0, int(self.timer_end - time.time()))
+            m.add_command(label=f"{self.timer_mode.title()}: {left // 60}:{left % 60:02d} left", state="disabled")
+            m.add_command(label="Stop timer", command=self.stop_timer)
+        else:
+            m.add_command(label=f"Start focus timer ({FOCUS_MIN} min)", command=self.start_focus)
+        m.add_command(label="Remind me...", command=lambda: ReminderDialog(self))
+        m.add_separator()
+        m.add_command(label="Teleport", command=self.teleport)
+        m.add_command(label="Dance", command=lambda: self.go("dance", 3.5))
+        m.add_command(label="Lounge", command=lambda: self.go("lounge", 15))
+        m.add_command(label="Take a nap", command=lambda: self.go("sleep"))
+        if self.win32.ok:
+            m.add_command(label="Perch on my window", command=lambda: self.teleport("perch"))
+        m.add_separator()
+        m.add_command(label=f"Calm mode: {'on' if self.calm else 'off'}", command=self.toggle_calm)
+        m.add_command(label=f"Check-ins: {'on' if self.checkins else 'off'}", command=self.toggle_checkins)
+        m.add_separator()
+        m.add_command(label="Quit", command=self.quit)
+        try:
+            m.tk_popup(e.x_root, e.y_root)
+        finally:
+            m.grab_release()
+
+    def quit(self):
+        if self.chat and self.chat.alive():
+            self.chat.close()
+        self.root.destroy()
+
+    # ---- drawing
+    def place(self):
+        wa = self.work_area()
+        self.fx = min(max(self.fx, wa[0] + 10), wa[2] - 10)
+        x = int(self.fx - self.Wd / 2)
+        y = int(self.fy - (self.Hd - 8))
+        g = f"{self.Wd}x{self.Hd}+{x}+{y}"
+        if g != getattr(self, "_geo", None):
+            self.root.geometry(g)
+            self._geo = g
+
+    def sprite_image(self, now):
+        key, frame = self.art.frame(self.anim, now - self.t_start, self.dir)
+        flip = self.art.flip_dir and self.dir < 0
+        dim = self.state == "sleep"
+        if self.glitch > 0.02:
+            img, ax, ay = pose(frame, self.angle, self.sx, self.sy, flip, dim, self.glitch, self.rng)
+            return ImageTk.PhotoImage(img), ax, ay, img.width, img.height
+        ck = (key, round(self.angle / 3), round(self.sx * 25), round(self.sy * 25), flip, dim)
+        hit = self.pcache.get(ck)
+        if hit is None:
+            if len(self.pcache) > 500:
+                self.pcache.clear()
+            img, ax, ay = pose(frame, self.angle, self.sx, self.sy, flip, dim)
+            hit = (ImageTk.PhotoImage(img), ax, ay, img.width, img.height)
+            self.pcache[ck] = hit
+        return hit
+
+    def draw(self, now):
+        c = self.canvas
+        c.delete("all")
+        photo, ax, ay, w, h = self.sprite_image(now)
+        self.cur_img = photo
+        lfx, lfy = self.Wd / 2.0, self.Hd - 8 + self.hop_y
+        wgt = max(0.0, min(1.0, (abs(self.angle) - 20) / 50.0))
+        x0 = lfx - (ax * (1 - wgt) + (w / 2.0) * wgt)
+        y0 = lfy - h
+        c.create_image(x0, y0, image=photo, anchor="nw")
+        top = y0
+        if self.state == "sleep":
+            ph = int(now * 2) % 3
+            c.create_text(lfx + self.fw * 0.1 + ph * 10, top - 2 - ph * 12, text="z",
+                          font=(self.font_family, 10 + ph * 3, "bold"), fill=C_GREEN)
+        if self.emote and now < self.emote[2]:
+            img = self.art.emotes.get(self.emote[0])
+            if img is not None:
+                pop = min(1.0, (now - self.emote[1]) / 0.18)
+                ei = pose(img, 0, 0.5 + 0.5 * pop, 0.5 + 0.5 * pop)[0]
+                self._emote_photo = ImageTk.PhotoImage(ei)
+                c.create_image(lfx + self.fw * 0.12, max(0, top - 2 - ei.height * 0.1 + math.sin(now * 8) * 2),
+                               image=self._emote_photo, anchor="sw")
+        base_y = max(40, top - 6)
+        if self.timer_end:
+            left = max(0, int(self.timer_end - now))
+            label = f"{self.timer_mode.upper()} {left // 60}:{left % 60:02d}"
+            tid = c.create_text(lfx, base_y, text=label, font=(self.font_family, 9, "bold"), fill=C_GREEN, anchor="s")
+            x1, y1, x2, y2 = c.bbox(tid)
+            pill = round_rect(c, x1 - 8, y1 - 3, x2 + 8, y2 + 3, 6, fill=C_BLACK, outline=C_RED, width=2)
+            c.tag_lower(pill, tid)
+            base_y = y1 - 10
+        if self.bubble and now < self.bubble_until:
+            shown = int((now - self.bubble_t0) * 80)
+            txt = self.bubble[:max(1, shown)]
+            tid = c.create_text(lfx, base_y, text=txt, width=min(210, self.Wd - 50), font=(self.font_family, 10),
+                                fill=C_TEXT, anchor="s", justify="center")
+            x1, y1, x2, y2 = c.bbox(tid)
+            full = c.create_text(-999, -999, text=self.bubble, width=min(210, self.Wd - 50), font=(self.font_family, 10))
+            fx1, fy1, fx2, fy2 = c.bbox(full)
+            c.delete(full)
+            hx = (fx2 - fx1) / 2 - (x2 - x1) / 2
+            bx1, bx2, by1 = lfx - (fx2 - fx1) / 2 - 10, lfx + (fx2 - fx1) / 2 + 10, y2 - (fy2 - fy1) - 6
+            bg = round_rect(c, bx1, by1, bx2, y2 + 6, 8, fill=C_PANEL, outline=C_GREEN, width=2)
+            tail = c.create_polygon(lfx - 6, y2 + 6, lfx + 6, y2 + 6, lfx, y2 + 14, fill=C_PANEL, outline=C_GREEN, width=2)
+            cover = c.create_line(lfx - 5, y2 + 6, lfx + 5, y2 + 6, fill=C_PANEL, width=3)
+            c.tag_lower(cover)
+            c.tag_lower(tail)
+            c.tag_lower(bg)
+            c.coords(tid, lfx, y2)
+
+
+# ------------------------------------------------------------------ preview / main
+def pet_preview():
+    enable_dpi_awareness()
+    root = tk.Tk()
+    root.title("Capri pet preview")
+    art = load_art(1.0)
+    if art.kind != "sheet":
+        tk.Label(root, text="No Codex/Petdex sheet found.\nInstall one with:  npx petdex install capri",
+                 padx=20, pady=20).pack()
+        root.mainloop()
+        return
+    frame = tk.Frame(root)
+    frame.pack(padx=10, pady=10)
+    labels = []
+    names = {v: k for k, v in art.map.items()}
+    for i, row in enumerate(art.rows):
+        if not row:
+            continue
+        cell = tk.Frame(frame)
+        cell.grid(row=i // 5, column=i % 5, padx=6, pady=6)
+        lbl = tk.Label(cell)
+        lbl.pack()
+        tk.Label(cell, text=f"row {i}: {names.get(i, '?')} ({len(row)} frames)", font=("Helvetica", 8)).pack()
+        labels.append((lbl, [ImageTk.PhotoImage(f.resize((f.width // 2, f.height // 2), Image.NEAREST)) for f in row]))
+
+    def step(n=0):
+        for lbl, frames in labels:
+            lbl.config(image=frames[n % len(frames)])
+        root.after(120, lambda: step(n + 1))
+    step()
+    root.mainloop()
+
+
+def main():
+    if "--pet-preview" in sys.argv:
+        return pet_preview()
+    Capri().root.mainloop()
+
+
+if __name__ == "__main__":
+    main()

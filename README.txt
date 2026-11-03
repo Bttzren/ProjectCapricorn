@@ -16,6 +16,8 @@ WHAT SHE DOES
   Right-click (Ctrl-click Mac): menu (focus timer, reminders, teleport, dance, lounge, nap, calm mode).
 
 PERSONALITY
+  She talks like a Night City local (choom, preem, nova, gonk, eddies, chrome...), kept PG.
+  The same slang is built into her canned lines and into the AI persona prompt.
   She has moods: sleepy, lonely, sassy, playful, content. Her mood depends on the time of day,
   how much you interact with her (affection), and whether you annoyed her. Mood changes what she
   does (a sleepy Capri naps, a playful one dances and teleports, a lonely one follows your cursor),

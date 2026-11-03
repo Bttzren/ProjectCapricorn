@@ -53,6 +53,42 @@ class PetSheetTests(unittest.TestCase):
                 self.assertLess(bb[2], cw, (r, c))
                 self.assertLess(bb[3], ch, (r, c))
 
+    def test_no_soft_or_purple_edges_that_would_halo_against_the_color_key(self):
+        """Windows blends soft edges with the magenta key: every pixel must be solid or clear."""
+        import colorsys
+        edge = purple = 0
+        for row in self.art.rows:
+            for f in row:
+                a = f.getchannel("A")
+                self.assertEqual(set(a.getdata()) - {0, 255}, set())
+                px = f.load()
+                w, h = f.size
+                for y in range(h):
+                    for x in range(w):
+                        r, g, b, al = px[x, y]
+                        if al == 0:
+                            continue
+                        self.assertNotEqual((r, g, b), (255, 0, 255))
+                        if any(0 <= x + dx < w and 0 <= y + dy < h and px[x + dx, y + dy][3] == 0
+                               for dx in (-1, 0, 1) for dy in (-1, 0, 1)):
+                            edge += 1
+                            hh, ss, vv = colorsys.rgb_to_hsv(r / 255.0, g / 255.0, b / 255.0)
+                            purple += 1 if (0.68 <= hh <= 0.88 and ss > 0.25 and vv > 0.25) else 0
+        self.assertLess(purple / float(edge), 0.03, "purple rim is back on her outline")
+
+    def test_crisp_handles_key_colour_and_soft_pixels(self):
+        from PIL import Image
+        im = Image.new("RGBA", (6, 6), (0, 0, 0, 0))
+        for x in range(1, 5):
+            for y in range(1, 5):
+                im.putpixel((x, y), (255, 0, 255, 255) if (x, y) == (2, 2) else (200, 10, 60, 255))
+        im.putpixel((0, 3), (130, 60, 230, 200))      # purple soft edge pixel
+        im.putpixel((5, 3), (130, 60, 230, 60))       # too faint: dropped
+        out = capri.crisp(im)
+        self.assertEqual(out.getpixel((5, 3))[3], 0)
+        self.assertEqual(out.getpixel((0, 3)), (200, 10, 60, 255))   # recoloured from the solid body
+        self.assertNotEqual(out.getpixel((2, 2))[:3], (255, 0, 255))
+
     def test_chat_portraits_exist(self):
         for k in ("idle", "talk", "angry"):
             self.assertIn(k, self.art.portraits)

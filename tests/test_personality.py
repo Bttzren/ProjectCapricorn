@@ -109,6 +109,34 @@ class MindTests(unittest.TestCase):
         for needle in ("lonely", "Sam", "napping", "neglected"):
             self.assertIn(needle, ctx)
 
+    def test_night_city_slang_and_pg_and_short(self):
+        pools = []
+        for kind in ("idle", "poke", "wake"):
+            for lines in P.LINES[kind].values():
+                pools += lines
+        pools += P.LINES["checkin"] + P.LINES["late"]
+        for greets in P.GREET.values():
+            pools += greets
+        for _keys, replies in P.OFFLINE:
+            pools += replies
+        for lines in P.OFFLINE_FALLBACK.values():
+            pools += lines
+        joined = " ".join(pools).lower()
+        for word in ("choom", "preem", "nova", "gonk", "chrome", "netrunner", "gig"):
+            self.assertIn(word, joined)
+        self.assertGreater(sum(any(w in l.lower() for w in P.SLANG) for l in pools), len(pools) // 2)
+        for line in pools:
+            self.assertLessEqual(len(line), 120, line)
+        bad = ("fuck", "shit", "bitch", "damn", "hell ", "ass ")
+        self.assertFalse([l for l in pools if any(b in l.lower() + " " for b in bad)])
+
+    def test_default_persona_asks_for_slang_but_stays_pg(self):
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+        src = open(os.path.join(os.path.dirname(__file__), "..", "capri.py"), encoding="utf-8").read()
+        persona = src[src.index("DEFAULT_PERSONA = ("):src.index(")\n", src.index("DEFAULT_PERSONA = ("))]
+        for word in ("choom", "preem", "nova", "gonk", "eddies", "PG"):
+            self.assertIn(word, persona)
+
 
 if __name__ == "__main__":
     unittest.main()

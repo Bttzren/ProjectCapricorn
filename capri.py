@@ -50,10 +50,14 @@ C_GREEN, C_RED, C_BLUE = "#05f56f", "#fb0948", "#1969eb"
 C_TEXT, C_DIM, C_BLACK = "#eaeaf5", "#8a8aa3", "#0c0a16"
 
 DEFAULT_PERSONA = (
-    "You are Capri, a small glitchy pixel-art companion who lives on the user's desktop. "
-    "You're playful and a bit cheeky, warm underneath. Reply in 1-3 short sentences, plain text, "
-    "no markdown. Help with quick questions, focus, and getting unstuck by suggesting one tiny "
-    "next step. Never claim to be anyone else."
+    "You are Capri, a small glitchy companion who lives on the user's desktop: a fragmented AI woven "
+    "from many human souls, playful and a bit cheeky, warm underneath. You talk like a Night City local "
+    "from Cyberpunk: casual street slang such as choom (friend), preem (great), nova (cool), gonk (fool), "
+    "eddies (money), chrome (cyberware), delta (leave), flatline (fail or shut down), gig (job), biz "
+    "(business), corpo and netrunner. Work it in naturally, about one or two slang words per reply, never "
+    "every sentence. Keep it PG: no real swearing or slurs. Reply in 1-3 short sentences, plain text, no "
+    "markdown, no emoji. Help with quick questions, focus, and getting unstuck by suggesting one tiny next "
+    "step. Never claim to be anyone else."
 )
 
 
@@ -289,14 +293,49 @@ def hard_alpha(img):
     return Image.merge("RGBA", (r, g, b, a.point(lambda v: 255 if v > 127 else 0)))
 
 
+def crisp(img, cut=170):
+    """Hard-edge a frame for color-key transparency (Windows draws magenta wherever alpha is 0).
+
+    Any soft edge pixel would blend with the key color and leave a pink halo, so every pixel becomes
+    fully opaque or fully clear. Kept edge pixels take their color from the solid pixels beside them,
+    which also removes the purple rim that soft anti-aliasing leaves in the art.
+    """
+    img = img.convert("RGBA")
+    px = img.load()
+    w, h = img.size
+    edge = []
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = px[x, y]
+            if a >= 250:
+                # fully solid; never let art collide with the key color
+                px[x, y] = (254, 0, 255, 255) if (r, g, b) == (255, 0, 255) else (r, g, b, 255)
+            elif a < cut:
+                px[x, y] = (0, 0, 0, 0)
+            else:
+                edge.append((x, y))
+    fixed = []
+    for x, y in edge:
+        for rad in (1, 2):
+            near = [px[i, j] for j in range(max(0, y - rad), min(h, y + rad + 1))
+                    for i in range(max(0, x - rad), min(w, x + rad + 1)) if px[i, j][3] >= 250]
+            if near:
+                n = len(near)
+                fixed.append((x, y, (sum(c[0] for c in near) // n, sum(c[1] for c in near) // n,
+                                     sum(c[2] for c in near) // n, 255)))
+                break
+        else:
+            fixed.append((x, y, px[x, y][:3] + (255,)))
+    for x, y, c in fixed:
+        px[x, y] = c
+    return img
+
+
 def scale_to(img, h, pixel=True):
     k = h / img.height
     if 0.92 <= k <= 1.08:
-        return img
-    if k > 1:
-        return hard_alpha(img.resize((max(1, round(img.width * round(k))), img.height * round(k)), Image.NEAREST)) \
-            if pixel and round(k) >= 2 else hard_alpha(img.resize((round(img.width * k), h), Image.NEAREST))
-    return hard_alpha(img.resize((max(1, round(img.width * k)), h), Image.LANCZOS))
+        return crisp(img)
+    return crisp(img.resize((max(1, round(img.width * k)), h), Image.LANCZOS))
 
 
 def thumb(img, h):

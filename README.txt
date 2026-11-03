@@ -7,9 +7,8 @@ RUN
   Real .exe: run 2_BUILD_exe_Windows.bat -> dist\Capri.exe
 
 WHAT SHE DOES
-  She is animated from her single sprite by a built-in puppet rig: she breathes, blinks,
-  walks with a bob and sway, dances, sleeps with her eyes shut, startles, droops when
-  something goes wrong, and her jaw moves while she "talks" in chat.
+  She is the animated Petdex Capri (the pet/ folder: spritesheet + pet.json). She idles,
+  walks, waves, jumps, droops when something goes wrong, and her moods change what she does.
   She roams, lounges, naps, glitch-teleports, gets curious about your cursor, startles if you
   swipe at her, and gets annoyed (sassy for a few minutes) if you spam-click.
   On Windows she can perch on the top edge of your active window (and always on the chat window).
@@ -32,17 +31,17 @@ CHAT
   Slash commands: /help /focus [min] /remind <min> <text> /name <you> /mood /key <key> /tp /dance /sleep /calm /clear
   Edit personality: create persona.txt next to capri.py with your own instructions.
 
-PETDEX / CODEX PET (optional, animated)
-  Run on your own computer:  npx petdex install capri
-  If it lands in ~/.codex/pets/capri, Capri uses its animated sheet automatically
-  (or copy the files into a folder named "pet" next to capri.py).
-  Preview what she found:  python capri.py --pet-preview
+HER LOOK (pet/ folder)
+  The bundled pet/ folder is used first. To use a different Codex/Petdex pet, install it
+  (npx petdex@latest install <name>) or point CAPRI_PET_DIR at its folder.
+  Preview every animation row she loaded:  python capri.py --pet-preview
   If animations look mismatched, add pet_map.json next to capri.py, e.g.
   {"idle":0,"running-right":1,"running-left":2,"waving":3,"jumping":4,"failed":5,"waiting":6,"running":7}
+  (The sheet has two extra rows of 8 frames at the bottom that she doesn't use yet.)
 
 FILES she writes: ~/.capri/ (settings, chat history, capri.log for errors)
 Linux has no real transparency (dark box). Perching on other apps' windows is Windows-only.
 
 DEVELOPING
-  rig.py          procedural animation (PIL only)       personality.py  moods, memory, lines (no Tk)
+  personality.py  moods, memory, lines (no Tk)
   Tests:  python -m unittest discover -s tests

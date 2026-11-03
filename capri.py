@@ -21,7 +21,6 @@ import tkinter as tk
 from tkinter import font as tkfont
 
 import personality
-import rig
 
 try:
     from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageTk
@@ -303,49 +302,17 @@ def thumb(img, h):
     return img.resize((max(1, round(img.width * h / img.height)), h), Image.BOX)
 
 
+def head_portrait(frame, h=56):
+    """Chat-avatar crop: the top of her silhouette (hair + face)."""
+    bb = frame.getchannel("A").getbbox()
+    if not bb:
+        return thumb(frame, h)
+    x0, y0, x1, y1 = bb
+    return thumb(frame.crop((x0, y0, x1, y0 + max(8, int((y1 - y0) * 0.38)))), h)
+
+
 def norm(name):
     return str(name).lower().replace("_", "-").replace(" ", "-")
-
-
-class StaticSprites:
-    """Single-pose art (idle.png + optional emote crops); motion is procedural."""
-    kind = "static"
-    flip_dir = True
-    puppet = None
-
-    def __init__(self, folder, target_h):
-        def op(n):
-            p = os.path.join(folder, n + ".png")
-            return Image.open(p).convert("RGBA") if os.path.isfile(p) else None
-        idle = op("idle")
-        if idle is None:
-            raise FileNotFoundError("idle.png")
-        k = max(1, round(target_h / idle.height))
-        self.idle = hard_alpha(idle.resize((idle.width * k, idle.height * k), Image.NEAREST))
-        self.w, self.h = self.idle.size
-        self.emotes = {}
-        for key, name in (("wide", "eyes_wide"), ("angry", "eyes_angry"), ("talk", "face_small")):
-            im = op(name)
-            if im is not None:
-                self.emotes[key] = hard_alpha(im.resize((int(self.w * 0.62), int(self.w * 0.62 * im.height / im.width)),
-                                                        Image.NEAREST))
-        self.portraits = {}
-        for key, name in (("idle", "face_a"), ("talk", "talk"), ("angry", "eyes_angry")):
-            im = op(name)
-            if im is not None:
-                self.portraits[key] = thumb(im, 56 if key != "angry" else 40)
-        if "idle" not in self.portraits:
-            self.portraits["idle"] = thumb(self.idle, 56)
-        try:
-            self.puppet = rig.Puppet(self.idle)
-        except Exception:
-            log("rig failed, using a single pose: " + traceback.format_exc())
-            self.puppet = None
-
-    def frame(self, anim, t, d):
-        if self.puppet:
-            return self.puppet.frame(anim, t, d)
-        return ("s",), self.idle
 
 
 class SheetSprites:
@@ -419,7 +386,11 @@ class SheetSprites:
         self.emotes = {}
         idle_row = self.rows[mapping.get("idle", 0)] if mapping.get("idle", 0) < len(self.rows) else []
         base = (idle_row or next(r for r in self.rows if r))[0]
-        self.portraits = {"idle": thumb(base, 56)}
+        self.portraits = {"idle": head_portrait(base)}
+        for key, name, i in (("talk", "waving", 1), ("angry", "failed", 0)):
+            fr = self.row_frames(name)
+            if fr:
+                self.portraits[key] = head_portrait(fr[min(i, len(fr) - 1)])
 
     def row_frames(self, name):
         i = self.map.get(name)
@@ -439,24 +410,31 @@ class SheetSprites:
         return ("any", 0), fr[0]
 
 
-def placeholder_sprites(target_h):
-    im = Image.new("RGBA", (40, 64), (0, 0, 0, 0))
-    d = ImageDraw.Draw(im)
-    d.rectangle((8, 10, 32, 60), fill=(251, 9, 72, 255), outline=(12, 10, 22, 255))
-    d.rectangle((8, 10, 32, 28), fill=(5, 245, 111, 255), outline=(12, 10, 22, 255))
-    d.rectangle((12, 16, 17, 22), fill=(25, 105, 235, 255))
-    d.rectangle((23, 16, 28, 22), fill=(25, 105, 235, 255))
-    k = max(1, round(target_h / 64))
-    s = StaticSprites.__new__(StaticSprites)
-    s.idle = im.resize((40 * k, 64 * k), Image.NEAREST)
-    s.w, s.h = s.idle.size
-    s.emotes, s.portraits = {}, {"idle": thumb(s.idle, 56)}
-    return s
+class PlaceholderSprites:
+    """Last-resort stand-in if the Capri sheet can't be found or read."""
+    kind = "placeholder"
+    flip_dir = True
+
+    def __init__(self, target_h):
+        im = Image.new("RGBA", (40, 64), (0, 0, 0, 0))
+        d = ImageDraw.Draw(im)
+        d.rectangle((8, 10, 32, 60), fill=(251, 9, 72, 255), outline=(12, 10, 22, 255))
+        d.rectangle((8, 10, 32, 28), fill=(5, 245, 111, 255), outline=(12, 10, 22, 255))
+        d.rectangle((12, 16, 17, 22), fill=(25, 105, 235, 255))
+        d.rectangle((23, 16, 28, 22), fill=(25, 105, 235, 255))
+        k = max(1, round(target_h / 64))
+        self.idle = im.resize((40 * k, 64 * k), Image.NEAREST)
+        self.w, self.h = self.idle.size
+        self.emotes, self.portraits = {}, {"idle": thumb(self.idle, 56)}
+
+    def frame(self, anim, t, d):
+        return ("p",), self.idle
 
 
 def find_pet_dir():
     home = os.path.expanduser("~")
-    cands = [os.environ.get("CAPRI_PET_DIR"), os.path.join(app_dir(), "pet"), os.path.join(data_dir(), "pet"),
+    cands = [os.environ.get("CAPRI_PET_DIR"), os.path.join(app_dir(), "pet"),
+             os.path.join(getattr(sys, "_MEIPASS", app_dir()), "pet"), os.path.join(data_dir(), "pet"),
              os.path.join(home, ".codex", "pets", "capri")]
     pets = os.path.join(home, ".codex", "pets")
     if os.path.isdir(pets):
@@ -465,13 +443,6 @@ def find_pet_dir():
         if c and any(os.path.isfile(os.path.join(c, n)) for n in ("spritesheet.webp", "spritesheet.png")):
             return c
     return None
-
-
-def static_dir():
-    beside = os.path.join(app_dir(), "sprites")
-    if os.path.isfile(os.path.join(beside, "idle.png")):
-        return beside
-    return os.path.join(getattr(sys, "_MEIPASS", app_dir()), "sprites")
 
 
 def load_art(dpi):
@@ -484,11 +455,8 @@ def load_art(dpi):
             return art
         except Exception:
             log("sheet pet failed: " + traceback.format_exc())
-    try:
-        return StaticSprites(static_dir(), target)
-    except Exception:
-        log("static sprites failed: " + traceback.format_exc())
-        return placeholder_sprites(target)
+    log("no usable Capri sheet found; showing the placeholder")
+    return PlaceholderSprites(target)
 
 
 # ------------------------------------------------------------------ posing and glitch

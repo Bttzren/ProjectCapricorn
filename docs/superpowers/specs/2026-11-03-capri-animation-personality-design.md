@@ -41,3 +41,10 @@ Redesigning her look, new art from the internet (licensing, identity), a web/mob
 - `tests/` (stdlib `unittest`): rig geometry/frames/caching/eye+mouth detection,
   personality mood/lines/greetings/offline replies.
 - Headless smoke test of the real app under Xvfb with a screenshot.
+
+## Update: Petdex art replaces the sprite rig
+The owner supplied the real animated Petdex Capri (8x11 sheet + pet.json). It is now bundled in
+`pet/` and is the only art. The original `sprites/` and the procedural `rig.py` (written to animate
+them) were removed. A tiny placeholder is shown only if the sheet is missing or unreadable. The
+sheet loader slices by fractional cell size so scaled exports (1343x2000) are not clipped.
+The two extra 8-frame rows at the bottom of the sheet are not used yet (names unknown).

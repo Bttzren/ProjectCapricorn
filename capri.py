@@ -21,6 +21,7 @@ import tkinter as tk
 from tkinter import font as tkfont
 
 import personality
+import voice
 
 try:
     from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageTk
@@ -311,6 +312,17 @@ def head_portrait(frame, h=56):
     return thumb(frame.crop((x0, y0, x1, y0 + max(8, int((y1 - y0) * 0.38)))), h)
 
 
+def head_portraits(frames, h=56):
+    """Head crops for a whole animation, all cut with the same box so the avatar doesn't jitter."""
+    boxes = [b for b in (f.getchannel("A").getbbox() for f in frames) if b]
+    if not boxes:
+        return [thumb(f, h) for f in frames]
+    x0, y0 = min(b[0] for b in boxes), min(b[1] for b in boxes)
+    x1, y1 = max(b[2] for b in boxes), max(b[3] for b in boxes)
+    box = (x0, y0, x1, y0 + max(8, int((y1 - y0) * 0.38)))
+    return [thumb(f.crop(box), h) for f in frames]
+
+
 def norm(name):
     return str(name).lower().replace("_", "-").replace(" ", "-")
 
@@ -327,6 +339,7 @@ class SheetSprites:
         "run": ["running", "running-right", "idle"],
         "dance": ["waving", "jumping", "idle"], "startle": ["jumping", "failed", "idle"],
         "talk": ["waving", "idle"],
+        "look-a": ["look-a", "idle"], "look-b": ["look-b", "idle"],
     }
 
     def __init__(self, folder, target_h):
@@ -382,6 +395,9 @@ class SheetSprites:
             for n, row in override.items():
                 if isinstance(row, int):
                     mapping[norm(n)] = row
+        for name, row in (("look-a", 9), ("look-b", 10)):      # the sheet's two "look around" loops
+            if name not in mapping and row < len(self.rows) and self.rows[row]:
+                mapping[name] = row
         self.map = mapping
         self.emotes = {}
         idle_row = self.rows[mapping.get("idle", 0)] if mapping.get("idle", 0) < len(self.rows) else []
@@ -391,6 +407,11 @@ class SheetSprites:
             fr = self.row_frames(name)
             if fr:
                 self.portraits[key] = head_portrait(fr[min(i, len(fr) - 1)])
+        self.avatar = {}
+        for key, name in (("idle", "idle"), ("talk", "waving")):
+            fr = self.row_frames(name)
+            if fr:
+                self.avatar[key] = head_portraits(fr)
 
     def row_frames(self, name):
         i = self.map.get(name)
@@ -553,6 +574,8 @@ class ChatWindow:
         self.q = queue.Queue()
         self.busy = False
         self.images = {}
+        self.av_i = 0
+        self.face_override = None
         self.typing_job = None
         self.typing_row = None
         self.history = load_json(os.path.join(data_dir(), "chat_history.json"), [])
@@ -569,6 +592,7 @@ class ChatWindow:
             self.add_bubble("assistant", "Hey. I'm here. Type something, or tap a button below.", animate=False)
         self.win.after(60, self.scroll_end)
         self.entry.focus_set()
+        self.win.after(160, self.tick_avatar)
 
     # ---- layout
     def photo(self, key):
@@ -739,7 +763,24 @@ class ChatWindow:
         self.status.config(text=text, fg=color)
 
     def set_face(self, key):
-        self.portrait.config(image=self.photo(key if key in self.pet.art.portraits else "idle"))
+        self.face_override = key if key == "angry" else None
+        if self.face_override:
+            self.portrait.config(image=self.photo(key if key in self.pet.art.portraits else "idle"))
+
+    def tick_avatar(self):
+        if not self.alive():
+            return
+        av = getattr(self.pet.art, "avatar", None)
+        if av and not self.face_override:
+            key = "talk" if (self.busy or time.time() < self.pet.talk_until) else "idle"
+            frames = av.get(key) or av.get("idle")
+            if frames:
+                self.av_i = (self.av_i + 1) % len(frames)
+                k = (key, self.av_i)
+                if k not in self.images:
+                    self.images[k] = ImageTk.PhotoImage(frames[self.av_i])
+                self.portrait.config(image=self.images[k])
+        self.win.after(160, self.tick_avatar)
 
     # ---- sending
     def on_enter(self, e):
@@ -831,6 +872,7 @@ class ChatWindow:
             lbl = self.add_bubble("assistant", text, animate=True)
             self.typewrite(lbl, text, 0)
             self.pet.react("happy")
+            self.pet.speak(text, priority=True)
         else:
             if self.history and self.history[-1]["role"] == "user":
                 self.history.pop()
@@ -867,7 +909,7 @@ class ChatWindow:
         p = self.pet
         if cmd == "/help":
             self.system_line("/focus [min]  /remind <min> <text>  /name <you>  /mood  /key <api key>  "
-                             "/tp  /dance  /sleep  /calm  /clear")
+                             "/voice  /tp  /dance  /sleep  /calm  /clear")
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
@@ -887,6 +929,12 @@ class ChatWindow:
             save_api_key(parts[1])
             self.drop_keybar()
             self.system_line("Key saved. Real chat unlocked.")
+        elif cmd == "/voice":
+            lvl = parts[1].lower() if len(parts) > 1 else ""
+            if lvl in ("off", "replies", "chatty"):
+                p.set_voice(lvl)
+            else:
+                self.system_line("/voice off | replies | chatty   (now: " + p.settings.get("voice", "chatty") + ")")
         elif cmd == "/tp":
             p.teleport()
         elif cmd == "/dance":
@@ -998,6 +1046,7 @@ class Capri:
         if not isinstance(self.settings, dict):
             self.settings = {}
         self.mind = personality.Mind(self.settings)
+        self.speaker = voice.Speaker()
         self.art = load_art(self.dpi)
         self.fw, self.fh = self.art.w, self.art.h
         self.Wd = max(280, int(self.fh * 1.25) + 30)
@@ -1036,6 +1085,7 @@ class Capri:
         self.next_chatter = now + random.randint(40, 90)
         self.chat = None
         self.talk_until = 0.0
+        self.icon = None
         self.next_save = now + 60
         self.pointer = (0, 0)
         self.pointer_prev = (0, 0, now)
@@ -1137,33 +1187,82 @@ class Capri:
         self.go("air")
         self.anim = "jump"
 
+    def set_icon(self, kind, secs=1.6):
+        self.icon = (kind, time.time(), time.time() + secs)
+
+    def draw_icon(self, c, now, lfx, top):
+        kind, t0, _ = self.icon
+        age = now - t0
+        x = lfx + self.fw * 0.34
+        y = top + self.fh * 0.14 - min(8.0, age * 24) + math.sin(now * 9) * 1.5
+        f = self.font_family
+
+        def outlined(text, size, fill):
+            for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                c.create_text(x + dx, y + dy, text=text, font=(f, size, "bold"), fill=C_BLACK)
+            c.create_text(x, y, text=text, font=(f, size, "bold"), fill=fill)
+        if kind == "!":
+            outlined("!", 20, C_RED)
+        elif kind == "?":
+            outlined("?", 18, C_GREEN)
+        elif kind == "heart":
+            s = 7 + 3 * min(1.0, age / 0.2)
+            c.create_polygon(x, y + s, x - s, y - s * 0.1, x - s * 0.6, y - s * 0.8, x, y - s * 0.35,
+                             x + s * 0.6, y - s * 0.8, x + s, y - s * 0.1, fill=C_RED, outline=C_BLACK,
+                             smooth=True, width=2)
+        elif kind == "anger":
+            for dx, dy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
+                c.create_line(x + dx * 3, y + dy * 3, x + dx * 10, y + dy * 10, fill=C_RED, width=3)
+
     def react(self, kind):
         now = time.time()
+        if kind in ("happy", "error"):
+            self.icon = None
         if kind == "startle":
             self.set_emote("wide", 1.6)
-            self.say(self.rng.choice(["!", "Whoa.", "Hey!"]), 1.6)
+            self.say(self.rng.choice(["Whoa.", "Hey!", "Eep."]), 1.6)
+            self.set_icon("!", 1.4)
             self.hop(8)
             self.anim = "startle"
         elif kind == "annoyed":
             self.set_emote("angry", 2.4)
             self.say("Okay, that's enough.", 2.5)
+            self.set_icon("anger", 2.4)
         elif kind == "think":
             self.anim = "wait"
+            self.set_icon("?", 25)
         elif kind == "happy" and self.state in ("idle", "perch", "walk"):
             self.set_emote("talk", 1.4)
             self.anim = "wave"
             self.state_dur = max(self.state_dur or 0, 2.0)
         elif kind == "error":
             self.set_emote("angry", 2.0)
+            self.set_icon("anger", 2.0)
             self.anim = "fail"
 
     def set_emote(self, name, secs):
         if name in self.art.emotes:
             self.emote = (name, time.time(), time.time() + secs)
 
-    def say(self, text, secs=6.0):
+    def say(self, text, secs=6.0, speak="ambient"):
+        """Show a speech bubble and (voice permitting) say it. speak: "ambient", "priority" or None."""
         text = text if len(text) <= 140 else text[:137] + "..."
         self.bubble, self.bubble_t0, self.bubble_until = text, time.time(), time.time() + secs
+        if speak:
+            self.speak(text, priority=(speak == "priority"))
+
+    def speak(self, text, priority=False):
+        level = self.settings.get("voice", "chatty")
+        if level == "off" or (level == "replies" and not priority) or (self.calm and not priority):
+            return
+        self.speaker.speak(text, priority)
+
+    def set_voice(self, level):
+        self.settings["voice"] = level
+        self.save_settings()
+        msg = {"off": "Okay, I'll be quiet.", "replies": "I'll only speak for replies and alerts.",
+               "chatty": "Chatty mode. You asked for it."}[level]
+        self.say(msg, 4, speak=None if level == "off" else "priority")
 
     def bounds(self):
         wa = self.work_area()
@@ -1180,6 +1279,8 @@ class Capri:
             self.go("idle", self.rng.uniform(4, 9))
             return
         opts = [("walk", 30), ("lounge", 12), ("teleport", 14), ("curious", 10), ("dance", 4), ("idle", 14)]
+        if "look-a" in getattr(self.art, "map", {}):
+            opts.append(("look", 9))
         if self.surfaces and not self.surf:
             opts.append(("perch", 16))
         if self.surf:
@@ -1202,6 +1303,9 @@ class Capri:
             self.teleport()
         elif name == "curious":
             self.go("curious", 8)
+        elif name == "look":
+            self.go("idle", self.rng.uniform(2.5, 4.5))
+            self.anim = self.rng.choice(("look-a", "look-b"))
         elif name == "dance":
             self.go("dance", 3.2)
         elif name == "perch":
@@ -1390,24 +1494,27 @@ class Capri:
             self.root.attributes("-topmost", True)
 
     def scheduled(self, now):
+        if self.speaker.speaking:
+            self.talk_until = now + 0.3          # her mouth moves while she talks
         if now >= self.next_save:
             self.next_save = now + 60
             self.mind.tick(now)
             self.save_settings()
         if self.timer_end and now >= self.timer_end:
             if self.timer_mode == "focus":
-                self.say(f"Focus done! {BREAK_MIN} min break. Move around.", 12)
+                self.say(f"Focus done! {BREAK_MIN} min break. Move around.", 12, speak="priority")
                 self.timer_mode, self.timer_end = "break", now + BREAK_MIN * 60
                 self.poke_awake()
                 self.go("dance", 3.0)
             else:
-                self.say("Break's over. Another round?", 12)
+                self.say("Break's over. Another round?", 12, speak="priority")
                 self.timer_mode = self.timer_end = None
                 self.react("happy")
         for r in [r for r in self.reminders if now >= r[0]]:
             self.reminders.remove(r)
             self.poke_awake()
-            self.say("Reminder: " + r[1], 15)
+            self.say("Reminder: " + r[1], 15, speak="priority")
+            self.set_icon("!", 3.0)
             self.hop(7)
         if self.checkins and now >= self.next_checkin and not self.calm:
             self.next_checkin = now + random.randint(*CHECKIN_EVERY)
@@ -1498,6 +1605,8 @@ class Capri:
             return
         self.mind.poke(now)
         self.say(self.mind.line("poke", now), 2.5)
+        if self.mind.affection > 60 and self.rng.random() < 0.5:
+            self.set_icon("heart", 1.6)
         if self.state in ("idle", "perch", "walk", "sleep", "lounge", "curious"):
             self.hop(6)
 
@@ -1568,6 +1677,15 @@ class Capri:
         if self.win32.ok:
             m.add_command(label="Perch on my window", command=lambda: self.teleport("perch"))
         m.add_separator()
+        if self.speaker.available:
+            vm = tk.Menu(m, tearoff=0, bg=C_PANEL, fg=C_TEXT, activebackground=C_GREEN, activeforeground=C_BLACK,
+                         bd=0, relief="flat", font=(self.font_family, 10))
+            cur = self.settings.get("voice", "chatty")
+            for key, label in (("off", "Off"), ("replies", "Replies & alerts only"), ("chatty", "Chatty")):
+                vm.add_command(label=("* " if cur == key else "   ") + label, command=lambda k=key: self.set_voice(k))
+            m.add_cascade(label="Voice", menu=vm)
+        else:
+            m.add_command(label="Voice: no speech engine found", state="disabled")
         m.add_command(label=f"Calm mode: {'on' if self.calm else 'off'}", command=self.toggle_calm)
         m.add_command(label=f"Check-ins: {'on' if self.checkins else 'off'}", command=self.toggle_checkins)
         m.add_separator()
@@ -1578,6 +1696,7 @@ class Capri:
             m.grab_release()
 
     def quit(self):
+        self.speaker.stop()
         self.mind.sync(time.time())
         self.save_settings()
         if self.chat and self.chat.alive():
@@ -1636,6 +1755,8 @@ class Capri:
                 self._emote_photo = ImageTk.PhotoImage(ei)
                 c.create_image(lfx + self.fw * 0.12, max(0, top - 2 - ei.height * 0.1 + math.sin(now * 8) * 2),
                                image=self._emote_photo, anchor="sw")
+        if self.icon and now < self.icon[2]:
+            self.draw_icon(c, now, lfx, top)
         base_y = max(40, top - 6)
         if self.timer_end:
             left = max(0, int(self.timer_end - now))

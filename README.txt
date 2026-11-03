@@ -22,13 +22,20 @@ PERSONALITY
   what she says, and how she answers in chat. She greets you by time of day, notices if you were
   away for hours, and remembers your name (/name <you>). Affection is kept between runs.
 
+VOICE
+  She talks out loud using your computer's built-in speech (nothing to install on Windows or Mac;
+  on Linux install espeak-ng). Right-click her > Voice: Off / Replies & alerts only / Chatty,
+  or type /voice off|replies|chatty in the chat. Her mouth moves while she speaks. Calm mode mutes
+  her ambient chatter. To use a different installed voice, set the CAPRI_VOICE environment variable
+  to its name (Windows example: "Microsoft Zira Desktop").
+
 CHAT
   Works right away in offline mode (canned, mood-based replies). For real AI chat, double-click her,
   paste a Claude key (sk-ant...) or a Gemini key into the box at the top of the chat window and press
   SAVE KEY. It is stored in ~/.capri/api_key.txt. (You can also use /key <key>, an environment
   variable, or copy api_key.example.txt to api_key.txt next to capri.py.)
   Enter sends, Shift+Enter = new line. Click a bubble to copy it. History is saved.
-  Slash commands: /help /focus [min] /remind <min> <text> /name <you> /mood /key <key> /tp /dance /sleep /calm /clear
+  Slash commands: /help /focus [min] /remind <min> <text> /name <you> /mood /voice /key <key> /tp /dance /sleep /calm /clear
   Edit personality: create persona.txt next to capri.py with your own instructions.
 
 HER LOOK (pet/ folder)
@@ -43,5 +50,5 @@ FILES she writes: ~/.capri/ (settings, chat history, capri.log for errors)
 Linux has no real transparency (dark box). Perching on other apps' windows is Windows-only.
 
 DEVELOPING
-  personality.py  moods, memory, lines (no Tk)
+  personality.py  moods, memory, lines (no Tk)       voice.py  text-to-speech (no Tk)
   Tests:  python -m unittest discover -s tests

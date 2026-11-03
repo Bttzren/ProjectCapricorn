@@ -25,11 +25,18 @@ PERSONALITY
   away for hours, and remembers your name (/name <you>). Affection is kept between runs.
 
 VOICE
-  She talks out loud using your computer's built-in speech (nothing to install on Windows or Mac;
-  on Linux install espeak-ng). Right-click her > Voice: Off / Replies & alerts only / Chatty,
-  or type /voice off|replies|chatty in the chat. Her mouth moves while she speaks. Calm mode mutes
-  her ambient chatter. To use a different installed voice, set the CAPRI_VOICE environment variable
-  to its name (Windows example: "Microsoft Zira Desktop").
+  She talks out loud. Right-click her > Voice: Off / Replies & alerts only / Chatty, or type
+  /voice off|replies|chatty in the chat. Her mouth moves while she speaks. Calm mode mutes her
+  ambient chatter.
+  Capri's real voice (Fish Audio): get an API key from fish.audio, then in the chat window type
+      /fishkey <your key>
+  (or set FISH_API_KEY, or put the key in fish_key.txt next to capri.py). She uses voice model
+  ef387f44931d4ab6a3f959a083c9fbb1 (override with CAPRI_FISH_VOICE). Note: every line she speaks is
+  sent to Fish Audio, which uses your credits. Lines are cached in ~/.capri/voice_cache so repeats
+  are free. /fishkey off goes back to the built-in voice. If Fish fails (no internet, bad key, no
+  credits) she falls back to the built-in voice and tells you why.
+  Without a Fish key she uses your computer's built-in speech (nothing to install on Windows or Mac;
+  on Linux install espeak-ng). Set CAPRI_VOICE to pick a different installed voice.
 
 CHAT
   Works right away in offline mode (canned, mood-based replies). For real AI chat, double-click her,
@@ -52,5 +59,5 @@ FILES she writes: ~/.capri/ (settings, chat history, capri.log for errors)
 Linux has no real transparency (dark box). Perching on other apps' windows is Windows-only.
 
 DEVELOPING
-  personality.py  moods, memory, lines (no Tk)       voice.py  text-to-speech (no Tk)
+  personality.py  moods, memory, lines (no Tk)       voice.py  speech: Fish Audio + system voice (no Tk)
   Tests:  python -m unittest discover -s tests

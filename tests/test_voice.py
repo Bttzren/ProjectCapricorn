@@ -1,3 +1,4 @@
+import json
 import os
 import stat
 import subprocess
@@ -139,6 +140,193 @@ class SpeakerTests(unittest.TestCase):
                     break
                 time.sleep(0.05)
             self.assertEqual(open(out, encoding="utf-8").read(), "Hi, it is me!")
+
+
+def wav_bytes(seconds=0.5, rate=8000):
+    import io
+    import wave
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(b"\x00\x00" * int(rate * seconds))
+    return buf.getvalue()
+
+
+class FakeResp:
+    def __init__(self, data):
+        self.data = data
+
+    def read(self):
+        return self.data
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+class FakeFishServer:
+    def __init__(self, data=None, errors=()):
+        self.data, self.errors, self.requests = data if data is not None else wav_bytes(), list(errors), []
+
+    def __call__(self, req, timeout=None):
+        import urllib.error
+        self.requests.append(req)
+        if self.errors:
+            code = self.errors.pop(0)
+            raise urllib.error.HTTPError(req.full_url, code, "err", {}, None)
+        return FakeResp(self.data)
+
+
+class FishTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def fish(self, server, **kw):
+        return voice.FishVoice("sekrit-key", cache_dir=self.tmp.name, opener=server, **kw)
+
+    def test_request_shape_uses_capris_voice_id_and_bearer_key(self):
+        srv = FakeFishServer()
+        path = self.fish(srv).fetch("Hey, choom!")
+        req = srv.requests[0]
+        self.assertEqual(req.full_url, "https://api.fish.audio/v1/tts")
+        self.assertEqual(req.get_method(), "POST")
+        self.assertEqual(req.get_header("Authorization"), "Bearer sekrit-key")
+        body = json.loads(req.data)
+        self.assertEqual(body["text"], "Hey, choom!")
+        self.assertEqual(body["reference_id"], "ef387f44931d4ab6a3f959a083c9fbb1")
+        self.assertEqual(body["format"], "wav")
+        self.assertTrue(os.path.isfile(path))
+
+    def test_audio_is_cached_so_repeat_lines_cost_nothing(self):
+        srv = FakeFishServer()
+        f = self.fish(srv)
+        a = f.fetch("Boop.")
+        b = f.fetch("Boop.")
+        self.assertEqual(a, b)
+        self.assertEqual(len(srv.requests), 1)
+        f.fetch("Different line.")
+        self.assertEqual(len(srv.requests), 2)
+
+    def test_model_header_rejected_retries_without_it(self):
+        srv = FakeFishServer(errors=[400])
+        self.fish(srv).fetch("hello there")
+        self.assertEqual(len(srv.requests), 2)
+        self.assertIsNotNone(srv.requests[0].get_header("Model"))
+        self.assertIsNone(srv.requests[1].get_header("Model"))
+
+    def test_helpful_errors(self):
+        for code, word in ((401, "bad Fish Audio key"), (402, "credits"), (404, "voice model not found")):
+            with self.assertRaises(RuntimeError) as cm:
+                self.fish(FakeFishServer(errors=[code])).fetch("x" + str(code) + " line")
+            self.assertIn(word, str(cm.exception))
+
+    def test_non_wav_response_rejected_and_not_cached(self):
+        f = self.fish(FakeFishServer(data=b"<html>nope</html>"))
+        with self.assertRaises(RuntimeError):
+            f.fetch("some line")
+        self.assertEqual([n for n in os.listdir(self.tmp.name) if n.endswith(".wav")], [])
+
+    def test_cache_is_pruned(self):
+        f = self.fish(FakeFishServer(), max_cache=3)
+        for i in range(6):
+            f.fetch(f"line number {i}")
+        self.assertLessEqual(len([n for n in os.listdir(self.tmp.name) if n.endswith(".wav")]), 3)
+
+    def test_wav_seconds(self):
+        p = os.path.join(self.tmp.name, "t.wav")
+        open(p, "wb").write(wav_bytes(0.5, 8000))
+        self.assertAlmostEqual(voice.wav_seconds(p), 0.5, places=2)
+        self.assertEqual(voice.wav_seconds(os.path.join(self.tmp.name, "missing.wav")), 0.0)
+
+    def speaker(self, srv, r, played, have=("espeak-ng",), **kw):
+        def player(path):
+            played.append(path)
+            return None, 0.5
+        return voice.Speaker(platform="linux", which=lambda n: "/bin/" + n if n in have else None,
+                             popen=r.popen, clock=r.clock, fish=self.fish(srv), player=player, threaded=False, **kw)
+
+    def test_speaker_uses_fish_and_reports_speaking_while_audio_plays(self):
+        r, played = Rig(), []
+        s = self.speaker(FakeFishServer(), r, played)
+        self.assertEqual(s.engine, "fish")
+        self.assertTrue(s.speak("Hey, choom!"))
+        self.assertEqual(len(played), 1)
+        self.assertEqual(r.procs, [])                 # system voice untouched
+        self.assertTrue(s.speaking)
+        r.t += 1
+        self.assertFalse(s.speaking)                  # clip finished (0.5s)
+
+    def test_fish_failure_falls_back_to_system_voice_and_records_why(self):
+        r, played = Rig(), []
+        s = self.speaker(FakeFishServer(errors=[402]), r, played)
+        self.assertTrue(s.speak("Water break, choom"))
+        self.assertEqual(played, [])
+        self.assertEqual(len(r.procs), 1)
+        self.assertIn(b"Water break", r.procs[0].written)
+        self.assertIn("credits", s.last_error)
+
+    def test_no_player_falls_back_to_system_voice(self):
+        r = Rig()
+        s = voice.Speaker(platform="linux", which=lambda n: "/bin/" + n if n == "espeak-ng" else None,
+                          popen=r.popen, clock=r.clock, fish=self.fish(FakeFishServer()),
+                          player=lambda p: None, threaded=False)
+        self.assertTrue(s.speak("hello there"))
+        self.assertEqual(len(r.procs), 1)
+        self.assertIn("audio player", s.last_error)
+
+    def test_fish_only_still_counts_as_available(self):
+        r = Rig()
+        s = voice.Speaker(platform="linux", which=lambda n: None, popen=r.popen, clock=r.clock,
+                          fish=self.fish(FakeFishServer()), player=lambda p: (None, 0.1), threaded=False)
+        self.assertTrue(s.available)
+        self.assertTrue(s.speak("hello there"))
+
+    def test_stopping_during_download_cancels_playback(self):
+        r, played = Rig(), []
+        s = self.speaker(FakeFishServer(), r, played)
+        orig = s.fish.fetch
+
+        def slow_fetch(text):
+            path = orig(text)
+            s.stop()                                   # user/priority line arrives mid-download
+            return path
+        s.fish.fetch = slow_fetch
+        s.speak("long line here")
+        self.assertEqual(played, [])
+
+    def test_play_file_picks_a_linux_player_and_survives_none(self):
+        launched = []
+        res = voice.play_file("/x/a.wav", "linux", which=lambda n: "/bin/" + n if n == "aplay" else None,
+                              popen=lambda argv, **k: launched.append(argv) or FakeProc())
+        self.assertEqual(launched[0][0], "/bin/aplay")
+        self.assertIsNotNone(res)
+        self.assertIsNone(voice.play_file("/x/a.wav", "linux", which=lambda n: None))
+        mac = voice.play_file("/x/a.wav", "darwin", which=lambda n: "/usr/bin/" + n,
+                              popen=lambda argv, **k: launched.append(argv) or FakeProc())
+        self.assertEqual(launched[-1], ["/usr/bin/afplay", "/x/a.wav"])
+
+    def test_windows_playback_uses_winsound_async_from_a_file(self):
+        calls = []
+
+        class WS:
+            SND_FILENAME, SND_ASYNC, SND_PURGE = 1, 2, 4
+
+            @staticmethod
+            def PlaySound(a, b):
+                calls.append((a, b))
+        p = os.path.join(self.tmp.name, "w.wav")
+        open(p, "wb").write(wav_bytes(0.25, 8000))
+        proc, secs = voice.play_file(p, "win32", winsound_mod=WS)
+        self.assertIsNone(proc)
+        self.assertAlmostEqual(secs, 0.25, places=2)
+        self.assertEqual(calls[0], (p, 3))
+        voice.stop_playback("win32", winsound_mod=WS)
+        self.assertEqual(calls[1], (None, 4))
 
 
 if __name__ == "__main__":

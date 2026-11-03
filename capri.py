@@ -149,6 +149,44 @@ def save_api_key(key):
         f.write(key.strip() + "\n")
 
 
+def read_fish_key():
+    """Fish Audio key for Capri's real voice: FISH_API_KEY, or fish_key.txt in ~/.capri or beside capri.py."""
+    k = os.environ.get("FISH_API_KEY", "").strip()
+    if k:
+        return k
+    for d in (data_dir(), app_dir()):
+        try:
+            with open(os.path.join(d, "fish_key.txt"), encoding="utf-8") as f:
+                k = f.read().strip()
+        except OSError:
+            continue
+        if k and not k.startswith("PASTE_"):
+            return k
+    return ""
+
+
+def save_fish_key(key):
+    with open(os.path.join(data_dir(), "fish_key.txt"), "w", encoding="utf-8") as f:
+        f.write(key.strip() + "\n")
+
+
+def clear_fish_key():
+    try:
+        os.remove(os.path.join(data_dir(), "fish_key.txt"))
+    except OSError:
+        pass
+
+
+def make_speaker():
+    """Capri's real voice (Fish Audio) if a key is set, else the computer's built-in voice."""
+    key = read_fish_key()
+    fish = None
+    if key:
+        fish = voice.FishVoice(key, os.environ.get("CAPRI_FISH_VOICE") or voice.DEFAULT_FISH_VOICE,
+                               os.path.join(data_dir(), "voice_cache"))
+    return voice.Speaker(fish=fish, log=log)
+
+
 def detect_provider(key):
     forced = os.environ.get("CAPRI_PROVIDER", "").strip().lower()
     if forced in ("claude", "anthropic"):
@@ -948,7 +986,7 @@ class ChatWindow:
         p = self.pet
         if cmd == "/help":
             self.system_line("/focus [min]  /remind <min> <text>  /name <you>  /mood  /key <api key>  "
-                             "/voice  /tp  /dance  /sleep  /calm  /clear")
+                             "/voice  /fishkey  /tp  /dance  /sleep  /calm  /clear")
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
@@ -968,6 +1006,21 @@ class ChatWindow:
             save_api_key(parts[1])
             self.drop_keybar()
             self.system_line("Key saved. Real chat unlocked.")
+        elif cmd == "/fishkey":
+            arg = parts[1] if len(parts) > 1 else ""
+            if arg.lower() in ("off", "clear", "remove"):
+                clear_fish_key()
+                msg = "Fish Audio key removed. Back to the system voice."
+            elif len(arg) >= 16:
+                save_fish_key(arg)
+                msg = "Fish Audio key saved. Using Capri's real voice (her lines get sent to Fish Audio)."
+            else:
+                return self.system_line("/fishkey <Fish Audio API key>   or   /fishkey off   (voice now: "
+                                        + p.speaker.engine + ")")
+            p.speaker.stop()
+            p.speaker = make_speaker()
+            self.system_line(msg)
+            p.say("Testing, one two. Is this the real me?", 5, speak="priority")
         elif cmd == "/voice":
             lvl = parts[1].lower() if len(parts) > 1 else ""
             if lvl in ("off", "replies", "chatty"):
@@ -1085,7 +1138,7 @@ class Capri:
         if not isinstance(self.settings, dict):
             self.settings = {}
         self.mind = personality.Mind(self.settings)
-        self.speaker = voice.Speaker()
+        self.speaker = make_speaker()
         self.art = load_art(self.dpi)
         self.fw, self.fh = self.art.w, self.art.h
         self.Wd = max(280, int(self.fh * 1.25) + 30)
@@ -1125,6 +1178,7 @@ class Capri:
         self.chat = None
         self.talk_until = 0.0
         self.icon = None
+        self._voice_err = ""
         self.next_save = now + 60
         self.pointer = (0, 0)
         self.pointer_prev = (0, 0, now)
@@ -1535,6 +1589,10 @@ class Capri:
     def scheduled(self, now):
         if self.speaker.speaking:
             self.talk_until = now + 0.3          # her mouth moves while she talks
+        err = self.speaker.last_error
+        if err and err != self._voice_err:
+            self._voice_err = err
+            self.say("My voice is acting up: " + err[:80], 8, speak=None)
         if now >= self.next_save:
             self.next_save = now + 60
             self.mind.tick(now)
@@ -1720,6 +1778,10 @@ class Capri:
             vm = tk.Menu(m, tearoff=0, bg=C_PANEL, fg=C_TEXT, activebackground=C_GREEN, activeforeground=C_BLACK,
                          bd=0, relief="flat", font=(self.font_family, 10))
             cur = self.settings.get("voice", "chatty")
+            vm.add_command(label="Engine: " + {"fish": "Capri's real voice (Fish Audio)",
+                                                "system": "system voice (/fishkey for hers)"}.get(
+                                                    self.speaker.engine, "none"), state="disabled")
+            vm.add_separator()
             for key, label in (("off", "Off"), ("replies", "Replies & alerts only"), ("chatty", "Chatty")):
                 vm.add_command(label=("* " if cur == key else "   ") + label, command=lambda k=key: self.set_voice(k))
             m.add_cascade(label="Voice", menu=vm)

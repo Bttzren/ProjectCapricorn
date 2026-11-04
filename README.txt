@@ -49,6 +49,19 @@ SETTINGS & HANDS
   Only the action name is logged (never what she typed). Real key presses are fully supported on
   Windows; Mac and Linux use osascript / xdotool / playerctl / pactl if installed.
 
+EDDIES, SKINS & GAMES
+  Eddies (Night City money) come from: finishing focus sessions (+10), daily visits (streak bonus),
+  finishing to-dos (+5), your first chat each day, beating her at tag (+5), and achievements
+  (First Gig, Grinder, Night Owl, Regular, Chrome Veteran, Task Slayer, Quick Hands, Chatterbox).
+  Spend them on skins (palette swaps): Ocean 30, Acid 30, Chrome 60, Gold 100.
+  Settings > Look & Progress, or  /stats   /skin   /skin <name>   /skin buy <name>
+  TAG: /tag (or right-click > Play tag). She runs from your cursor for 25 seconds and glitch-
+  teleports out of corners. Touch her with your cursor to win. Best time is kept.
+  TO-DO: /todo add <thing>, /todo, /done <number>, /todo clear. She nags about what's left roughly
+  hourly (not in calm mode).
+  TOYS: /roll d20 (or 2d6, 100), /coin, /8ball <question>
+  She also glitches (RGB split) for a moment every minute or so, because she's a glitchy AI.
+
 PERSONALITY
   She talks like a Night City local (choom, preem, nova, gonk, eddies, chrome...), kept PG.
   The same slang is built into her canned lines and into the AI persona prompt.
@@ -96,4 +109,5 @@ DEVELOPING
   personality.py  moods, memory, lines (no Tk)       awareness.py  window title -> activity (no Tk)
         voice.py  speech: Fish Audio + system voice (no Tk)
   hands.py        key presses / clicks with safety rails (no Tk)
+  progress.py     eddies, streaks, achievements, skins (no Tk)   skins.py  palette swaps   fun.py  dice, todos
   Tests:  python -m unittest discover -s tests

@@ -21,8 +21,11 @@ import tkinter as tk
 from tkinter import font as tkfont
 
 import awareness
+import fun
 import hands
 import personality
+import progress
+import skins
 import voice
 
 try:
@@ -460,14 +463,14 @@ class SheetSprites:
         "look-a": ["look-a", "idle"], "look-b": ["look-b", "idle"], "type": ["waving", "idle"],
     }
 
-    def __init__(self, folder, target_h):
+    def __init__(self, folder, target_h, skin="neon"):
         path = next((os.path.join(folder, n) for n in ("spritesheet.webp", "spritesheet.png")
                      if os.path.isfile(os.path.join(folder, n))), None)
         if not path:
             raise FileNotFoundError("spritesheet")
         meta = load_json(os.path.join(folder, "pet.json"), {})
         meta = meta if isinstance(meta, dict) else {}
-        sheet = Image.open(path).convert("RGBA")
+        sheet = skins.apply(Image.open(path).convert("RGBA"), skin)
         W, H = sheet.size
         cols = int(meta.get("columns") or meta.get("cols") or 8)
         cwf = W / float(cols)                      # cells need not be whole pixels (scaled sheets)
@@ -584,12 +587,12 @@ def find_pet_dir():
     return None
 
 
-def load_art(dpi):
+def load_art(dpi, skin="neon"):
     target = int(SPRITE_HEIGHT * dpi)
     folder = find_pet_dir()
     if folder:
         try:
-            art = SheetSprites(folder, target)
+            art = SheetSprites(folder, target, skin)
             log(f"loaded sheet pet from {folder}, rows={len(art.rows)} map={art.map}")
             return art
         except Exception:
@@ -932,6 +935,7 @@ class ChatWindow:
         now = time.time()
         mind = self.pet.mind
         mind.chatted(now)
+        self.pet.award("chat")
         persona = self.persona + " " + mind.context(now, self.pet.doing(), self.pet.activity_phrase())
         offline = None if read_api_key() else mind.offline_reply(text, now)
         snapshot = [{"role": m["role"], "content": m["content"]} for m in self.history[-20:]]
@@ -1028,7 +1032,8 @@ class ChatWindow:
         if cmd == "/help":
             self.system_line("/focus [min]  /remind <min> <text>  /name <you>  /mood  /key <api key>  "
                              "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
-                             "/type <text>  /click  /hands  /tp  /dance  /sleep  /calm  /clear")
+                             "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /stats  /skin  /tp  /dance  "
+                             "/sleep  /calm  /clear")
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
@@ -1048,6 +1053,49 @@ class ChatWindow:
             save_api_key(parts[1])
             self.drop_keybar()
             self.system_line("Key saved. Real chat unlocked.")
+        elif cmd == "/tag":
+            p.start_tag()
+        elif cmd == "/stats":
+            for line in p.prog.stats_lines():
+                self.system_line(line)
+        elif cmd == "/skin":
+            arg = parts[1].lower() if len(parts) > 1 else ""
+            if arg == "buy" and len(parts) > 2:
+                ok, msg = p.buy_skin(parts[2].lower())
+                self.system_line(msg, err=not ok)
+            elif arg in progress.SKINS:
+                ok, msg = p.set_skin(arg)
+                self.system_line(msg, err=not ok)
+            else:
+                self.system_line("Skins: " + ", ".join(
+                    f"{k} ({'owned' if p.prog.owns(k) else str(v[1]) + ' eddies'})" for k, v in progress.SKINS.items())
+                    + "   Use /skin <name> or /skin buy <name>. Eddies: " + str(p.prog.eddies))
+        elif cmd == "/roll":
+            self.system_line(fun.roll(parts[1] if len(parts) > 1 else "", p.rng))
+        elif cmd == "/coin":
+            self.system_line(fun.coin(p.rng))
+        elif cmd == "/8ball":
+            self.system_line(fun.eight_ball(text.split(None, 1)[1] if len(parts) > 1 else "", p.rng))
+        elif cmd == "/todo":
+            sub = parts[1].lower() if len(parts) > 1 else ""
+            if sub == "add" and len(parts) > 2:
+                added = p.todos.add(text.split(None, 2)[2])
+                p.save_settings()
+                self.system_line(f"Added: {added}" if added else "Couldn't add that.", err=not added)
+            elif sub == "clear":
+                self.system_line(f"Cleared {p.todos.clear_done()} finished item(s).")
+                p.save_settings()
+            else:
+                for line in p.todos.lines():
+                    self.system_line(line)
+        elif cmd == "/done":
+            done = p.todos.finish(int(parts[1])) if len(parts) > 1 and parts[1].isdigit() else None
+            if done:
+                p.award("todo")
+                self.system_line(f"Done: {done}")
+                p.react("happy")
+            else:
+                self.system_line("Which one? /todo shows the numbers.", err=True)
         elif cmd == "/settings":
             p.open_settings()
         elif cmd in HAND_COMMANDS:
@@ -1189,6 +1237,7 @@ class SettingsWindow:
         pad.pack(fill="x", padx=8, pady=(0, 8))
         self.build_hands(pad)
         self.build_voice(pad)
+        self.build_look(pad)
         self.build_behavior(pad)
         self.build_keys(pad)
         w.update_idletasks()
@@ -1310,6 +1359,42 @@ class SettingsWindow:
         entry.delete(0, "end")
         self.show_engine()
 
+    def build_look(self, parent):
+        box = self.section(parent, "LOOK & PROGRESS",
+                           "Earn eddies from focus sessions, daily visits, to-dos, chatting and beating her at /tag.")
+        self.eddies_lbl = tk.Label(box, text="", bg=C_PANEL, fg=C_GREEN, font=(self.fam, 9, "bold"))
+        self.eddies_lbl.pack(anchor="w", padx=10, pady=(0, 2))
+        self.skin_var = tk.StringVar(value=self.pet.settings.get("skin", "neon"))
+        self.skin_radios = {}
+        for sid in progress.SKINS:
+            self.skin_radios[sid] = self.radio(box, "", self.skin_var, sid, lambda s=sid: self.pick_skin(s))
+        self.refresh_look()
+        tk.Frame(box, bg=C_PANEL, height=6).pack()
+
+    def refresh_look(self):
+        p = self.pet.prog
+        self.eddies_lbl.config(text=f"Eddies: {p.eddies}    Streak: {p.streak} day(s)")
+        for sid, rb in self.skin_radios.items():
+            name, cost = progress.SKINS[sid]
+            rb.config(text=name + ("" if p.owns(sid) else f"   ({cost} eddies)"))
+
+    def pick_skin(self, sid):
+        pet = self.pet
+        if not pet.prog.owns(sid):
+            from tkinter import messagebox
+            name, cost = progress.SKINS[sid]
+            if not messagebox.askyesno("Buy skin?", f"Buy {name} for {cost} eddies? You have {pet.prog.eddies}.",
+                                       parent=self.win):
+                self.skin_var.set(pet.settings.get("skin", "neon"))
+                return
+            ok, msg = pet.buy_skin(sid)
+            if not ok:
+                pet.say(msg, 4, speak=None)
+                self.skin_var.set(pet.settings.get("skin", "neon"))
+                return
+        pet.set_skin(sid)
+        self.refresh_look()
+
     def build_behavior(self, parent):
         box = self.section(parent, "BEHAVIOUR")
         self.check(box, "Calm mode (she stays put and stops chatting)", "calm", False, self.pet.set_calm)
@@ -1403,9 +1488,14 @@ class Capri:
         if not isinstance(self.settings, dict):
             self.settings = {}
         self.mind = personality.Mind(self.settings)
+        self.prog = progress.Progress(self.settings.setdefault("progress", {}))
+        self.todos = fun.Todos(self.settings.setdefault("todos", []))
+        self.msgs = list(self.prog.login())
+        if not self.prog.owns(self.settings.get("skin", "neon")):
+            self.settings["skin"] = "neon"
         self.speaker = make_speaker()
         self.hands = hands.Hands(level=self.settings.get("hands", "visual"), log=log)
-        self.art = load_art(self.dpi)
+        self.art = load_art(self.dpi, self.settings.get("skin", "neon"))
         self.fw, self.fh = self.art.w, self.art.h
         self.Wd = max(280, int(self.fh * 1.25) + 30)
         self.Hd = self.fh + 150
@@ -1452,6 +1542,8 @@ class Capri:
         self.next_watch, self.away = now + 5, False
         self.pending, self.reflex_done, self.settings_win = None, {}, None
         self.busy_since, self.typing_along = None, False
+        self.twitch_until, self.next_twitch = 0.0, now + 40
+        self.tag, self.next_todo = None, now + 3600
         self.next_save = now + 60
         self.pointer = (0, 0)
         self.pointer_prev = (0, 0, now)
@@ -1836,6 +1928,43 @@ class Capri:
             if age > (self.state_dur or 3):
                 self.hop_y = 0
                 self.go("perch" if self.surf else "idle", 2.0)
+        elif st == "flee":
+            if not self.tag:
+                return self.go("air")
+            mx, my = self.pointer
+            cx, cy = self.fx, self.fy - self.fh * 0.5
+            dx, dy = cx - mx, cy - my
+            dist = math.hypot(dx, dy) or 1.0
+            t = now - self.tag["t0"]
+            if dist < self.fw * 0.45 and t > 1.0:
+                return self.end_tag(True, t)
+            if t > 25:
+                return self.end_tag(False, t)
+            v = (420 + min(t, 20) * 15) * self.dpi
+            want = v if dist < 420 * self.dpi else v * 0.2
+            ux, uy = dx / dist, dy / dist
+            k = min(1.0, 6.0 * dt)
+            self.fvx += ((ux - uy * 0.35) * want - self.fvx) * k      # run away, curving a little
+            self.fvy += ((uy + ux * 0.35) * want - self.fvy) * k
+            wa = self.work_area()
+            self.fx = min(max(self.fx + self.fvx * dt, wa[0] + self.fw * 0.4), wa[2] - self.fw * 0.4)
+            self.fy = min(max(self.fy + self.fvy * dt, wa[1] + self.fh + 6), self.ground())
+            self.angle_t = max(-24.0, min(24.0, -self.fvx / max(1.0, v) * 24.0))
+            self.hop_y = math.sin(now * 9) * 3 * self.dpi
+            if abs(self.fvx) > 25:
+                self.dir = 1 if self.fvx > 0 else -1
+            cornered = (self.fx < wa[0] + self.fw * 0.6 or self.fx > wa[2] - self.fw * 0.6
+                        or self.fy > self.ground() - 4 or self.fy < wa[1] + self.fh + 12)
+            if cornered and dist < 220 * self.dpi and now >= self.tag["tp_ok"]:
+                self.tag["tp_ok"] = now + 1.8                           # glitch-teleport out of the corner
+                self.twitch_until = now + 0.3
+                nx, ny = self.fx, self.fy
+                for _ in range(10):
+                    nx = self.rng.uniform(wa[0] + self.fw, wa[2] - self.fw)
+                    ny = self.rng.uniform(wa[1] + self.fh + 20, self.ground())
+                    if math.hypot(nx - mx, ny - self.fh * 0.5 - my) > 450 * self.dpi:
+                        break
+                self.fx, self.fy, self.fvx, self.fvy = nx, ny, 0.0, 0.0
         elif st in ("fly", "orbit"):
             v = self.fly_speed * self.dpi                       # px per second
             done = False
@@ -1939,6 +2068,7 @@ class Capri:
             self.sx = max(0.12, 1.0 - 0.9 * self.glitch ** 1.5)
             self.sy = 1.0 + 0.12 * self.glitch
         self.update_busy(now)
+        self.update_twitch(now)
         self.update_particles(dt)
         self.scheduled(now)
         self.place()
@@ -1947,6 +2077,67 @@ class Capri:
             self.root.deiconify()
         if int(now * 2) % 6 == 0:
             self.root.attributes("-topmost", True)
+
+    def update_twitch(self, now):
+        """Every minute or so she glitches for a moment (RGB split), because she's a glitchy AI."""
+        if self.state in ("tp_out", "tp_in"):
+            return
+        if now >= self.next_twitch and self.state in ("idle", "perch", "lounge"):
+            self.next_twitch = now + self.rng.uniform(35, 110)
+            self.twitch_until = now + 0.35
+        self.glitch = 0.45 if now < self.twitch_until else 0.0
+
+    def award(self, kind):
+        self.msgs += self.prog.record(kind, hour=time.localtime().tm_hour)
+        self.save_settings()
+
+    def buy_skin(self, sid):
+        ok, msg = self.prog.buy_skin(sid)
+        self.save_settings()
+        return ok, msg
+
+    def set_skin(self, sid):
+        if not self.prog.owns(sid):
+            return False, f"You don't own {progress.SKINS.get(sid, ('that',))[0]} yet. Try /skin buy {sid}"
+        self.settings["skin"] = sid
+        self.save_settings()
+        self.art = load_art(self.dpi, sid)
+        self.pcache.clear()
+        if self.chat and self.chat.alive():
+            self.chat.images.clear()
+        self.spawn_confetti(30)
+        self.say("New look. How do I look, choom?", 5)
+        return True, "Skin: " + progress.SKINS[sid][0]
+
+    def start_tag(self):
+        """Mini-game: she runs from your cursor for 25 seconds. Touch her to win."""
+        if self.state in ("tp_out", "tp_in", "drag"):
+            return
+        now = time.time()
+        self.surf = None
+        self.icon = None
+        self.fvx = self.fvy = 0.0
+        self.tag = {"t0": now, "tp_ok": now + 1.5}
+        self.go("flee", 26)
+        self.anim = "jump"
+        self.say("Tag! Catch me with your cursor, choom. 25 seconds!", 4)
+
+    def end_tag(self, caught, t):
+        self.tag = None
+        self.hop_y, self.angle_t = 0.0, 0.0
+        self.vx = self.vy = 0.0
+        self.go("air")
+        if caught:
+            best = self.settings.get("tag_best", 99.0)
+            tail = ""
+            if t < best:
+                self.settings["tag_best"] = round(t, 1)
+                tail = " New record!" if best < 99 else ""
+            self.say(f"Got me in {t:.1f}s! Preem reflexes.{tail}", 7, speak="priority")
+            self.spawn_confetti(30)
+            self.award("tag_win")
+        else:
+            self.say("You couldn't catch me. Nova.", 5)
 
     def set_hands(self, level):
         self.hands.set_level(level)
@@ -2140,6 +2331,16 @@ class Capri:
         self.watch_context(now)
         if self.pending:
             self.tick_pending(now)
+        if self.msgs and now > self.bubble_until + 0.4 and now - self.t_start > 8:
+            text = self.msgs.pop(0)
+            self.say(text, 7, speak="priority")
+            if text.startswith("Achievement"):
+                self.spawn_confetti(40)
+        if now >= self.next_todo and not self.calm:
+            self.next_todo = now + self.rng.randint(3600, 5400)
+            nag = self.todos.nag()
+            if nag:
+                self.say(nag, 9)
         if self.speaker.speaking:
             self.talk_until = now + 0.3          # her mouth moves while she talks
         err = self.speaker.last_error
@@ -2156,6 +2357,7 @@ class Capri:
                 self.timer_mode, self.timer_end = "break", now + BREAK_MIN * 60
                 self.poke_awake()
                 self.party()
+                self.award("focus")
             else:
                 self.say("Break's over. Another round?", 12, speak="priority")
                 self.timer_mode = self.timer_end = None
@@ -2327,6 +2529,7 @@ class Capri:
         m.add_command(label="Fly around", command=lambda: self.start_fly("fly"))
         m.add_command(label="Orbit my cursor", command=lambda: self.start_fly("orbit"))
         m.add_command(label="Party!", command=self.party)
+        m.add_command(label="Play tag", command=self.start_tag)
         m.add_command(label="Dance", command=lambda: self.go("dance", 3.5))
         m.add_command(label="Lounge", command=lambda: self.go("lounge", 15))
         m.add_command(label="Take a nap", command=lambda: self.go("sleep"))

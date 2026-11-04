@@ -21,6 +21,7 @@ import tkinter as tk
 from tkinter import font as tkfont
 
 import awareness
+import hands
 import personality
 import voice
 
@@ -37,6 +38,9 @@ NAME = "Capri"
 IS_WIN = sys.platform.startswith("win")
 IS_MAC = sys.platform == "darwin"
 TICK_MS = 40
+HAND_COMMANDS = {"/pause": ("playpause", None), "/next": ("next", None), "/prev": ("prev", None),
+                 "/volup": ("volup", None), "/voldown": ("voldown", None), "/mute": ("mute", None),
+                 "/shot": ("screenshot", None), "/lock": ("lock", None)}
 SPRITE_HEIGHT = 170            # on-screen sprite height at 100% display scaling
 SLEEP_AFTER = 300              # seconds without poking her before she naps
 FOCUS_MIN, BREAK_MIN = 25, 5
@@ -453,7 +457,7 @@ class SheetSprites:
         "run": ["running", "running-right", "idle"],
         "dance": ["waving", "jumping", "idle"], "startle": ["jumping", "failed", "idle"],
         "talk": ["waving", "idle"],
-        "look-a": ["look-a", "idle"], "look-b": ["look-b", "idle"],
+        "look-a": ["look-a", "idle"], "look-b": ["look-b", "idle"], "type": ["waving", "idle"],
     }
 
     def __init__(self, folder, target_h):
@@ -1023,7 +1027,8 @@ class ChatWindow:
         p = self.pet
         if cmd == "/help":
             self.system_line("/focus [min]  /remind <min> <text>  /name <you>  /mood  /key <api key>  "
-                             "/fly  /zoom  /orbit  /party  /aware  /voice  /fishkey  /tp  /dance  /sleep  /calm  /clear")
+                             "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
+                             "/type <text>  /click  /hands  /tp  /dance  /sleep  /calm  /clear")
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
@@ -1043,6 +1048,25 @@ class ChatWindow:
             save_api_key(parts[1])
             self.drop_keybar()
             self.system_line("Key saved. Real chat unlocked.")
+        elif cmd == "/settings":
+            p.open_settings()
+        elif cmd in HAND_COMMANDS:
+            ok, msg = p.hands_do(*HAND_COMMANDS[cmd])
+            self.system_line(msg, err=not ok)
+        elif cmd in ("/press", "/type", "/click"):
+            arg = text.split(None, 1)[1] if len(parts) > 1 else None
+            action = cmd[1:]
+            label = {"press": "Pressing keys", "type": "Typing", "click": "Clicking"}[action]
+            ok, msg = p.queue_action(action, arg, label, 5)
+            self.system_line(msg, err=not ok)
+        elif cmd == "/hands":
+            arg = parts[1].lower() if len(parts) > 1 else ""
+            if arg in ("visual", "media"):
+                p.set_hands(arg)
+                self.system_line("Hands: " + hands.LEVEL_NAMES[arg])
+            else:
+                self.system_line("/hands visual | media   (Full control is switched on in Settings)   now: "
+                                 + hands.LEVEL_NAMES[p.hands.level])
         elif cmd in ("/fly", "/zoom", "/orbit"):
             p.start_fly(cmd[1:])
         elif cmd == "/party":
@@ -1130,6 +1154,200 @@ class ChatWindow:
         self.pet.chat = None
 
 
+class SettingsWindow:
+    """One place for everything: hands (what she may press/click), voice, behaviour and keys."""
+
+    def __init__(self, pet):
+        self.pet = pet
+        self.fam = f = pet.font_family
+        w = self.win = tk.Toplevel(pet.root)
+        w.title("Capri settings")
+        w.configure(bg=C_BG)
+        w.attributes("-topmost", True)
+        w.protocol("WM_DELETE_WINDOW", self.close)
+        head = tk.Frame(w, bg=C_PANEL)
+        head.pack(fill="x")
+        tk.Label(head, text="CAPRI SETTINGS", bg=C_PANEL, fg=C_GREEN, font=(f, 13, "bold")).pack(side="left", padx=14, pady=10)
+        tk.Frame(w, bg=C_GREEN, height=2).pack(fill="x")
+        flat_button(w, "DONE", self.close, C_GREEN, C_BLACK, "#3dffa0", (f, 9, "bold"), 18, 7).pack(side="bottom", pady=10)
+        mid = tk.Frame(w, bg=C_BG)
+        mid.pack(fill="both", expand=True)
+        canvas = tk.Canvas(mid, bg=C_BG, highlightthickness=0, bd=0, width=430)
+        bar = tk.Scrollbar(mid, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=bar.set)
+        bar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        body = tk.Frame(canvas, bg=C_BG)
+        canvas.create_window(0, 0, window=body, anchor="nw", width=410)
+        body.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        self.canvas = canvas
+        for wd in (canvas, body, w):
+            wd.bind("<MouseWheel>", lambda e: canvas.yview_scroll(-1 if e.delta > 0 else 1, "units"))
+            wd.bind("<Button-4>", lambda e: canvas.yview_scroll(-2, "units"))
+            wd.bind("<Button-5>", lambda e: canvas.yview_scroll(2, "units"))
+        pad = tk.Frame(body, bg=C_BG)
+        pad.pack(fill="x", padx=8, pady=(0, 8))
+        self.build_hands(pad)
+        self.build_voice(pad)
+        self.build_behavior(pad)
+        self.build_keys(pad)
+        w.update_idletasks()
+        h = min(700, pet.sh - 80)
+        w.geometry(f"460x{h}+{max(0, pet.sw // 2 - 230)}+{max(0, pet.sh // 2 - h // 2)}")
+
+    # ---- small widgets
+    def section(self, parent, title, note=""):
+        box = tk.Frame(parent, bg=C_PANEL)
+        box.pack(fill="x", pady=(8, 0))
+        tk.Label(box, text=title, bg=C_PANEL, fg=C_GREEN, font=(self.fam, 10, "bold")).pack(anchor="w", padx=10, pady=(8, 2))
+        if note:
+            tk.Label(box, text=note, bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=345, justify="left").pack(
+                anchor="w", padx=10, pady=(0, 4))
+        return box
+
+    def check(self, parent, text, key, default, command=None, state="normal"):
+        var = tk.BooleanVar(value=bool(self.pet.settings.get(key, default)))
+
+        def changed():
+            self.pet.settings[key] = var.get()
+            self.pet.save_settings()
+            if command:
+                command(var.get())
+        cb = tk.Checkbutton(parent, text=text, variable=var, command=changed, bg=C_PANEL, fg=C_TEXT,
+                            selectcolor=C_PANEL2, activebackground=C_PANEL, activeforeground=C_TEXT, anchor="w",
+                            justify="left", font=(self.fam, 9), state=state, highlightthickness=0, bd=0,
+                            disabledforeground=C_DIM, wraplength=335)
+        cb.pack(fill="x", padx=8, pady=1)
+        return cb
+
+    def radio(self, parent, text, var, value, command, note=""):
+        rb = tk.Radiobutton(parent, text=text, variable=var, value=value, command=command, bg=C_PANEL, fg=C_TEXT,
+                            selectcolor=C_PANEL2, activebackground=C_PANEL, activeforeground=C_TEXT, anchor="w",
+                            font=(self.fam, 9, "bold"), highlightthickness=0, bd=0)
+        rb.pack(fill="x", padx=8, pady=(2, 0))
+        if note:
+            tk.Label(parent, text=note, bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=320,
+                     justify="left", anchor="w").pack(fill="x", padx=(34, 10))
+        return rb
+
+    def entry_row(self, parent, label, command, button="SAVE"):
+        tk.Label(parent, text=label, bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=345,
+                 justify="left").pack(anchor="w", padx=10, pady=(6, 0))
+        row = tk.Frame(parent, bg=C_PANEL)
+        row.pack(fill="x", padx=10, pady=(2, 8))
+        e = tk.Entry(row, bg=C_PANEL2, fg=C_TEXT, insertbackground=C_GREEN, relief="flat", show="*",
+                     font=(self.fam, 9), highlightthickness=1, highlightbackground="#2a2a40", highlightcolor=C_GREEN)
+        e.pack(side="left", fill="x", expand=True, ipady=4)
+        flat_button(row, button, lambda: command(e), C_GREEN, C_BLACK, "#3dffa0", (self.fam, 8, "bold"), 10, 4).pack(
+            side="left", padx=(6, 0))
+        return e
+
+    # ---- sections
+    def build_hands(self, parent):
+        box = self.section(parent, "HANDS: what Capri may do on your computer",
+                           "Real key presses only ever come from your own commands or from reflexes you switch on. "
+                           "Never from what the AI says. Lowering the level takes effect instantly.")
+        self.hands_var = tk.StringVar(value=self.pet.hands.level)
+        for value, label, note in (
+                ("visual", "Visual only", "She mimes typing along with you. Sends nothing to your computer."),
+                ("media", "Media keys", "Play/pause, next/prev, volume, mute, screenshot, lock screen, when you ask "
+                                        "(/pause /mute /volup /shot /lock ...)."),
+                ("full", "Full control", "Also presses any key combo, types text and clicks when you ask "
+                                         "(/press ctrl+s, /type hello, /click). 5-second countdown first. "
+                                         "Needs your confirmation.")):
+            self.radio(box, label, self.hands_var, value, self.pick_hands, note)
+        tk.Label(box, text="Reflexes: things she does by herself (Full control only). She warns you 10 seconds "
+                           "ahead and you can cancel by clicking her.", bg=C_PANEL, fg=C_DIM, font=(self.fam, 8),
+                 wraplength=345, justify="left").pack(anchor="w", padx=10, pady=(8, 2))
+        self.reflex_boxes = [
+            self.check(box, "Lock my screen when I've been away for 15 minutes", "reflex_lock", False),
+            self.check(box, "Pause video/music when I step away for 5 minutes (needs Awareness)", "reflex_pause", False)]
+        self.refresh_reflexes()
+        self.check(box, "Mime typing along while I'm busy (Windows)", "type_along", True)
+        tk.Frame(box, bg=C_PANEL, height=6).pack()
+
+    def pick_hands(self):
+        value = self.hands_var.get()
+        if value == "full" and self.pet.hands.level != "full":
+            from tkinter import messagebox
+            ok = messagebox.askyesno(
+                "Turn on Full control?",
+                "Full control lets Capri press any keys, type text and click in ANY app when you tell her to, "
+                "and run any reflexes you switch on.\n\nA wrong command can send a message, close something or "
+                "lose work. She never acts because of what the AI says, and you can lower this at any time.\n\n"
+                "Turn on Full control?", parent=self.win, default="no", icon="warning")
+            if not ok:
+                self.hands_var.set(self.pet.hands.level)
+                return
+        self.pet.set_hands(value)
+        self.refresh_reflexes()
+
+    def refresh_reflexes(self):
+        for cb in self.reflex_boxes:
+            cb.config(state="normal" if self.pet.hands.level == "full" else "disabled")
+
+    def build_voice(self, parent):
+        box = self.section(parent, "VOICE")
+        self.voice_var = tk.StringVar(value=self.pet.settings.get("voice", "chatty"))
+        for value, label in (("off", "Off"), ("replies", "Replies & alerts only"), ("chatty", "Chatty")):
+            self.radio(box, label, self.voice_var, value, lambda: self.pet.set_voice(self.voice_var.get()))
+        row = tk.Frame(box, bg=C_PANEL)
+        row.pack(fill="x", padx=10, pady=(6, 0))
+        flat_button(row, "TEST VOICE", lambda: self.pet.say("Testing, one two. Is this the real me?", 5, speak="priority"),
+                    C_PANEL2, C_GREEN, "#26263a", (self.fam, 8, "bold"), 10, 4).pack(side="left")
+        self.engine_lbl = tk.Label(row, text="", bg=C_PANEL, fg=C_DIM, font=(self.fam, 8))
+        self.engine_lbl.pack(side="left", padx=8)
+        self.entry_row(box, "Fish Audio key for Capri's real voice (blank + SAVE removes it). Her lines are sent "
+                            "to Fish Audio.", self.save_fish)
+        self.show_engine()
+
+    def show_engine(self):
+        self.engine_lbl.config(text="Engine: " + {"fish": "Capri's voice (Fish Audio)", "system": "system voice"}.get(
+            self.pet.speaker.engine, "none found"))
+
+    def save_fish(self, entry):
+        self.pet.set_fish_key(entry.get().strip())
+        entry.delete(0, "end")
+        self.show_engine()
+
+    def build_behavior(self, parent):
+        box = self.section(parent, "BEHAVIOUR")
+        self.check(box, "Calm mode (she stays put and stops chatting)", "calm", False, self.pet.set_calm)
+        self.check(box, "Check-ins (water, stretch, eat reminders)", "checkins", True, self.pet.set_checkins)
+        self.check(box, "Fly around the screen", "fly_enabled", True)
+        self.check(box, "Awareness: notice which app is in front, and when I'm away"
+                        + ("" if self.pet.win32.ok else " (Windows only)"), "aware", True, self.pet.set_aware,
+                   state="normal" if self.pet.win32.ok else "disabled")
+        tk.Label(box, text="Awareness only reads the title of the front window. It's never stored, logged or sent.",
+                 bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=345, justify="left").pack(anchor="w", padx=10,
+                                                                                                   pady=(2, 8))
+
+    def build_keys(self, parent):
+        box = self.section(parent, "AI CHAT KEY", "A Claude (sk-ant...) or Gemini key for real AI chat. "
+                                                  "Stored only on this computer.")
+        self.entry_row(box, "Paste key", self.save_chat_key)
+
+    def save_chat_key(self, entry):
+        key = entry.get().strip()
+        if len(key) < 20 or " " in key:
+            return self.pet.say("That doesn't look like a whole key.", 3, speak=None)
+        try:
+            save_api_key(key)
+        except OSError as exc:
+            return self.pet.say(f"Couldn't save the key: {exc}", 5, speak=None)
+        entry.delete(0, "end")
+        if self.pet.chat and self.pet.chat.alive():
+            self.pet.chat.drop_keybar()
+        self.pet.say("Key saved. Real chat unlocked.", 4, speak=None)
+
+    def close(self):
+        try:
+            self.win.destroy()
+        except tk.TclError:
+            pass
+        self.pet.settings_win = None
+
+
 class ReminderDialog:
     def __init__(self, pet):
         self.pet = pet
@@ -1186,6 +1404,7 @@ class Capri:
             self.settings = {}
         self.mind = personality.Mind(self.settings)
         self.speaker = make_speaker()
+        self.hands = hands.Hands(level=self.settings.get("hands", "visual"), log=log)
         self.art = load_art(self.dpi)
         self.fw, self.fh = self.art.w, self.art.h
         self.Wd = max(280, int(self.fh * 1.25) + 30)
@@ -1231,6 +1450,8 @@ class Capri:
         self.aware = bool(self.settings.get("aware", True))
         self.ctx, self.ctx_since, self.ctx_done, self.ctx_cool, self.ctx_nudge = None, now, False, {}, 0.0
         self.next_watch, self.away = now + 5, False
+        self.pending, self.reflex_done, self.settings_win = None, {}, None
+        self.busy_since, self.typing_along = None, False
         self.next_save = now + 60
         self.pointer = (0, 0)
         self.pointer_prev = (0, 0, now)
@@ -1435,7 +1656,8 @@ class Capri:
         opts = [("walk", 30), ("lounge", 12), ("teleport", 14), ("curious", 10), ("dance", 4), ("idle", 14)]
         if "look-a" in getattr(self.art, "map", {}):
             opts.append(("look", 9))
-        opts += [("fly", 9), ("zoom", 3), ("orbit", 5)]
+        if self.settings.get("fly_enabled", True):
+            opts += [("fly", 9), ("zoom", 3), ("orbit", 5)]
         if self.surfaces and not self.surf:
             opts.append(("perch", 16))
         if self.surf:
@@ -1716,6 +1938,7 @@ class Capri:
         if self.state in ("tp_out", "tp_in"):
             self.sx = max(0.12, 1.0 - 0.9 * self.glitch ** 1.5)
             self.sy = 1.0 + 0.12 * self.glitch
+        self.update_busy(now)
         self.update_particles(dt)
         self.scheduled(now)
         self.place()
@@ -1724,6 +1947,123 @@ class Capri:
             self.root.deiconify()
         if int(now * 2) % 6 == 0:
             self.root.attributes("-topmost", True)
+
+    def set_hands(self, level):
+        self.hands.set_level(level)
+        self.settings["hands"] = self.hands.level
+        self.save_settings()
+        if self.hands.level != "full":
+            self.pending = None
+        self.say({"visual": "Hands off. I'll just mime.", "media": "Media keys only, on request.",
+                  "full": "Full control. Use it wisely, choom."}[self.hands.level], 5, speak=None)
+
+    def open_settings(self):
+        if self.settings_win:
+            try:
+                if self.settings_win.win.winfo_exists():
+                    self.settings_win.win.lift()
+                    return
+            except tk.TclError:
+                pass
+        self.settings_win = SettingsWindow(self)
+
+    def set_calm(self, on):
+        if bool(on) != self.calm:
+            self.toggle_calm()
+
+    def set_checkins(self, on):
+        if bool(on) != self.checkins:
+            self.toggle_checkins()
+
+    def set_fish_key(self, key):
+        if key:
+            save_fish_key(key)
+            msg = "Fish Audio key saved. Using Capri's real voice."
+        else:
+            clear_fish_key()
+            msg = "Fish Audio key removed. Back to the system voice."
+        self.speaker.stop()
+        self.speaker = make_speaker()
+        self.say(msg, 5, speak="priority" if key else None)
+
+    def hands_do(self, action, arg=None):
+        """Run a hands action now (media keys). Returns (ok, message)."""
+        ok, msg = self.hands.do(action, arg)
+        self.say(msg, 4, speak=None)
+        if ok:
+            self.set_icon("star", 1.4)
+        return ok, msg
+
+    def queue_action(self, action, arg, label, secs, cancel_on_input=False):
+        """Do `action` after a visible countdown. Click her to cancel."""
+        ok, msg = self.hands.check(action, arg)
+        if not ok:
+            return False, msg
+        now = time.time()
+        self.pending = {"action": action, "arg": arg, "label": label, "t0": now, "at": now + secs,
+                        "shown": None, "cancel_on_input": cancel_on_input}
+        self.set_icon("!", secs)
+        return True, f"{label} in {secs} seconds. Click where you want it. Click me to cancel."
+
+    def cancel_pending(self, msg="Okay, cancelled."):
+        self.pending = None
+        self.icon = None
+        self.say(msg, 3, speak=None)
+
+    def tick_pending(self, now):
+        p = self.pending
+        if p["cancel_on_input"] and now - p["t0"] > 1.0 and self.win32.ok and self.win32.idle_seconds() < 3:
+            return self.cancel_pending("You're back, so I stopped.")
+        if now >= p["at"]:
+            self.pending = None
+            self.icon = None
+            ok, msg = self.hands.do(p["action"], p["arg"])
+            self.say(msg, 5, speak=None)
+            return
+        left = int(p["at"] - now) + 1
+        if left != p["shown"]:
+            first = p["shown"] is None
+            p["shown"] = left
+            self.say(f"{p['label']} in {left}... click me to cancel!", 2, speak="priority" if first else None)
+
+    def reflexes(self, now, idle):
+        """Things she does by herself: only at Full control, only if you switched the reflex on, always announced."""
+        if idle < 5:
+            self.reflex_done = {}
+        if self.hands.level != "full" or self.pending:
+            return
+        if self.settings.get("reflex_lock") and idle > 15 * 60 and not self.reflex_done.get("lock"):
+            self.reflex_done["lock"] = True
+            self.queue_action("lock", None, "Locking your screen", 10, cancel_on_input=True)
+        elif (self.settings.get("reflex_pause") and idle > 5 * 60 and self.ctx in ("video", "music")
+              and not self.reflex_done.get("pause")):
+            self.reflex_done["pause"] = True
+            self.queue_action("playpause", None, "Pausing your media", 10, cancel_on_input=True)
+
+    def update_busy(self, now):
+        """Mime typing while you're busy (Windows only; she only knows THAT you're busy, never which keys)."""
+        if not (self.win32.ok and self.settings.get("type_along", True)) or self.state not in ("idle", "perch"):
+            self.typing_along, self.busy_since = False, None
+            return
+        idle = self.win32.idle_seconds()
+        if idle < 0.8:
+            self.busy_since = self.busy_since or now
+            self.typing_along = now - self.busy_since > 1.5
+        elif idle > 1.6:
+            self.busy_since, self.typing_along = None, False
+
+    def draw_keyboard(self, c, cx, base):
+        w, h = self.fw * 1.15, 16
+        x1, y1 = cx - w / 2, base - h
+        round_rect(c, x1, y1, x1 + w, base, 4, fill=C_BLACK, outline=C_GREEN, width=1)
+        cols, rows = 11, 3
+        kw, kh = (w - 10) / cols, (h - 6) / rows
+        lit = {(self.rng.randrange(cols), self.rng.randrange(rows)) for _ in range(3)}
+        for r in range(rows):
+            for k in range(cols):
+                kx, ky = x1 + 5 + k * kw, y1 + 3 + r * kh
+                c.create_rectangle(kx + 1, ky + 1, kx + kw - 1, ky + kh - 1,
+                                   fill=C_GREEN if (k, r) in lit else C_PANEL2, outline="")
 
     def activity_phrase(self):
         return awareness.PHRASE.get(self.ctx, "") if (self.aware and self.ctx) else ""
@@ -1771,6 +2111,7 @@ class Capri:
                                       "Oh! You're back!"]), 5)
             self.react("happy")
             self.set_icon("heart", 1.6)
+        self.reflexes(now, idle)
         if not self.aware:
             return
         if not self.settings.get("aware_notice") and now - self.t_start > 25:
@@ -1797,6 +2138,8 @@ class Capri:
 
     def scheduled(self, now):
         self.watch_context(now)
+        if self.pending:
+            self.tick_pending(now)
         if self.speaker.speaking:
             self.talk_until = now + 0.3          # her mouth moves while she talks
         err = self.speaker.last_error
@@ -1900,6 +2243,8 @@ class Capri:
             self.vx, self.vy = max(-30, min(30, vx * 0.6)), max(-30, min(30, vy * 0.6))
             self.go("air")
             return
+        if self.pending:
+            return self.cancel_pending("Okay, cancelled.")
         self.clicks = [t for t in self.clicks if now - t < 6] + [now]
         if len(self.clicks) >= 2 and now - self.clicks[-2] < 0.4:
             self.open_chat()
@@ -1969,6 +2314,7 @@ class Capri:
                     activeforeground=C_BLACK, bd=0, relief="flat", font=(self.font_family, 10))
         m.add_command(label="Chat with Capri", command=self.open_chat)
         m.add_command(label=f"Mood: {self.mind.mood(time.time())}", state="disabled")
+        m.add_command(label="Settings...", command=self.open_settings)
         if self.timer_end:
             left = max(0, int(self.timer_end - time.time()))
             m.add_command(label=f"{self.timer_mode.title()}: {left // 60}:{left % 60:02d} left", state="disabled")
@@ -2033,7 +2379,12 @@ class Capri:
             self._geo = g
 
     def sprite_image(self, now):
-        anim = "talk" if now < self.talk_until and self.state in ("idle", "perch") else self.anim
+        if now < self.talk_until and self.state in ("idle", "perch"):
+            anim = "talk"
+        elif self.typing_along and self.state in ("idle", "perch"):
+            anim = "type"
+        else:
+            anim = self.anim
         key, frame = self.art.frame(anim, now - self.t_start, self.dir)
         flip = self.art.flip_dir and self.dir < 0
         dim = self.state == "sleep"
@@ -2061,6 +2412,8 @@ class Capri:
         y0 = lfy - h
         c.create_image(x0, y0, image=photo, anchor="nw")
         top = y0
+        if self.typing_along:
+            self.draw_keyboard(c, lfx, lfy)
         if self.state == "sleep":
             ph = int(now * 2) % 3
             c.create_text(lfx + self.fw * 0.1 + ph * 10, top - 2 - ph * 12, text="z",

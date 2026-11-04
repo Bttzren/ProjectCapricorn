@@ -32,6 +32,23 @@ AWARENESS (Windows only)
   your screen. When you chat, only a short hint such as "coding" is added to the AI's instructions.
   Turn it off any time: right-click > Awareness, or /aware off.
 
+SETTINGS & HANDS
+  Right-click her > Settings... (or /settings) opens one window: hands, voice, behaviour, keys.
+  HANDS decides what she may do on your computer. It is enforced in code, not just in the menu:
+    Visual only  (default) - she mimes typing along while you're busy; sends nothing to your computer
+    Media keys   - on request: /pause /next /prev /volup /voldown /mute /shot (screenshot) /lock
+    Full control - also /press ctrl+s, /type hello there, /click [right|double]. Turning this on asks
+                   for confirmation. These wait 5 seconds so you can click where you want the input
+                   to go; click her to cancel.
+  Optional REFLEXES (Full control only, off by default): lock the screen after 15 minutes away; pause
+  video/music after 5 minutes away. She announces them 10 seconds ahead; click her or touch the
+  mouse/keyboard to cancel.
+  Safety: real input only comes from YOUR commands or reflexes YOU switched on - never from the AI's
+  replies. Shortcuts like Alt+F4 and Ctrl+Alt+Del are blocked. Typed text can't press Enter and is
+  capped at 200 characters. Max 12 actions a minute. Lowering the level cancels anything pending.
+  Only the action name is logged (never what she typed). Real key presses are fully supported on
+  Windows; Mac and Linux use osascript / xdotool / playerctl / pactl if installed.
+
 PERSONALITY
   She talks like a Night City local (choom, preem, nova, gonk, eddies, chrome...), kept PG.
   The same slang is built into her canned lines and into the AI persona prompt.
@@ -78,4 +95,5 @@ Linux has no real transparency (dark box). Perching on other apps' windows is Wi
 DEVELOPING
   personality.py  moods, memory, lines (no Tk)       awareness.py  window title -> activity (no Tk)
         voice.py  speech: Fish Audio + system voice (no Tk)
+  hands.py        key presses / clicks with safety rails (no Tk)
   Tests:  python -m unittest discover -s tests

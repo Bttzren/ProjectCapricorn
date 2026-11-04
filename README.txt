@@ -100,6 +100,21 @@ GAME MODE (she hypes your kills and roasts your deaths)
   (There's also an offline option: game_events.json with reference images of fixed screen patches, see
    game_events.example.json. It never sends anything anywhere, but needs setting up per game.)
 
+DOING TASKS FOR YOU (/do)
+  Tell her what you want done and she operates the computer: she looks at your screen, then clicks, types
+  and presses keys, one step at a time, until it's finished. Example:
+      /do open Discord, join the voice channel my friends are in and tell them I'll be on in 15 minutes
+  Set up once:  1) Settings -> Full control   2) a Claude key (sk-ant...)   3) type /agent on and agree.
+  How it stays safe:
+    * only starts when you type /do and confirm that exact task
+    * you must approve every piece of text she is about to type
+    * stops the second you move the mouse, click her, use the right-click menu "STOP the task", or /stop
+    * stops on banking / password / private windows; 20 steps max per task; 250 steps a day
+    * never enters passwords or payments; Alt+F4, Win+R and Ctrl+Alt+Del stay blocked
+  Cost/privacy: each step sends a screenshot (1280 px wide) to Claude with your key, about a cent or two
+  per step with the default model (CAPRI_AGENT_MODEL changes it). Nothing is saved. The AI can misread a
+  screen, so don't hand her anything you can't undo.
+
 AI-WRITTEN LINES (everything she says out loud)
   With a Claude or Gemini key, the words she speaks and shows in her bubble are written by the AI, not
   chosen from a list: pokes, idle chatter, check-ins, greetings, startling or annoying her, flying,

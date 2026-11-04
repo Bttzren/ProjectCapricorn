@@ -21,10 +21,11 @@ LEVEL_NAMES = {"visual": "Visual only", "media": "Media keys", "full": "Full con
 
 ACTION_LEVEL = {"playpause": "media", "next": "media", "prev": "media", "volup": "media", "voldown": "media",
                 "mute": "media", "screenshot": "media", "lock": "media",
-                "press": "full", "type": "full", "click": "full"}
+                "press": "full", "type": "full", "click": "full", "move": "full", "click_at": "full", "scroll": "full"}
 ACTION_LABEL = {"playpause": "Play/pause", "next": "Next track", "prev": "Previous track", "volup": "Volume up",
                 "voldown": "Volume down", "mute": "Mute", "screenshot": "Screenshot", "lock": "Locking the screen",
-                "press": "Pressing keys", "type": "Typing", "click": "Clicking"}
+                "press": "Pressing keys", "type": "Typing", "click": "Clicking", "move": "Moving the mouse",
+                "click_at": "Clicking", "scroll": "Scrolling"}
 
 MODIFIERS = ("ctrl", "shift", "alt", "win")
 VK = {"ctrl": 0x11, "shift": 0x10, "alt": 0x12, "win": 0x5B, "enter": 0x0D, "esc": 0x1B, "tab": 0x09,
@@ -42,6 +43,7 @@ ALIASES = {"control": "ctrl", "ctl": "ctrl", "windows": "win", "cmd": "win", "su
            "pgdn": "pagedown", "pgdown": "pagedown", "prtsc": "printscreen", "prtscn": "printscreen",
            "spacebar": "space", "bksp": "backspace"}
 MAX_TYPE = 200
+MAX_COORD = 20000
 MAX_PER_MIN = 12
 
 
@@ -56,7 +58,7 @@ def normalize_combo(text):
             raise ValueError(f"'{m}' isn't a modifier key (ctrl, shift, alt, win)")
     if len(set(mods)) != len(mods):
         raise ValueError("a modifier is repeated")
-    if not (len(key) == 1 or key in NAMED_KEYS):
+    if not (len(key) == 1 or key in NAMED_KEYS or (key == "win" and not mods)):   # the Start/Super key on its own
         raise ValueError(f"I don't know the key '{key}'")
     mods.sort(key=MODIFIERS.index)
     if "+".join(mods + [key]) in BLOCKED:
@@ -122,6 +124,12 @@ class WinBackend:
         for _ in range(2 if double else 1):
             self.u.mouse_event(down, 0, 0, 0, 0)
             self.u.mouse_event(up, 0, 0, 0, 0)
+
+    def move(self, x, y):
+        self.u.SetCursorPos(int(x), int(y))
+
+    def scroll(self, amount):
+        self.u.mouse_event(0x800, 0, 0, int(amount) * 120, 0)           # positive = up
 
     def media(self, name):
         vk = MEDIA_VK[name]
@@ -213,6 +221,17 @@ class CmdBackend:
                              'tell application "System Events" to keystroke (item 1 of argv)', "-e", "end run", text])
         self._go([self._need("xdotool"), "type", "--delay", "40", "--", text])
 
+    def move(self, x, y):
+        if self.mac:
+            return self._go([self._need("cliclick"), f"m:{int(x)},{int(y)}"])
+        self._go([self._need("xdotool"), "mousemove", str(int(x)), str(int(y))])
+
+    def scroll(self, amount):
+        if self.mac:
+            raise NotImplementedError("scrolling on macOS")
+        n = abs(int(amount))
+        self._go([self._need("xdotool"), "click", "--repeat", str(max(1, n)), "4" if amount > 0 else "5"])
+
     def click(self, button="left", double=False):
         if self.mac:
             cl = self._need("cliclick")
@@ -230,7 +249,9 @@ def make_backend(platform=None, which=shutil.which):
 
 # ------------------------------------------------------------------ the hands
 class Hands:
-    def __init__(self, level="visual", backend=None, clock=time.time, threaded=True, log=None, platform=None):
+    def __init__(self, level="visual", backend=None, clock=time.time, threaded=True, log=None, platform=None,
+                 per_min=MAX_PER_MIN):
+        self.per_min = per_min
         self.level = level if level in LEVELS else "visual"
         self._backend, self._platform = backend, platform
         self.clock, self.threaded, self.log = clock, threaded, log or (lambda m: None)
@@ -258,7 +279,7 @@ class Hands:
         now = self.clock()
         while self.recent and now - self.recent[0] > 60:
             self.recent.popleft()
-        if len(self.recent) >= MAX_PER_MIN:
+        if len(self.recent) >= self.per_min:
             return False, "Whoa, that's a lot of button pressing. Give me a minute."
         try:
             run, msg = self._prepare(action, arg)
@@ -312,6 +333,30 @@ class Hands:
                 raise ValueError("click can be left, right or double")
             return ((lambda: b.click("right" if kind == "right" else "left", kind == "double")),
                     f"Clicked ({kind}).")
+        if action in ("move", "click_at"):
+            try:
+                x, y = int(arg[0]), int(arg[1])
+            except (TypeError, ValueError, IndexError):
+                raise ValueError("I need x and y to click there")
+            if not (0 <= x <= MAX_COORD and 0 <= y <= MAX_COORD):
+                raise ValueError("that spot is off the screen")
+            if action == "move":
+                return (lambda: b.move(x, y)), "Moved."
+            kind = (arg[2] if len(arg) > 2 else "left") or "left"
+            if kind not in ("left", "right", "double"):
+                raise ValueError("click can be left, right or double")
+
+            def go():
+                b.move(x, y)
+                time.sleep(0.08)
+                b.click("right" if kind == "right" else "left", kind == "double")
+            return go, f"Clicked ({kind})."
+        if action == "scroll":
+            try:
+                n = max(-20, min(20, int(arg)))
+            except (TypeError, ValueError):
+                raise ValueError("scroll needs a number")
+            return (lambda: b.scroll(n)), "Scrolled."
         if action in MEDIA_VK:
             return (lambda: b.media(action)), ACTION_LABEL[action] + "."
         if action == "screenshot":

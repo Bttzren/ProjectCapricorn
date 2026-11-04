@@ -21,6 +21,7 @@ import urllib.request
 import tkinter as tk
 from tkinter import font as tkfont
 
+import agent
 import autostart
 import awareness
 import breach
@@ -66,6 +67,7 @@ CHECKIN_EVERY = (40 * 60, 70 * 60)
 MODEL = os.environ.get("CAPRI_MODEL", "claude-sonnet-5-5")
 LINE_MODEL = os.environ.get("CAPRI_LINE_MODEL", "claude-haiku-5-5")        # short lines: fast and cheap
 VISION_MODEL = os.environ.get("CAPRI_VISION_MODEL", "claude-haiku-5-5")    # looking at screenshots
+AGENT_MODEL = os.environ.get("CAPRI_AGENT_MODEL", "claude-sonnet-5-5")      # doing tasks: needs to aim well
 GEMINI_MODELS = [m for m in (os.environ.get("CAPRI_GEMINI_MODEL"),) if m] or [
     "gemini-flash-latest", "gemini-3.8-flash", "gemini-2.5-flash"]
 KEY = "#ff00ff"               # Windows transparency key
@@ -302,7 +304,7 @@ def llm_reply(messages, persona, max_tokens=None, model=None):
     return fn(key, messages, persona, **kw)
 
 
-def vision_ask(system, media_type, b64, prompt, max_tokens=120):
+def vision_ask(system, media_type, b64, prompt, max_tokens=120, model=None):
     """Ask the vision model about ONE shrunken screenshot. The image goes to the AI provider that owns your key."""
     key = read_api_key()
     if not key:
@@ -322,7 +324,7 @@ def vision_ask(system, media_type, b64, prompt, max_tokens=120):
                     continue
                 raise
         raise RuntimeError(last)
-    body = json.dumps(vision.anthropic_body(VISION_MODEL, system, media_type, b64, prompt, max_tokens)).encode()
+    body = json.dumps(vision.anthropic_body(model or VISION_MODEL, system, media_type, b64, prompt, max_tokens)).encode()
     req = urllib.request.Request(
         "https://api.anthropic.com/v1/messages", data=body,
         headers={"content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01"})
@@ -404,6 +406,18 @@ class Win32:
             return buf.value
         except Exception:
             return ""
+
+    def cursor_pos(self):
+        """(x, y) of the mouse, safe to call from any thread. None where unknown."""
+        if not self.ok:
+            return None
+        try:
+            ct, wt = self.ct, self.wt
+            pt = wt.POINT()
+            self.u.GetCursorPos(ct.byref(pt))
+            return pt.x, pt.y
+        except Exception:
+            return None
 
     def idle_seconds(self):
         """Seconds since the last keyboard/mouse input (just the time; never which keys)."""
@@ -1106,7 +1120,7 @@ class ChatWindow:
                              "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
                              "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /tp  /dance  "
                              "/sleep  /calm  /watch  /look  /ailines  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /remember  /facts  /feel  "
-                             "/journal  /day  /horoscope  /lore  /clear")
+                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /clear")
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
@@ -1389,6 +1403,29 @@ class ChatWindow:
             p.speaker = make_speaker()
             self.system_line(msg)
             p.say("Testing, one two. Is this the real me?", 5, speak="priority")
+        elif cmd == "/do":
+            ok, why = p.start_agent(text.split(None, 1)[1] if len(parts) > 1 else "")
+            if not ok:
+                self.system_line(why, err=True)
+        elif cmd == "/stop":
+            if p.agent is not None:
+                p.stop_agent()
+                self.system_line("Stopping...")
+            else:
+                self.system_line("I'm not doing anything.")
+        elif cmd == "/agent":
+            sub = parts[1].lower() if len(parts) > 1 else ""
+            if sub == "on":
+                self.system_line("Tasks are on. Try /do ..." if p.enable_agent(self.win)
+                                 else "Okay, tasks stay off.")
+            elif sub == "off":
+                p.settings["agent"] = False
+                p.save_settings()
+                p.stop_agent()
+                self.system_line("Tasks are off.")
+            else:
+                self.system_line("Tasks: " + ("on" if p.settings.get("agent") else "off")
+                                 + "  (/agent on | off).  Needs Full control and a Claude key.  Then: /do <task>")
         elif cmd == "/getvoice":
             if voice.edge_installed():
                 p.speaker = make_speaker()
@@ -2103,6 +2140,9 @@ class Capri:
         self.ai_results, self.ai_pending, self.ai_seq, self.ai_inflight = queue.Queue(), {}, 0, 0
         self.ai_fails, self.ai_pause_until = 0, 0.0
         self.recent_lines = collections.deque(maxlen=8)
+        self.agent = None
+        self.agent_events = queue.Queue()
+        self.agent_budget = speech.Budget(per_min=40, per_day=250, store=self.settings.setdefault("agent_budget", {}))
         self.voice_install = None
         self.spotter, self.spotter_manual, self.spotter_until = None, False, 0.0
         self.spotter_ctx_at, self.look_results = 0.0, queue.Queue()
@@ -2948,6 +2988,110 @@ class Capri:
         self.say("Okay. I'll watch when you game, if you give me a key.", 5, speak=None)
         return True
 
+    # ---- doing tasks for the user (the agent)
+    def agent_ready(self):
+        """(ok, why_not) for starting a task right now."""
+        if self.agent is not None:
+            return False, "I'm already doing something. Click me or /stop to stop it."
+        if not read_api_key():
+            return False, "I need an AI key first (Settings)."
+        if detect_provider(read_api_key()) != "anthropic":
+            return False, "Doing tasks needs a Claude key (sk-ant...). Gemini isn't supported for this yet."
+        if self.hands.level != "full":
+            return False, "That needs Full control in Settings."
+        if not self.settings.get("agent"):
+            return False, "Turn it on first: /agent on"
+        return True, ""
+
+    def enable_agent(self, parent=None):
+        from tkinter import messagebox
+        if not messagebox.askyesno(
+                "Let Capri do tasks for you?",
+                "When you type /do <task>, Capri will LOOK at your screen (a screenshot is sent to Claude, using your "
+                "key and credits), then click, type and press keys in your apps to get it done, for up to 20 steps.\n\n"
+                "* She can click and type in ANY app, including sending messages.\n* Every text she wants to type "
+                "is shown to you for approval first.\n* She stops the moment you move the mouse, click her, or type "
+                "/stop. She also stops on banking/password windows.\n* She never enters passwords or payments.\n"
+                "* AI can misread a screen and click the wrong thing. Don't use it for anything you can't undo.\n\n"
+                "Turn on tasks?", parent=parent, default="no", icon="warning"):
+            return False
+        self.settings["agent"] = True
+        self.save_settings()
+        return True
+
+    def start_agent(self, task):
+        ok, why = self.agent_ready()
+        if not ok:
+            return False, why
+        task = " ".join((task or "").split())[:300]
+        if not task:
+            return False, "Tell me what to do: /do open Discord and tell my friends I'll be on in 15"
+        from tkinter import messagebox
+        if not messagebox.askyesno(
+                "Do this task?",
+                f"Capri will try to do this by clicking and typing on your screen:\n\n  {task}\n\n"
+                "Move the mouse, click her, or type /stop to take over at any time.", default="no"):
+            return False, "Okay, cancelled."
+        h = hands.Hands(level=self.hands.level, threaded=False, log=log, per_min=120)
+        ag = agent.Agent(
+            ledges.capture, lambda mt, b64, system, prompt: vision_ask(system, mt, b64, prompt, 300, AGENT_MODEL), h,
+            title=self.win32.foreground_title, pointer=self.win32.cursor_pos, approve=self._agent_approve,
+            blocked=self._agent_blocked, note=lambda t: self.agent_events.put(("note", t)), budget=self.agent_budget)
+        self.agent = ag
+        if self.chat and self.chat.alive():
+            self.chat.win.withdraw()                    # get the chat out of the way of the apps
+        self.say("On it.", 3, speak=None)
+        self.react("happy")
+
+        def work():
+            try:
+                res = ag.run(task)
+            except Exception as exc:
+                log("agent crashed: " + type(exc).__name__)
+                res = ("error", "Something broke while I was doing that.")
+            self.agent_events.put(("end", res[0], res[1], task))
+        threading.Thread(target=work, daemon=True).start()
+        return True, ""
+
+    def stop_agent(self):
+        if self.agent is not None:
+            self.agent.stop()
+
+    def _agent_blocked(self, x, y):
+        """True when (x, y) is on top of Capri herself or her bubble."""
+        return (self.fx - self.fw * 0.8 <= x <= self.fx + self.fw * 0.8 and self.fy - self.fh * 1.8 <= y <= self.fy + 20)
+
+    def _agent_approve(self, kind, detail):
+        """Called on the agent's thread: ask the user on the main thread and wait for the answer."""
+        box = {}
+        ev = threading.Event()
+        self.agent_events.put(("approve", detail, box, ev))
+        ev.wait(90)
+        return bool(box.get("ok"))
+
+    def drain_agent(self):
+        while True:
+            try:
+                item = self.agent_events.get_nowait()
+            except queue.Empty:
+                return
+            if item[0] == "note":
+                if self.chat and self.chat.alive():
+                    self.chat.system_line(item[1])
+            elif item[0] == "approve":
+                from tkinter import messagebox
+                _kind, detail, box, ev = item
+                box["ok"] = messagebox.askyesno("Capri wants to type this", f"Type this?\n\n  {detail}", default="no")
+                ev.set()
+            elif item[0] == "end":
+                _kind, status, summary, task = item
+                self.agent = None
+                if self.chat and self.chat.alive():
+                    self.chat.win.deiconify()
+                    self.chat.system_line(("Done: " if status == "done" else "Stopped: ") + summary, err=status != "done")
+                self.say_moment(f"you just {'finished' if status == 'done' else 'stopped'} doing a task for the user "
+                                f"('{task}'). Result: {summary}", summary, 8, speak="priority", wait=4)
+
     def disable_vision(self):
         self.settings["ai_vision"] = False
         self.save_settings()
@@ -3454,6 +3598,7 @@ class Capri:
         self.watch_ledges(now)
         self.drain_reactor()
         self.drain_ai(now)
+        self.drain_agent()
         self.check_voice_install()
         self.update_spotter(now)
         if self.pending:
@@ -3581,6 +3726,9 @@ class Capri:
             return
         if self.pending:
             return self.cancel_pending("Okay, cancelled.")
+        if self.agent is not None:
+            self.stop_agent()
+            return
         self.clicks = [t for t in self.clicks if now - t < 6] + [now]
         if len(self.clicks) >= 2 and now - self.clicks[-2] < 0.4:
             self.open_chat()
@@ -3659,6 +3807,8 @@ class Capri:
         else:
             m.add_command(label=f"Start focus timer ({FOCUS_MIN} min)", command=self.start_focus)
         m.add_command(label="Remind me...", command=lambda: ReminderDialog(self))
+        if self.agent is not None:
+            m.add_command(label="STOP the task", command=self.stop_agent)
         m.add_separator()
         m.add_command(label="Teleport", command=self.teleport)
         m.add_command(label="Fly around", command=lambda: self.start_fly("fly"))

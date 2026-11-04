@@ -56,6 +56,8 @@ def user_prompt(kind, facts, recent=()):
                 + (f", {f['kstreak']} kills in a row" if f.get("kstreak", 0) >= 2 else "")
                 + (f", {f['dstreak']} deaths in a row" if f.get("dstreak", 0) >= 2 else "")
                 + ". React like a friend watching over their shoulder.")
+    elif kind == "moment":
+        text = f"Right now: {f.get('situation', 'something happened')}. React out loud in one short sentence."
     else:
         text = "Say one short thing."
     return text + _recent(list(recent))

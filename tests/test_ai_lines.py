@@ -44,6 +44,9 @@ class SpeechTests(unittest.TestCase):
         self.assertIn("45 minutes", S.user_prompt("nudge", {"activity": "scrolling", "minutes": 45}))
         self.assertIn("2 hours", S.user_prompt("greeting", {"away": "They were gone 2 hours."}))
         self.assertIn("13", S.user_prompt("recap", {"game": "Valorant", "kills": 15, "deaths": 12, "rw": 13, "rl": 7}))
+        m = S.user_prompt("moment", {"situation": "you just peeked out from the edge of the screen"})
+        self.assertIn("peeked out from the edge", m)
+        self.assertIn("out loud", m)
         self.assertTrue(S.user_prompt("???", {}))
 
     def test_recent_lines_are_listed_so_she_doesnt_repeat_herself(self):

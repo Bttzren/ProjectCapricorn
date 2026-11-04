@@ -100,14 +100,18 @@ GAME MODE (she hypes your kills and roasts your deaths)
   (There's also an offline option: game_events.json with reference images of fixed screen patches, see
    game_events.example.json. It never sends anything anywhere, but needs setting up per game.)
 
-AI-WRITTEN LINES
-  With a Claude or Gemini key she writes her own lines (pokes, idle chatter, check-ins, greetings,
-  reactions to what you're doing, game comments, recaps) instead of the preset lines. Each is a tiny AI
-  call (Haiku, ~80 tokens). The preset lines are only a fallback: used when there's no key, no internet,
-  the AI errors or takes more than 5 seconds, or the limit is hit (10 a minute, 800 a day). After 3
-  failures in a row she goes back to presets for 5 minutes and tells you why. /ailines on|off.
-  She's told her mood, what you're doing, your /remember facts and your roast level, and what she said
-  recently so she doesn't repeat herself. Timers, reminders and system messages stay exact, not AI.
+AI-WRITTEN LINES (everything she says out loud)
+  With a Claude or Gemini key, the words she speaks and shows in her bubble are written by the AI, not
+  chosen from a list: pokes, idle chatter, check-ins, greetings, startling or annoying her, flying,
+  peeking, teleporting, tag, ramen, the minigames, battery, radio, hunger, habit and to-do nags, memory
+  callbacks, welcome back, holidays, focus timer endings, game kills/deaths/recaps. For each moment she's
+  told WHAT JUST HAPPENED plus her mood, what you're doing, your /remember facts and roast level, and what
+  she said recently so she doesn't repeat herself. One short sentence each (Haiku, ~80 tokens).
+  Stays EXACT (never AI): reminder text, timer confirmations, countdowns like "locking in 3...", privacy
+  and settings messages.
+  The preset lines are only a fallback: no key, no internet, AI error, a quick reaction where the AI is
+  slower than ~2.5s (longer moments wait 4-5s), or the limit (14 a minute, 800 a day). After 3 failures in
+  a row she uses presets for 5 minutes and says why. /ailines on|off shows today's count.
 
 SCREEN LEDGES (she sits on boxes on your screen)  - OFF by default, needs your OK
   She can look at your screen, find boxes (cards, text boxes, images, panels) and fly over to sit on

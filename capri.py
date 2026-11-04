@@ -1196,7 +1196,9 @@ class ChatWindow:
                     p.start_game("other", manual=True)
                 p.game.apply_result(res.get("rounds"), res.get("kd"))
                 self.system_line(p.game.recap())
-                p.say(p.game.recap(), 12, speak="priority")
+                g = p.game
+                p.say_ai("recap", {"game": g.name, "kills": g.kills, "deaths": g.deaths, "rw": g.rounds_w,
+                                   "rl": g.rounds_l, "minutes": int(g.minutes())}, g.recap(), 12, speak="priority")
                 p.end_game(quiet=True)
             else:
                 self.system_line("Tell me like /match 13-7 15/12   (rounds won-lost, then kills/deaths)", err=True)
@@ -2084,7 +2086,7 @@ class Capri:
         self.scanner, self.ledges, self.ledge_counter, self.ledge_next = ledges.Scanner(), [], 0, 0.0
         self.game, self.game_seen, self.game_manual, self.reactor, self.calm_before_game = None, now, False, None, None
         self.persona_text = read_first(["persona.txt"]) or DEFAULT_PERSONA
-        self.ai_budget = speech.Budget(per_min=10, per_day=int(self.settings.get("ai_daily_cap", 800)),
+        self.ai_budget = speech.Budget(per_min=14, per_day=int(self.settings.get("ai_daily_cap", 800)),
                                        store=self.settings.setdefault("ai_day", {}))
         self.ai_results, self.ai_pending, self.ai_seq, self.ai_inflight = queue.Queue(), {}, 0, 0
         self.ai_fails, self.ai_pause_until = 0, 0.0
@@ -2249,13 +2251,15 @@ class Capri:
             self.icon = None
         if kind == "startle":
             self.set_emote("wide", 1.6)
-            self.say(self.rng.choice(["Whoa.", "Hey!", "Eep."]), 1.6)
+            self.say_moment("someone suddenly swiped the mouse right at you and startled you",
+                            self.rng.choice(["Whoa.", "Hey!", "Eep."]), 3, wait=2.5)
             self.set_icon("!", 1.4)
             self.hop(8)
             self.anim = "startle"
         elif kind == "annoyed":
             self.set_emote("angry", 2.4)
-            self.say("Okay, that's enough.", 2.5)
+            self.say_moment("the user keeps clicking on you over and over and it's annoying you",
+                            "Okay, that's enough.", 3.5, wait=3)
             self.set_icon("anger", 2.4)
         elif kind == "think":
             self.anim = "wait"
@@ -2372,7 +2376,8 @@ class Capri:
             self.orbit_a = self.rng.uniform(0, 6.28)
             self.fly_speed = 520.0
             self.go("orbit", 5.5)
-            self.say(self.rng.choice(["Circling you, choom.", "You're my favorite landmark."]), 3)
+            self.say_moment("you are flying in circles around the user's mouse cursor",
+                            self.rng.choice(["Circling you, choom.", "You're my favorite landmark."]), 4, wait=3)
         else:
             n = 1 if kind == "zoom" else self.rng.randint(3, 5)
             lo_x, hi_x = wa[0] + self.fw, wa[2] - self.fw
@@ -2381,7 +2386,10 @@ class Capri:
                             for _ in range(n)]
             self.fly_speed = 1100.0 if kind == "zoom" else 380.0
             self.go("fly", None)
-            self.say("Gotta go fast!" if kind == "zoom" else self.rng.choice(["Wheee!", "Up we go, choom!", "Nova!"]), 2)
+            self.say_moment("you just dashed across the screen at top speed" if kind == "zoom"
+                            else "you just took off to fly around the screen",
+                            "Gotta go fast!" if kind == "zoom" else self.rng.choice(["Wheee!", "Up we go, choom!", "Nova!"]),
+                            3, wait=3)
         self.anim = "jump"
 
     def spawn_confetti(self, count=60):
@@ -2409,7 +2417,8 @@ class Capri:
             return
         mode = mode or self.rng.choice(["ground", "ground", "sky", "cursor"])
         self.tp_dest = mode
-        self.say(self.rng.choice(["Glitching...", "brb", "Don't look."]), 1.2)
+        self.say_moment("you are about to glitch-teleport somewhere else on the screen",
+                        self.rng.choice(["Glitching...", "brb", "Don't look."]), 2.5, wait=1.5)
         self.go("tp_out", 0.5)
 
     def finish_teleport(self):
@@ -2505,7 +2514,9 @@ class Capri:
             if age > (self.state_dur or 5.0):                 # slide back in, then carry on
                 if not self.peek_said:                        # the line waits until the bubble can be read
                     self.peek_said = True
-                    self.say(self.rng.choice(["Peekaboo.", "Don't mind me.", "Psst. Choom.", "Boo. Kidding."]), 3)
+                    self.say_moment("you just peeked out from the edge of the screen and are sliding back in",
+                                    self.rng.choice(["Peekaboo.", "Don't mind me.", "Psst. Choom.", "Boo. Kidding."]),
+                                    4, wait=3)
                 self.fx += (inside - self.fx) * min(1.0, 6.0 * dt)
                 if abs(inside - self.fx) < 6:
                     self.go("idle", self.rng.uniform(1.5, 3.5))
@@ -2679,7 +2690,8 @@ class Capri:
         self.tag = {"t0": now, "tp_ok": now + 1.5}
         self.go("flee", 26)
         self.anim = "jump"
-        self.say("Tag! Catch me with your cursor, choom. 25 seconds!", 4)
+        self.say_moment("you're starting a game of tag: the user has 25 seconds to catch you with their mouse cursor",
+                        "Tag! Catch me with your cursor, choom. 25 seconds!", 5, wait=3)
 
     def end_tag(self, caught, t):
         self.tag = None
@@ -2692,11 +2704,13 @@ class Capri:
             if t < best:
                 self.settings["tag_best"] = round(t, 1)
                 tail = " New record!" if best < 99 else ""
-            self.say(f"Got me in {t:.1f}s! Preem reflexes.{tail}", 7, speak="priority")
+            self.say_moment(f"the user caught you in tag in {t:.1f} seconds" + (" and it's a new personal record" if tail else ""),
+                            f"Got me in {t:.1f}s! Preem reflexes.{tail}", 7, speak="priority", wait=4)
             self.spawn_confetti(30)
             self.sfx.play("success")
         else:
-            self.say("You couldn't catch me. Nova.", 5)
+            self.say_moment("the user failed to catch you in tag for the whole 25 seconds",
+                            "You couldn't catch me. Nova.", 5, wait=4)
             self.sfx.play("fail")
 
     def scan_masks(self):
@@ -2792,7 +2806,8 @@ class Capri:
         self.go("fly", None)
         self.anim = "jump"
         if not quiet:
-            self.say(self.rng.choice(["Found a spot!", "That box looks sit-able.", "Ooh, a ledge."]), 3)
+            self.say_moment("you just found a box on the user's screen to sit on",
+                            self.rng.choice(["Found a spot!", "That box looks sit-able.", "Ooh, a ledge."]), 4, wait=3)
 
     # ---- lines the AI writes (presets are only the fallback)
     def ai_enabled(self):
@@ -2803,7 +2818,11 @@ class Capri:
         return speech.system_prompt(self.persona_text, self.mind.context(now, self.doing(), self.activity_phrase()),
                                     self.settings.get("roast", "mild"), self.memory.context())
 
-    def say_ai(self, kind, facts, fallback, secs=6.0, speak="ambient"):
+    def say_moment(self, situation, fallback, secs=4.0, speak="ambient", wait=4.0):
+        """Tell the AI what just happened and let it write her reaction. `fallback` only if the AI can't."""
+        self.say_ai("moment", {"situation": situation}, fallback, secs, speak, wait)
+
+    def say_ai(self, kind, facts, fallback, secs=6.0, speak="ambient", wait=5.0):
         """Let the AI write this line. The preset `fallback` is used only if the AI is off, busy or too slow."""
         if not self.ai_enabled() or self.ai_inflight >= 2 or not self.ai_budget.allow():
             if fallback:
@@ -2812,7 +2831,7 @@ class Capri:
         now = time.time()
         self.ai_seq += 1
         rid = self.ai_seq
-        self.ai_pending[rid] = {"deadline": now + 5.0, "fallback": fallback, "secs": secs, "speak": speak,
+        self.ai_pending[rid] = {"deadline": now + wait, "fallback": fallback, "secs": secs, "speak": speak,
                                 "expired": False}
         self.ai_inflight += 1
         system = self.ai_system(now)
@@ -3094,8 +3113,9 @@ class Capri:
         now = time.time()
         self.settings["last_fed"] = now
         self.mind.fed(now)
-        self.say(self.rng.choice(["Ramen! You're preem.", "Noodles. Nova.", "Slurp. Best gig ever."]), 5,
-                 speak="priority")
+        self.say_moment("the user just fed you a bowl of ramen and you love it",
+                        self.rng.choice(["Ramen! You're preem.", "Noodles. Nova.", "Slurp. Best gig ever."]), 5,
+                        speak="priority", wait=4)
         self.set_icon("heart", 2.0)
         self.spawn_confetti(15)
         self.react("happy")
@@ -3111,7 +3131,8 @@ class Capri:
             except tk.TclError:
                 pass
         self.breach_win = BreachWindow(self)
-        self.say("Jack in, choom. Match the daemons.", 4)
+        self.say_moment("the user is starting a hacking minigame (Breach Protocol) where they match code sequences",
+                        "Jack in, choom. Match the daemons.", 4, wait=3)
 
     def open_simon(self):
         if self.simon_win:
@@ -3122,21 +3143,26 @@ class Capri:
             except tk.TclError:
                 pass
         self.simon_win = SimonWindow(self)
-        self.say("Watch the lights, choom. Then copy them.", 4)
+        self.say_moment("the user is starting Simon, the memory game where they copy a growing colour sequence",
+                        "Watch the lights, choom. Then copy them.", 4, wait=3)
 
     def simon_result(self, rounds):
-        self.say(f"Simon: {rounds} round(s). " + ("Nova memory!" if rounds >= 8 else "Not bad, choom."), 5)
+        self.say_moment(f"the user's Simon memory game just ended after {rounds} round(s) (8 or more is great)",
+                        f"Simon: {rounds} round(s). " + ("Nova memory!" if rounds >= 8 else "Not bad, choom."), 5,
+                        wait=4)
 
     def breach_result(self, done, total):
         if done == total:
-            self.say("Breach complete! Preem netrunning.", 6, speak="priority")
+            self.say_moment("the user fully completed the hacking minigame breach", "Breach complete! Preem netrunning.",
+                            6, speak="priority", wait=4)
             self.spawn_confetti(40)
             self.sfx.play("success")
         elif done:
-            self.say(f"Partial breach: {done}/{total}. Not bad, choom.", 5)
+            self.say_moment(f"the user partly completed the hacking minigame: {done} of {total} daemons",
+                            f"Partial breach: {done}/{total}. Not bad, choom.", 5, wait=4)
             self.sfx.play("confirm")
         else:
-            self.say("Flatlined. The ICE won this round.", 5)
+            self.say_moment("the user failed the hacking minigame", "Flatlined. The ICE won this round.", 5, wait=4)
             self.sfx.play("fail")
 
     def watch_world(self, now):
@@ -3147,16 +3173,18 @@ class Capri:
             pct, plugged = battery()
             line = world.battery_event(self.battery_state, pct, plugged)
             if line:
-                self.say(line, 8, speak="priority")
+                self.say_moment(f"laptop battery update: {line}", line, 8, speak="priority", wait=4)
                 self.set_icon("!" if not plugged else "heart", 3.0)
                 self.sfx.play("alert" if not plugged else "confirm")
         if self.settings.get("radio") and now >= self.next_radio and not self.calm:
             self.next_radio = now + self.rng.randint(240, 480)
-            self.say(self.rng.choice(world.RADIO), 8)
+            self.say_moment("you're the DJ of Night City Radio: do a short, fun radio station drop",
+                            self.rng.choice(world.RADIO), 8, wait=4)
         if now >= self.next_hungry and not self.calm:
             self.next_hungry = now + 3 * 3600
             if now - self.settings.get("last_fed", now) > 6 * 3600:
-                self.say("Hungry, choom. /feed me ramen?", 8)
+                self.say_moment("you're hungry and want the user to feed you ramen by typing /feed",
+                                "Hungry, choom. /feed me ramen?", 8, wait=4)
         lt = time.localtime(now)
         today = time.strftime("%Y-%m-%d", lt)
         if not self.calm and self.state in ("idle", "perch", "walk", "lounge"):
@@ -3164,20 +3192,22 @@ class Capri:
                 self.settings["habit_nag_day"] = today
                 nag = self.habits.nag(today)
                 if nag:
-                    self.say(nag, 9)
+                    self.say_moment(f"remind them about habits they still have to do today: {nag}", nag, 9, wait=4)
             elif (lt.tm_hour * 60 + lt.tm_min >= 20 * 60 + 30 and self.settings.get("journal_prompt_day") != today
                   and not self.journal.has(today)):
                 self.settings["journal_prompt_day"] = today
-                self.say("How was today, 1 to 5? Tell me: /feel 4 pretty good", 10)
+                self.say_moment("ask how their day was from 1 to 5 and tell them to answer by typing /feel and a number",
+                                "How was today, 1 to 5? Tell me: /feel 4 pretty good", 10, wait=4)
             elif (lt.tm_hour >= 21 and self.settings.get("recap_day") != today
                   and self.settings.get("track_time", True) and self.daylog.total(today) >= 20):
                 self.settings["recap_day"] = today
-                self.say(self.daylog.summary(today), 12)
+                self.say_moment(f"comment on how they spent their time today: {self.daylog.summary(today)}",
+                                self.daylog.summary(today), 12, wait=4)
         if now >= self.next_memory_cb and not self.calm:
             self.next_memory_cb = now + self.rng.randint(5400, 9000)
             line = self.memory.callback(self.rng)
             if line:
-                self.say(line, 8)
+                self.say_moment(f"bring this up casually: {line}", line, 8, wait=4)
 
     def set_hands(self, level):
         self.hands.set_level(level)
@@ -3344,8 +3374,9 @@ class Capri:
         elif self.away and idle < 5:
             self.away = False
             self.poke_awake()
-            self.say(self.rng.choice(["Welcome back, choom!", "There you are. I counted the minutes.",
-                                      "Oh! You're back!"]), 5)
+            self.say_moment("the user just came back to the computer after being away for a while",
+                            self.rng.choice(["Welcome back, choom!", "There you are. I counted the minutes.",
+                                             "Oh! You're back!"]), 5, wait=3)
             self.react("happy")
             self.set_icon("heart", 1.6)
         self.reflexes(now, idle)
@@ -3389,7 +3420,7 @@ class Capri:
             self.tick_pending(now)
         if self.msgs and now > self.bubble_until + 0.4 and now - self.t_start > 8:
             text = self.msgs.pop(0)
-            self.say(text, 7, speak="priority")
+            self.say_moment(f"it's a special day: {text}", text, 7, speak="priority", wait=4)
             if text.startswith(("Achievement", "Happy", "Merry")):
                 self.spawn_confetti(40)
             self.sfx.play("achievement" if text.startswith("Achievement") else "blip")
@@ -3397,7 +3428,7 @@ class Capri:
             self.next_todo = now + self.rng.randint(3600, 5400)
             nag = self.todos.nag()
             if nag:
-                self.say(nag, 9)
+                self.say_moment(f"remind them about their to-do list: {nag}", nag, 9, wait=4)
         self.watch_world(now)
         if self.speaker.speaking:
             self.talk_until = now + 0.3          # her mouth moves while she talks
@@ -3411,12 +3442,15 @@ class Capri:
             self.save_settings()
         if self.timer_end and now >= self.timer_end:
             if self.timer_mode == "focus":
-                self.say(f"Focus done! {BREAK_MIN} min break. Move around.", 12, speak="priority")
+                self.say_moment(f"the user's focus timer just finished and they get a {BREAK_MIN} minute break; "
+                                "tell them to get up and move around",
+                                f"Focus done! {BREAK_MIN} min break. Move around.", 12, speak="priority", wait=4)
                 self.timer_mode, self.timer_end = "break", now + BREAK_MIN * 60
                 self.poke_awake()
                 self.party()
             else:
-                self.say("Break's over. Another round?", 12, speak="priority")
+                self.say_moment("the user's break just ended; ask if they want another focus round",
+                                "Break's over. Another round?", 12, speak="priority", wait=4)
                 self.timer_mode = self.timer_end = None
                 self.react("happy")
         for r in [r for r in self.reminders if now >= r[0]]:
@@ -3450,11 +3484,13 @@ class Capri:
             if now - self.near_since > 1.6:
                 self.near_since = None
                 if self.state in ("sleep", "lounge"):
-                    self.say("...hm? Oh. Hi.", 3)
+                    self.say_moment("the user's mouse cursor came close while you were napping and woke you up",
+                                    "...hm? Oh. Hi.", 4, wait=2.5)
                     self.poke_awake()
                 elif self.state in ("idle", "perch"):
                     self.dir = 1 if mx > self.fx else -1
-                    self.say("Hm?", 2)
+                    self.say_moment("the user's mouse cursor is hovering near you and you're curious",
+                                    "Hm?", 3, wait=2.5)
                     self.angle_t = 5.0 * self.dir
         else:
             self.near_since = None
@@ -3545,7 +3581,7 @@ class Capri:
         self.calm = not self.calm
         self.settings["calm"] = self.calm
         self.save_settings()
-        self.say("Calm mode on. I'll stay put." if self.calm else "Roaming again!", 3)
+        self.say("Calm mode on. I'll stay put." if self.calm else "Roaming again!", 3, speak=None)
         if self.calm:
             self.go("idle", 4)
 
@@ -3553,7 +3589,7 @@ class Capri:
         self.checkins = not self.checkins
         self.settings["checkins"] = self.checkins
         self.save_settings()
-        self.say("Check-ins on." if self.checkins else "Check-ins off.", 3)
+        self.say("Check-ins on." if self.checkins else "Check-ins off.", 3, speak=None)
 
     def open_chat(self):
         self.poke_awake()

@@ -1,8 +1,10 @@
 """Capri's voice.
 
-Two engines, picked automatically:
+Three engines, picked automatically:
   * Fish Audio (Capri's real character voice) when a Fish API key is set. Each line is sent to
     Fish Audio's text-to-speech API, cached on disk, and played with the OS audio player.
+  * A free neural voice (Microsoft Edge "read aloud" voices through the `edge-tts` package) when that
+    package is installed. No key needed: type /getvoice in the chat and she installs it.
   * The computer's built-in speech otherwise (no keys, nothing to install on Windows/Mac):
     Windows -> PowerShell + System.Speech, macOS -> `say`, Linux -> espeak-ng / espeak / spd-say.
 Text for the system engine goes on stdin (never the command line), so nothing a user types can run
@@ -26,6 +28,16 @@ CREATE_NO_WINDOW = 0x08000000
 FISH_URL = os.environ.get("CAPRI_FISH_URL", "https://api.fish.audio/v1/tts")
 DEFAULT_FISH_VOICE = "ef387f44931d4ab6a3f959a083c9fbb1"     # Capri's Fish Audio voice model
 DEFAULT_FISH_MODEL = "s1"
+DEFAULT_EDGE_VOICE = "en-US-AriaNeural"
+EDGE_RATE, EDGE_PITCH = "+8%", "+4Hz"
+
+WIN_MP3_SCRIPT = (
+    "Add-Type -AssemblyName PresentationCore; $f = [Console]::In.ReadLine(); "
+    "$p = New-Object System.Windows.Media.MediaPlayer; $p.Open([Uri]::new($f)); $p.Volume = 1; $p.Play(); $n = 0; "
+    "while (-not $p.NaturalDuration.HasTimeSpan -and $n -lt 100) { Start-Sleep -Milliseconds 50; $n++ }; "
+    "if ($p.NaturalDuration.HasTimeSpan) { Start-Sleep -Milliseconds ([int]$p.NaturalDuration.TimeSpan.TotalMilliseconds + 300) }; "
+    "$p.Close()"
+)
 
 WIN_SCRIPT = (
     "Add-Type -AssemblyName System.Speech; "
@@ -150,6 +162,62 @@ class FishVoice:
             pass
 
 
+def edge_installed():
+    import importlib.util
+    try:
+        return importlib.util.find_spec("edge_tts") is not None
+    except (ImportError, ValueError):
+        return False
+
+
+def edge_synth(text, voice, path, rate=EDGE_RATE, pitch=EDGE_PITCH):
+    import asyncio
+    import edge_tts
+    asyncio.run(edge_tts.Communicate(text, voice, rate=rate, pitch=pitch).save(path))
+
+
+class EdgeVoice:
+    """Free neural voice through the edge-tts package. Same interface as FishVoice: fetch(text) -> mp3 path."""
+
+    def __init__(self, voice=DEFAULT_EDGE_VOICE, cache_dir=None, synth=edge_synth, max_cache=200):
+        self.voice, self.cache_dir, self.synth, self.max_cache = voice, cache_dir, synth, max_cache
+
+    def cache_path(self, text):
+        h = hashlib.sha1(f"edge|{self.voice}|{text}".encode("utf-8")).hexdigest()[:20]
+        return os.path.join(self.cache_dir or ".", h + ".mp3")
+
+    def fetch(self, text):
+        path = self.cache_path(text)
+        if os.path.isfile(path) and os.path.getsize(path) > 200:
+            return path
+        if self.cache_dir:
+            os.makedirs(self.cache_dir, exist_ok=True)
+        tmp = path + ".part"
+        try:
+            self.synth(text, self.voice, tmp)
+            if not os.path.isfile(tmp) or os.path.getsize(tmp) < 200:
+                raise RuntimeError("the voice service returned no audio")
+            os.replace(tmp, path)
+        except Exception:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise
+        self._prune()
+        return path
+
+    def _prune(self):
+        try:
+            files = [os.path.join(self.cache_dir, f) for f in os.listdir(self.cache_dir) if f.endswith(".mp3")]
+            if len(files) > self.max_cache:
+                files.sort(key=os.path.getmtime)
+                for f in files[:len(files) - self.max_cache]:
+                    os.remove(f)
+        except OSError:
+            pass
+
+
 def wav_seconds(path):
     try:
         with wave.open(path, "rb") as w:
@@ -161,6 +229,8 @@ def wav_seconds(path):
 def play_file(path, platform=None, which=shutil.which, popen=subprocess.Popen, winsound_mod=None):
     """Start playing a WAV without blocking. Returns (process_or_None, seconds) or None if no player."""
     platform = platform or sys.platform
+    if path.lower().endswith(".mp3"):
+        return play_mp3(path, platform, which, popen)
     if platform.startswith("win"):
         try:
             ws = winsound_mod
@@ -174,6 +244,35 @@ def play_file(path, platform=None, which=shutil.which, popen=subprocess.Popen, w
         cmds = [["afplay", path]]
     else:
         cmds = [["paplay", path], ["aplay", "-q", path], ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", path]]
+    for cmd in cmds:
+        exe = which(cmd[0])
+        if exe:
+            try:
+                return popen([exe] + cmd[1:], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL), 0.0
+            except OSError:
+                continue
+    return None
+
+
+def play_mp3(path, platform, which=shutil.which, popen=subprocess.Popen):
+    """Play an mp3 in a helper process (so it can be stopped). Returns (process, 0.0) or None."""
+    if platform.startswith("win"):
+        exe = which("powershell") or which("pwsh")
+        if not exe:
+            return None
+        try:
+            proc = popen([exe, "-NoProfile", "-NonInteractive", "-Command", WIN_MP3_SCRIPT], stdin=subprocess.PIPE,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=CREATE_NO_WINDOW)
+            proc.stdin.write((path + "\n").encode("utf-8"))     # the path goes on stdin, never into a command line
+            proc.stdin.close()
+            return proc, 0.0
+        except (OSError, ValueError):
+            return None
+    if platform == "darwin":
+        cmds = [["afplay", path]]
+    else:
+        cmds = [["mpg123", "-q", path], ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", path],
+                ["mpv", "--no-video", "--really-quiet", path], ["cvlc", "--play-and-exit", "-q", path]]
     for cmd in cmds:
         exe = which(cmd[0])
         if exe:
@@ -199,11 +298,11 @@ def stop_playback(platform=None, winsound_mod=None):
 # ------------------------------------------------------------------ speaker
 class Speaker:
     def __init__(self, platform=None, which=shutil.which, popen=subprocess.Popen, clock=time.time, min_gap=3.0,
-                 fish=None, player=None, threaded=True, log=None):
+                 fish=None, player=None, threaded=True, log=None, edge=None):
         self.platform = platform or sys.platform
         self.argv = build_command(self.platform, which)
         self.popen, self.clock, self.min_gap = popen, clock, min_gap
-        self.fish, self.threaded, self.log = fish, threaded, log or (lambda m: None)
+        self.fish, self.edge, self.threaded, self.log = fish, edge, threaded, log or (lambda m: None)
         self.player = player or (lambda p: play_file(p, self.platform, which, popen))
         self.proc = None
         self.last_start = -1e9
@@ -214,11 +313,11 @@ class Speaker:
 
     @property
     def engine(self):
-        return "fish" if self.fish else ("system" if self.argv else "none")
+        return "fish" if self.fish else ("edge" if self.edge else ("system" if self.argv else "none"))
 
     @property
     def available(self):
-        return self.fish is not None or self.argv is not None
+        return self.fish is not None or self.edge is not None or self.argv is not None
 
     @property
     def speaking(self):
@@ -241,7 +340,7 @@ class Speaker:
         elif not priority and now - self.last_start < self.min_gap:
             return False
         self.last_start = now
-        if self.fish:
+        if self.fish or self.edge:
             self._gen += 1
             job = threading.Thread(target=self._fish_job, args=(line, self._gen), daemon=True)
             if self.threaded:
@@ -255,11 +354,17 @@ class Speaker:
     def _fish_job(self, line, gen):
         self._fetching = True
         try:
-            try:
-                path = self.fish.fetch(line)
-            except Exception as exc:                      # network, key, credits... fall back, but say why
-                self.last_error = str(exc)
-                self.log("fish audio failed: " + str(exc))
+            path = None
+            for name, eng in (("fish audio", self.fish), ("edge voice", self.edge)):
+                if eng is None:
+                    continue
+                try:
+                    path = eng.fetch(line)
+                    break
+                except Exception as exc:                  # network, key, credits... try the next one, but say why
+                    self.last_error = str(exc)
+                    self.log(f"{name} failed: {exc}")
+            if path is None:
                 if gen == self._gen and self.argv:
                     self._speak_system(line)
                 return
@@ -301,5 +406,5 @@ class Speaker:
             except OSError:
                 pass
             self.proc = None
-        if self.fish:
+        if self.fish or self.edge:
             stop_playback(self.platform)

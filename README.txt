@@ -151,6 +151,15 @@ VOICE
   She talks out loud. Right-click her > Voice: Off / Replies & alerts only / Chatty, or type
   /voice off|replies|chatty in the chat. Her mouth moves while she speaks. Calm mode mutes her
   ambient chatter.
+  FREE NEURAL VOICE (no key, easiest): in the chat window type
+      /getvoice
+  She installs the edge-tts package and switches to a natural female voice (Microsoft Edge read-aloud
+  voices, needs internet; each line is sent to Microsoft's voice service). Pick another voice by
+  setting CAPRI_EDGE_VOICE (for example en-US-AnaNeural, en-US-JennyNeural, en-GB-SoniaNeural). Order she
+  uses: Fish Audio (if you set a key) -> free neural voice -> your computer's built-in voice.
+  Set CAPRI_EDGE=off to turn the neural voice off. This is an unofficial use of Microsoft's service
+  and could stop working someday; the built-in voice is the safety net.
+
   Capri's real voice (Fish Audio): get an API key from fish.audio, then in the chat window type
       /fishkey <your key>
   (or set FISH_API_KEY, or put the key in fish_key.txt next to capri.py). She uses voice model

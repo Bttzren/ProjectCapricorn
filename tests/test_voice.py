@@ -331,3 +331,70 @@ class FishTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EdgeVoiceTests(unittest.TestCase):
+    def test_edge_fetch_caches_and_cleans_up(self):
+        import tempfile
+        d = tempfile.mkdtemp()
+        calls = []
+
+        def synth(text, v, path):
+            calls.append(text)
+            with open(path, "wb") as f:
+                f.write(b"x" * 500)
+        e = voice.EdgeVoice("en-US-AriaNeural", d, synth=synth)
+        p1 = e.fetch("hello choom")
+        self.assertTrue(p1.endswith(".mp3") and os.path.getsize(p1) == 500)
+        self.assertEqual(e.fetch("hello choom"), p1)
+        self.assertEqual(len(calls), 1)
+        self.assertFalse([f for f in os.listdir(d) if f.endswith(".part")])
+
+    def test_edge_failure_raises_and_leaves_no_file(self):
+        import tempfile
+        d = tempfile.mkdtemp()
+
+        def synth(text, v, path):
+            open(path, "wb").write(b"")
+        with self.assertRaises(RuntimeError):
+            voice.EdgeVoice("v", d, synth=synth).fetch("hi")
+        self.assertEqual(os.listdir(d), [])
+
+    def test_speaker_prefers_fish_then_edge_then_system(self):
+        class Bad:
+            def fetch(self, t):
+                raise RuntimeError("no credits")
+
+        class Good:
+            def fetch(self, t):
+                return "/tmp/x.mp3"
+        played, sys_said = [], []
+        sp = voice.Speaker(platform="linux", which=lambda n: None, fish=Bad(), edge=Good(), threaded=False,
+                           player=lambda p: (played.append(p), (None, 1.0))[1])
+        self.assertEqual(sp.engine, "fish")
+        sp.speak("hi there", priority=True)
+        self.assertEqual(played, ["/tmp/x.mp3"])
+        sp2 = voice.Speaker(platform="linux", which=lambda n: None, edge=Good(), threaded=False,
+                            player=lambda p: (played.append(p), (None, 1.0))[1])
+        self.assertEqual(sp2.engine, "edge")
+        self.assertTrue(sp2.available)
+
+    def test_mp3_windows_path_goes_on_stdin(self):
+        import io
+        seen = {}
+
+        class P:
+            def __init__(self, argv, **kw):
+                seen["argv"] = argv
+                self.stdin = io.BytesIO()
+                self.stdin.close = lambda: seen.setdefault("data", self.stdin.getvalue())
+        res = voice.play_mp3("C:\\Users\\O'Brien\\a.mp3", "win32", which=lambda n: "powershell.exe", popen=P)
+        self.assertIsNotNone(res)
+        self.assertNotIn("O'Brien", " ".join(seen["argv"]))
+        self.assertIn(b"O'Brien", seen["data"])
+
+    def test_play_file_routes_mp3(self):
+        got = []
+        voice.play_file("/tmp/a.mp3", "linux", which=lambda n: "/usr/bin/" + n if n == "mpg123" else None,
+                        popen=lambda argv, **kw: got.append(argv))
+        self.assertEqual(got[0][0], "/usr/bin/mpg123")

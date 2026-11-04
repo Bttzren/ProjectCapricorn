@@ -209,7 +209,11 @@ def make_speaker():
     if key:
         fish = voice.FishVoice(key, os.environ.get("CAPRI_FISH_VOICE") or voice.DEFAULT_FISH_VOICE,
                                os.path.join(data_dir(), "voice_cache"))
-    return voice.Speaker(fish=fish, log=log)
+    edge = None
+    if os.environ.get("CAPRI_EDGE", "on").lower() != "off" and voice.edge_installed():
+        edge = voice.EdgeVoice(os.environ.get("CAPRI_EDGE_VOICE") or voice.DEFAULT_EDGE_VOICE,
+                               os.path.join(data_dir(), "voice_cache"))
+    return voice.Speaker(fish=fish, edge=edge, log=log)
 
 
 def detect_provider(key):
@@ -1385,6 +1389,14 @@ class ChatWindow:
             p.speaker = make_speaker()
             self.system_line(msg)
             p.say("Testing, one two. Is this the real me?", 5, speak="priority")
+        elif cmd == "/getvoice":
+            if voice.edge_installed():
+                p.speaker = make_speaker()
+                self.system_line(f"The free neural voice is already installed. Voice engine: {p.speaker.engine}.")
+                p.say("Testing, one two. Is this the real me?", 5, speak="priority")
+            else:
+                self.system_line("Installing the free neural voice (edge-tts)... this takes a few seconds.")
+                threading.Thread(target=p.install_voice, daemon=True).start()
         elif cmd == "/voice":
             lvl = parts[1].lower() if len(parts) > 1 else ""
             if lvl in ("off", "replies", "chatty"):
@@ -2091,6 +2103,7 @@ class Capri:
         self.ai_results, self.ai_pending, self.ai_seq, self.ai_inflight = queue.Queue(), {}, 0, 0
         self.ai_fails, self.ai_pause_until = 0, 0.0
         self.recent_lines = collections.deque(maxlen=8)
+        self.voice_install = None
         self.spotter, self.spotter_manual, self.spotter_until = None, False, 0.0
         self.spotter_ctx_at, self.look_results = 0.0, queue.Queue()
         self.game_cfg, self.game_cfg_warnings = {}, []
@@ -2197,6 +2210,32 @@ class Capri:
         elif state == "dance":
             self.anim = "dance"
             self.angle_t = 0.0
+
+    def check_voice_install(self):
+        res, self.voice_install = self.voice_install, None
+        if not res:
+            return
+        ok, err = res
+        if ok and voice.edge_installed():
+            self.speaker = make_speaker()
+            msg = f"Neural voice installed. Voice engine: {self.speaker.engine}."
+            self.say("Voice installed. How do I sound?", 5, speak="priority")
+        else:
+            msg = "Couldn't install the voice: " + (err or "pip failed") + ". Try: py -m pip install edge-tts"
+        if self.chat and self.chat.alive():
+            self.chat.system_line(msg, err=not ok)
+
+    def install_voice(self):
+        """Background thread: pip install edge-tts, then tell the main thread to switch voices."""
+        import subprocess
+        try:
+            r = subprocess.run([sys.executable, "-m", "pip", "install", "--user", "edge-tts"], capture_output=True,
+                               text=True, timeout=240, creationflags=0x08000000 if sys.platform.startswith("win") else 0)
+            ok = r.returncode == 0
+            err = (r.stderr or r.stdout or "").strip().splitlines()[-1:] or [""]
+        except (OSError, subprocess.SubprocessError) as exc:
+            ok, err = False, [str(exc)]
+        self.voice_install = (ok, err[0])
 
     def poke_awake(self):
         self.last_active = time.time()
@@ -3415,6 +3454,7 @@ class Capri:
         self.watch_ledges(now)
         self.drain_reactor()
         self.drain_ai(now)
+        self.check_voice_install()
         self.update_spotter(now)
         if self.pending:
             self.tick_pending(now)

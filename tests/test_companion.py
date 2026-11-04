@@ -12,7 +12,6 @@ import fun  # noqa: E402
 import habits  # noqa: E402
 import journal  # noqa: E402
 import memory  # noqa: E402
-import progress  # noqa: E402
 import simon  # noqa: E402
 
 
@@ -46,16 +45,6 @@ class SimonTests(unittest.TestCase):
         a = g.next_round()
         b = g.next_round()
         self.assertEqual(b[:1], a)
-
-    def test_progress_rewards(self):
-        p = progress.Progress({})
-        m = p.record_simon(9)
-        self.assertEqual(p.eddies, 4 + 15)                         # 9//2 eddies + Photographic Memory
-        self.assertTrue(p.unlocked("simon_8"))
-        self.assertIn("9", m[0])
-        q = progress.Progress({})
-        q.record_simon(100)
-        self.assertEqual(q.eddies - 15, 12)                        # payout is capped
 
 
 class HabitTests(unittest.TestCase):

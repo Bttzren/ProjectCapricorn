@@ -31,10 +31,8 @@ import journal
 import ledges
 import memory
 import personality
-import progress
 import sfx
 import simon
-import skins
 import voice
 import world
 
@@ -492,14 +490,14 @@ class SheetSprites:
         "look-a": ["look-a", "idle"], "look-b": ["look-b", "idle"], "type": ["waving", "idle"],
     }
 
-    def __init__(self, folder, target_h, skin="neon"):
+    def __init__(self, folder, target_h):
         path = next((os.path.join(folder, n) for n in ("spritesheet.webp", "spritesheet.png")
                      if os.path.isfile(os.path.join(folder, n))), None)
         if not path:
             raise FileNotFoundError("spritesheet")
         meta = load_json(os.path.join(folder, "pet.json"), {})
         meta = meta if isinstance(meta, dict) else {}
-        sheet = skins.apply(Image.open(path).convert("RGBA"), skin)
+        sheet = Image.open(path).convert("RGBA")
         W, H = sheet.size
         cols = int(meta.get("columns") or meta.get("cols") or 8)
         cwf = W / float(cols)                      # cells need not be whole pixels (scaled sheets)
@@ -616,12 +614,12 @@ def find_pet_dir():
     return None
 
 
-def load_art(dpi, skin="neon"):
+def load_art(dpi):
     target = int(SPRITE_HEIGHT * dpi)
     folder = find_pet_dir()
     if folder:
         try:
-            art = SheetSprites(folder, target, skin)
+            art = SheetSprites(folder, target)
             log(f"loaded sheet pet from {folder}, rows={len(art.rows)} map={art.map}")
             return art
         except Exception:
@@ -964,7 +962,6 @@ class ChatWindow:
         now = time.time()
         mind = self.pet.mind
         mind.chatted(now)
-        self.pet.award("chat")
         persona = (self.persona + " " + mind.context(now, self.pet.doing(), self.pet.activity_phrase())
                    + " " + self.pet.memory.context()).strip()
         offline = None if read_api_key() else mind.offline_reply(text, now)
@@ -1062,7 +1059,7 @@ class ChatWindow:
         if cmd == "/help":
             self.system_line("/focus [min]  /remind <min> <text>  /name <you>  /mood  /key <api key>  "
                              "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
-                             "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /stats  /skin  /tp  /dance  "
+                             "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /tp  /dance  "
                              "/sleep  /calm  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /remember  /facts  /feel  "
                              "/journal  /day  /horoscope  /lore  /clear")
         elif cmd == "/clear":
@@ -1118,11 +1115,9 @@ class ChatWindow:
             today = time.strftime("%Y-%m-%d")
             ok, name, streak = p.habits.check(int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0, today)
             if ok:
-                p.award("habit")
                 extra = ""
                 if streak in (7, 30):
-                    p.prog.earn(10 if streak == 7 else 30)
-                    extra = f" {streak}-day streak bonus!"
+                    extra = f" {streak} days in a row. Nova!"
                     p.spawn_confetti(40)
                 p.save_settings()
                 self.system_line(f"{name}: done! {streak}-day streak.{extra}")
@@ -1146,9 +1141,7 @@ class ChatWindow:
         elif cmd == "/feel":
             today = time.strftime("%Y-%m-%d")
             if len(parts) > 1 and parts[1].isdigit() and 1 <= int(parts[1]) <= 5:
-                first = p.journal.add(today, int(parts[1]), text.split(None, 2)[2] if len(parts) > 2 else "")
-                if first:
-                    p.award("feel")
+                p.journal.add(today, int(parts[1]), text.split(None, 2)[2] if len(parts) > 2 else "")
                 p.save_settings()
                 p.mind.chatted(time.time())
                 self.system_line(p.journal.reply(int(parts[1]), p.rng))
@@ -1168,10 +1161,8 @@ class ChatWindow:
         elif cmd == "/hack":
             p.open_breach()
         elif cmd == "/feed":
-            if p.feed():
-                self.system_line("Ramen served. -3 eddies.")
-            else:
-                self.system_line("Ramen costs 3 eddies. You have " + str(p.prog.eddies) + ".", err=True)
+            p.feed()
+            self.system_line("Ramen served. Slurp.")
         elif cmd in ("/radio", "/sfx"):
             key = cmd[1:]
             arg = parts[1].lower() if len(parts) > 1 else ""
@@ -1193,21 +1184,6 @@ class ChatWindow:
                 self.system_line("Tell me like /birthday 03-27 (month-day).", err=True)
         elif cmd == "/tag":
             p.start_tag()
-        elif cmd == "/stats":
-            for line in p.prog.stats_lines():
-                self.system_line(line)
-        elif cmd == "/skin":
-            arg = parts[1].lower() if len(parts) > 1 else ""
-            if arg == "buy" and len(parts) > 2:
-                ok, msg = p.buy_skin(parts[2].lower())
-                self.system_line(msg, err=not ok)
-            elif arg in progress.SKINS:
-                ok, msg = p.set_skin(arg)
-                self.system_line(msg, err=not ok)
-            else:
-                self.system_line("Skins: " + ", ".join(
-                    f"{k} ({'owned' if p.prog.owns(k) else str(v[1]) + ' eddies'})" for k, v in progress.SKINS.items())
-                    + "   Use /skin <name> or /skin buy <name>. Eddies: " + str(p.prog.eddies))
         elif cmd == "/roll":
             self.system_line(fun.roll(parts[1] if len(parts) > 1 else "", p.rng))
         elif cmd == "/coin":
@@ -1229,7 +1205,6 @@ class ChatWindow:
         elif cmd == "/done":
             done = p.todos.finish(int(parts[1])) if len(parts) > 1 and parts[1].isdigit() else None
             if done:
-                p.award("todo")
                 self.system_line(f"Done: {done}")
                 p.react("happy")
             else:
@@ -1375,7 +1350,6 @@ class SettingsWindow:
         pad.pack(fill="x", padx=8, pady=(0, 8))
         self.build_hands(pad)
         self.build_voice(pad)
-        self.build_look(pad)
         self.build_behavior(pad)
         self.build_keys(pad)
         w.update_idletasks()
@@ -1497,42 +1471,6 @@ class SettingsWindow:
         entry.delete(0, "end")
         self.show_engine()
 
-    def build_look(self, parent):
-        box = self.section(parent, "LOOK & PROGRESS",
-                           "Earn eddies from focus sessions, daily visits, to-dos, chatting and beating her at /tag.")
-        self.eddies_lbl = tk.Label(box, text="", bg=C_PANEL, fg=C_GREEN, font=(self.fam, 9, "bold"))
-        self.eddies_lbl.pack(anchor="w", padx=10, pady=(0, 2))
-        self.skin_var = tk.StringVar(value=self.pet.settings.get("skin", "neon"))
-        self.skin_radios = {}
-        for sid in progress.SKINS:
-            self.skin_radios[sid] = self.radio(box, "", self.skin_var, sid, lambda s=sid: self.pick_skin(s))
-        self.refresh_look()
-        tk.Frame(box, bg=C_PANEL, height=6).pack()
-
-    def refresh_look(self):
-        p = self.pet.prog
-        self.eddies_lbl.config(text=f"Eddies: {p.eddies}    Streak: {p.streak} day(s)")
-        for sid, rb in self.skin_radios.items():
-            name, cost = progress.SKINS[sid]
-            rb.config(text=name + ("" if p.owns(sid) else f"   ({cost} eddies)"))
-
-    def pick_skin(self, sid):
-        pet = self.pet
-        if not pet.prog.owns(sid):
-            from tkinter import messagebox
-            name, cost = progress.SKINS[sid]
-            if not messagebox.askyesno("Buy skin?", f"Buy {name} for {cost} eddies? You have {pet.prog.eddies}.",
-                                       parent=self.win):
-                self.skin_var.set(pet.settings.get("skin", "neon"))
-                return
-            ok, msg = pet.buy_skin(sid)
-            if not ok:
-                pet.say(msg, 4, speak=None)
-                self.skin_var.set(pet.settings.get("skin", "neon"))
-                return
-        pet.set_skin(sid)
-        self.refresh_look()
-
     def build_behavior(self, parent):
         box = self.section(parent, "BEHAVIOUR")
         self.check(box, "Calm mode (she stays put and stops chatting)", "calm", False, self.pet.set_calm)
@@ -1607,7 +1545,7 @@ class SettingsWindow:
 
 class BreachWindow:
     """Breach Protocol: fill the buffer so it contains the daemons. First pick is in the top row, then
-    alternate column / row. Pays eddies for every daemon you complete."""
+    alternate column / row."""
     TIME = 45
 
     def __init__(self, pet):
@@ -1888,20 +1826,17 @@ class Capri:
         if not isinstance(self.settings, dict):
             self.settings = {}
         self.mind = personality.Mind(self.settings)
-        self.prog = progress.Progress(self.settings.setdefault("progress", {}))
         self.todos = fun.Todos(self.settings.setdefault("todos", []))
         self.habits = habits.Habits(self.settings.setdefault("habits", []))
         self.memory = memory.Memory(self.settings.setdefault("memory", []))
         self.daylog = daylog.DayLog(self.settings.setdefault("daylog", {}))
         self.journal = journal.Journal(self.settings.setdefault("journal", []))
-        self.msgs = list(self.prog.login())
-        if not self.prog.owns(self.settings.get("skin", "neon")):
-            self.settings["skin"] = "neon"
+        self.msgs = []
         self.speaker = make_speaker()
         self.hands = hands.Hands(level=self.settings.get("hands", "visual"), log=log)
         self.sfx = sfx.Sfx(os.path.join(data_dir(), "sfx"), voice.play_file, enabled=bool(self.settings.get("sfx", True)),
                            busy=lambda: self.speaker.speaking, log=log)
-        self.art = load_art(self.dpi, self.settings.get("skin", "neon"))
+        self.art = load_art(self.dpi)
         self.fw, self.fh = self.art.w, self.art.h
         self.Wd = max(280, int(self.fh * 1.25) + 30)
         self.Hd = self.fh + 150
@@ -2524,29 +2459,6 @@ class Capri:
             self.twitch_until = now + 0.35
         self.glitch = 0.45 if now < self.twitch_until else 0.0
 
-    def award(self, kind):
-        self.msgs += self.prog.record(kind, hour=time.localtime().tm_hour)
-        self.save_settings()
-
-    def buy_skin(self, sid):
-        ok, msg = self.prog.buy_skin(sid)
-        self.save_settings()
-        return ok, msg
-
-    def set_skin(self, sid):
-        if not self.prog.owns(sid):
-            return False, f"You don't own {progress.SKINS.get(sid, ('that',))[0]} yet. Try /skin buy {sid}"
-        self.settings["skin"] = sid
-        self.save_settings()
-        self.art = load_art(self.dpi, sid)
-        self.pcache.clear()
-        if self.chat and self.chat.alive():
-            self.chat.images.clear()
-        self.spawn_confetti(30)
-        self.say("New look. How do I look, choom?", 5)
-        self.sfx.play("confirm")
-        return True, "Skin: " + progress.SKINS[sid][0]
-
     def start_tag(self):
         """Mini-game: she runs from your cursor for 25 seconds. Touch her to win."""
         if self.state in ("tp_out", "tp_in", "drag"):
@@ -2573,7 +2485,6 @@ class Capri:
                 tail = " New record!" if best < 99 else ""
             self.say(f"Got me in {t:.1f}s! Preem reflexes.{tail}", 7, speak="priority")
             self.spawn_confetti(30)
-            self.award("tag_win")
             self.sfx.play("success")
         else:
             self.say("You couldn't catch me. Nova.", 5)
@@ -2687,10 +2598,7 @@ class Capri:
         self.peek_said = False
 
     def feed(self):
-        """Ramen: costs 3 eddies, makes her happy."""
-        if not self.prog.spend(3):
-            self.say("Ramen costs 3 eddies, choom. You're short.", 4, speak=None)
-            return False
+        """Ramen: makes her very happy."""
         now = time.time()
         self.settings["last_fed"] = now
         self.mind.fed(now)
@@ -2700,7 +2608,6 @@ class Capri:
         self.spawn_confetti(15)
         self.react("happy")
         self.sfx.play("confirm")
-        self.award("feed")
         return True
 
     def open_breach(self):
@@ -2726,13 +2633,9 @@ class Capri:
         self.say("Watch the lights, choom. Then copy them.", 4)
 
     def simon_result(self, rounds):
-        self.msgs += self.prog.record_simon(rounds)
-        self.save_settings()
         self.say(f"Simon: {rounds} round(s). " + ("Nova memory!" if rounds >= 8 else "Not bad, choom."), 5)
 
     def breach_result(self, done, total):
-        self.msgs += self.prog.record_breach(done, total)
-        self.save_settings()
         if done == total:
             self.say("Breach complete! Preem netrunning.", 6, speak="priority")
             self.spawn_confetti(40)
@@ -2761,7 +2664,7 @@ class Capri:
         if now >= self.next_hungry and not self.calm:
             self.next_hungry = now + 3 * 3600
             if now - self.settings.get("last_fed", now) > 6 * 3600:
-                self.say("Hungry, choom. /feed me ramen? 3 eddies.", 8)
+                self.say("Hungry, choom. /feed me ramen?", 8)
         lt = time.localtime(now)
         today = time.strftime("%Y-%m-%d", lt)
         if not self.calm and self.state in ("idle", "perch", "walk", "lounge"):
@@ -3010,7 +2913,6 @@ class Capri:
                 self.timer_mode, self.timer_end = "break", now + BREAK_MIN * 60
                 self.poke_awake()
                 self.party()
-                self.award("focus")
             else:
                 self.say("Break's over. Another round?", 12, speak="priority")
                 self.timer_mode = self.timer_end = None
@@ -3188,7 +3090,7 @@ class Capri:
         m.add_command(label="Hack (Breach Protocol)", command=self.open_breach)
         m.add_command(label="Sit on something (screen ledges)", command=self.sit_somewhere)
         m.add_command(label="Memory game (Simon)", command=self.open_simon)
-        m.add_command(label="Feed ramen (3 eddies)", command=self.feed)
+        m.add_command(label="Feed ramen", command=self.feed)
         m.add_command(label="Dance", command=lambda: self.go("dance", 3.5))
         m.add_command(label="Lounge", command=lambda: self.go("lounge", 15))
         m.add_command(label="Take a nap", command=lambda: self.go("sleep"))

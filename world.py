@@ -44,7 +44,7 @@ def special_day(month, day, birthday="", name=""):
     """(key, line) if today is special, else None. Birthdays win."""
     if birthday and birthday == f"{month:02d}-{day:02d}":
         who = f", {name}" if name else ""
-        return "birthday", f"Happy Birthday{who}! Cake for you, eddies for me. Kidding. Mostly."
+        return "birthday", f"Happy Birthday{who}! Cake for you, glitches for me. Kidding. Mostly."
     return SPECIAL.get((month, day))
 
 

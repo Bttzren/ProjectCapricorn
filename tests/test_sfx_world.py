@@ -6,7 +6,6 @@ import wave
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-import progress  # noqa: E402
 import sfx  # noqa: E402
 import world  # noqa: E402
 
@@ -91,31 +90,6 @@ class WorldTests(unittest.TestCase):
     def test_radio_lines_are_short(self):
         for l in world.RADIO:
             self.assertLessEqual(len(l), 100, l)
-
-
-class ProgressExtrasTests(unittest.TestCase):
-    def test_breach_payouts_and_achievements(self):
-        p = progress.Progress({})
-        m = p.record_breach(2, 3)
-        self.assertEqual(p.eddies, 10)
-        self.assertIn("2/3", m[0])
-        m = p.record_breach(3, 3)
-        self.assertEqual(p.eddies, 10 + 20 + 20)                      # 5x3 + 5 perfect bonus, then Netrunner (+20)
-        self.assertTrue(p.unlocked("netrunner"))
-        self.assertEqual(p.record_breach(0, 3)[0].split(",")[1].strip(), "+0 eddies.")
-
-    def test_ice_breaker_after_five_runs(self):
-        p = progress.Progress({})
-        for _ in range(5):
-            p.record_breach(1, 3)
-        self.assertTrue(p.unlocked("ice_breaker"))
-
-    def test_spend(self):
-        p = progress.Progress({"eddies": 5})
-        self.assertTrue(p.spend(3))
-        self.assertEqual(p.eddies, 2)
-        self.assertFalse(p.spend(3))
-        self.assertEqual(p.eddies, 2)
 
 
 if __name__ == "__main__":

@@ -164,10 +164,11 @@ class Mind:
     def adjust_weights(self, opts, now):
         """opts: list of (name, weight). Returns a new list biased by mood."""
         bias = {
-            "sleepy": {"sleep": 25, "lounge": 12, "walk": -15, "dance": -4, "teleport": -8},
-            "lonely": {"curious": 14, "idle": 6, "teleport": -6},
-            "sassy": {"teleport": 8, "dance": -3, "curious": -6},
-            "playful": {"dance": 8, "teleport": 8, "walk": 10, "curious": 6, "lounge": -6},
+            "sleepy": {"sleep": 25, "lounge": 12, "walk": -15, "dance": -4, "teleport": -8, "fly": -6, "zoom": -3},
+            "lonely": {"curious": 14, "idle": 6, "teleport": -6, "orbit": 10},
+            "sassy": {"teleport": 8, "dance": -3, "curious": -6, "zoom": 4},
+            "playful": {"dance": 8, "teleport": 8, "walk": 10, "curious": 6, "lounge": -6, "fly": 8, "zoom": 5,
+                        "orbit": 4},
             "content": {},
         }[self.mood(now)]
         out = [(n, max(1, w + bias.get(n, 0))) for n, w in opts]
@@ -199,13 +200,15 @@ class Mind:
                 return self.rng.choice(replies) + " (No API key set, so I'm in offline mode.)"
         return self.rng.choice(OFFLINE_FALLBACK[self.mood(now)]) + " (Offline mode: add a key to chat for real.)"
 
-    def context(self, now, doing=""):
+    def context(self, now, doing="", activity=""):
         """Extra system-prompt text so LLM replies match her current state."""
         tm = time.strftime("%A %H:%M", time.localtime(now))
         parts = [f"Right now it is {tm}.", f"Your current mood is {self.mood(now)}.",
                  "Let that colour your tone lightly; stay brief and kind."]
         if doing:
             parts.append(f"You are currently {doing}.")
+        if activity:
+            parts.append(f"The user seems to be {activity} right now.")
         if self.user_name:
             parts.append(f"The user's name is {self.user_name}.")
         if self.affection < 25:

@@ -20,6 +20,7 @@ import urllib.request
 import tkinter as tk
 from tkinter import font as tkfont
 
+import awareness
 import personality
 import voice
 
@@ -323,6 +324,42 @@ class Win32:
             return (r.left, r.top, r.right, r.bottom, int(hwnd))
         except Exception:
             return None
+
+    def foreground_title(self):
+        """Title of the front window (used only to pick a one-word category; never stored or logged)."""
+        if not self.ok:
+            return ""
+        try:
+            ct, wt, u = self.ct, self.wt, self.u
+            hwnd = u.GetForegroundWindow()
+            if not hwnd:
+                return ""
+            pid = wt.DWORD()
+            u.GetWindowThreadProcessId(hwnd, ct.byref(pid))
+            if pid.value == os.getpid():
+                return ""
+            n = u.GetWindowTextLengthW(hwnd)
+            buf = ct.create_unicode_buffer(n + 1)
+            u.GetWindowTextW(hwnd, buf, n + 1)
+            return buf.value
+        except Exception:
+            return ""
+
+    def idle_seconds(self):
+        """Seconds since the last keyboard/mouse input (just the time; never which keys)."""
+        if not self.ok:
+            return 0.0
+        try:
+            ct, wt = self.ct, self.wt
+
+            class LASTINPUTINFO(ct.Structure):
+                _fields_ = [("cbSize", wt.UINT), ("dwTime", wt.DWORD)]
+            li = LASTINPUTINFO()
+            li.cbSize = ct.sizeof(LASTINPUTINFO)
+            self.u.GetLastInputInfo(ct.byref(li))
+            return ((ct.windll.kernel32.GetTickCount() - li.dwTime) & 0xFFFFFFFF) / 1000.0
+        except Exception:
+            return 0.0
 
 
 # ------------------------------------------------------------------ art
@@ -891,7 +928,7 @@ class ChatWindow:
         now = time.time()
         mind = self.pet.mind
         mind.chatted(now)
-        persona = self.persona + " " + mind.context(now, self.pet.doing())
+        persona = self.persona + " " + mind.context(now, self.pet.doing(), self.pet.activity_phrase())
         offline = None if read_api_key() else mind.offline_reply(text, now)
         snapshot = [{"role": m["role"], "content": m["content"]} for m in self.history[-20:]]
         threading.Thread(target=self.work, args=(snapshot, persona, offline), daemon=True).start()
@@ -986,7 +1023,7 @@ class ChatWindow:
         p = self.pet
         if cmd == "/help":
             self.system_line("/focus [min]  /remind <min> <text>  /name <you>  /mood  /key <api key>  "
-                             "/voice  /fishkey  /tp  /dance  /sleep  /calm  /clear")
+                             "/fly  /zoom  /orbit  /party  /aware  /voice  /fishkey  /tp  /dance  /sleep  /calm  /clear")
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
@@ -1006,6 +1043,16 @@ class ChatWindow:
             save_api_key(parts[1])
             self.drop_keybar()
             self.system_line("Key saved. Real chat unlocked.")
+        elif cmd in ("/fly", "/zoom", "/orbit"):
+            p.start_fly(cmd[1:])
+        elif cmd == "/party":
+            p.party()
+        elif cmd == "/aware":
+            arg = parts[1].lower() if len(parts) > 1 else ""
+            if arg in ("on", "off"):
+                p.set_aware(arg == "on")
+            else:
+                self.system_line("/aware on | off   (now: " + ("on" if p.aware else "off") + ")")
         elif cmd == "/fishkey":
             arg = parts[1] if len(parts) > 1 else ""
             if arg.lower() in ("off", "clear", "remove"):
@@ -1179,6 +1226,11 @@ class Capri:
         self.talk_until = 0.0
         self.icon = None
         self._voice_err = ""
+        self.fly_pts, self.fly_speed, self.fvx, self.fvy, self.orbit_a = [], 380.0, 0.0, 0.0, 0.0
+        self.parts = []
+        self.aware = bool(self.settings.get("aware", True))
+        self.ctx, self.ctx_since, self.ctx_done, self.ctx_cool, self.ctx_nudge = None, now, False, {}, 0.0
+        self.next_watch, self.away = now + 5, False
         self.next_save = now + 60
         self.pointer = (0, 0)
         self.pointer_prev = (0, 0, now)
@@ -1303,6 +1355,15 @@ class Capri:
             c.create_polygon(x, y + s, x - s, y - s * 0.1, x - s * 0.6, y - s * 0.8, x, y - s * 0.35,
                              x + s * 0.6, y - s * 0.8, x + s, y - s * 0.1, fill=C_RED, outline=C_BLACK,
                              smooth=True, width=2)
+        elif kind == "note":
+            outlined("\u266a", 18, C_GREEN)
+        elif kind == "star":
+            pts = []
+            for i in range(8):
+                r = 11 if i % 2 == 0 else 4
+                a = math.pi / 4 * i - math.pi / 2
+                pts += [x + math.cos(a) * r, y + math.sin(a) * r]
+            c.create_polygon(pts, fill="#ffd400", outline=C_BLACK, width=2)
         elif kind == "anger":
             for dx, dy in ((-1, -1), (1, -1), (-1, 1), (1, 1)):
                 c.create_line(x + dx * 3, y + dy * 3, x + dx * 10, y + dy * 10, fill=C_RED, width=3)
@@ -1374,6 +1435,7 @@ class Capri:
         opts = [("walk", 30), ("lounge", 12), ("teleport", 14), ("curious", 10), ("dance", 4), ("idle", 14)]
         if "look-a" in getattr(self.art, "map", {}):
             opts.append(("look", 9))
+        opts += [("fly", 9), ("zoom", 3), ("orbit", 5)]
         if self.surfaces and not self.surf:
             opts.append(("perch", 16))
         if self.surf:
@@ -1396,6 +1458,8 @@ class Capri:
             self.teleport()
         elif name == "curious":
             self.go("curious", 8)
+        elif name in ("fly", "zoom", "orbit"):
+            self.start_fly(name)
         elif name == "look":
             self.go("idle", self.rng.uniform(2.5, 4.5))
             self.anim = self.rng.choice(("look-a", "look-b"))
@@ -1412,6 +1476,49 @@ class Capri:
             self.go("sleep")
         else:
             self.go("idle", self.rng.uniform(2, 6))
+
+    def start_fly(self, kind="fly"):
+        """Fly around the screen (fly), dash across it (zoom) or circle the mouse cursor (orbit)."""
+        if self.state in ("tp_out", "tp_in", "drag"):
+            return
+        wa = self.work_area()
+        self.surf = None
+        self.icon = None
+        self.fvx = self.fvy = 0.0
+        if kind == "orbit":
+            self.orbit_a = self.rng.uniform(0, 6.28)
+            self.fly_speed = 520.0
+            self.go("orbit", 5.5)
+            self.say(self.rng.choice(["Circling you, choom.", "You're my favorite landmark."]), 3)
+        else:
+            n = 1 if kind == "zoom" else self.rng.randint(3, 5)
+            lo_x, hi_x = wa[0] + self.fw, wa[2] - self.fw
+            lo_y, hi_y = wa[1] + self.fh + 20, wa[3] - self.fh * 0.5
+            self.fly_pts = [(self.rng.uniform(lo_x, hi_x), self.rng.uniform(lo_y, max(lo_y + 1, hi_y)))
+                            for _ in range(n)]
+            self.fly_speed = 1100.0 if kind == "zoom" else 380.0
+            self.go("fly", None)
+            self.say("Gotta go fast!" if kind == "zoom" else self.rng.choice(["Wheee!", "Up we go, choom!", "Nova!"]), 2)
+        self.anim = "jump"
+
+    def spawn_confetti(self, count=60):
+        cols = (C_GREEN, C_RED, C_BLUE, "#ffffff", "#ffd400")
+        for _ in range(count):
+            self.parts.append([self.Wd / 2 + self.rng.uniform(-30, 30), self.Hd * 0.35, self.rng.uniform(-160, 160),
+                               self.rng.uniform(-300, -60), self.rng.choice(cols), self.rng.uniform(1.8, 3.2)])
+        del self.parts[:-160]
+
+    def party(self):
+        self.spawn_confetti()
+        self.start_fly("fly")
+
+    def update_particles(self, dt):
+        for p in self.parts:
+            p[0] += p[2] * dt
+            p[1] += p[3] * dt
+            p[3] += 420 * dt
+            p[5] -= dt
+        self.parts = [p for p in self.parts if p[5] > 0 and p[1] < self.Hd + 10]
 
     def teleport(self, mode=None):
         if self.state in ("tp_out", "tp_in", "drag"):
@@ -1507,6 +1614,37 @@ class Capri:
             if age > (self.state_dur or 3):
                 self.hop_y = 0
                 self.go("perch" if self.surf else "idle", 2.0)
+        elif st in ("fly", "orbit"):
+            v = self.fly_speed * self.dpi                       # px per second
+            done = False
+            if st == "orbit":
+                self.orbit_a += 2.6 * dt
+                mx, my = self.pointer
+                tx = mx + math.cos(self.orbit_a) * 170 * self.dpi
+                ty = my + math.sin(self.orbit_a) * 90 * self.dpi - self.fh * 0.4
+                done = age > (self.state_dur or 5.5)
+            else:
+                tx, ty = self.fly_pts[0]
+            dx, dy = tx - self.fx, ty - self.fy
+            dist = math.hypot(dx, dy) or 1.0
+            k = min(1.0, 5.0 * dt)
+            want = min(v, dist * 5)                              # ease out when arriving
+            self.fvx += (dx / dist * want - self.fvx) * k
+            self.fvy += (dy / dist * want - self.fvy) * k
+            wa = self.work_area()
+            self.fx = min(max(self.fx + self.fvx * dt, wa[0] + self.fw * 0.4), wa[2] - self.fw * 0.4)
+            self.fy = min(max(self.fy + self.fvy * dt, wa[1] + self.fh + 6), self.ground())
+            self.angle_t = max(-24.0, min(24.0, -self.fvx / max(1.0, v) * 24.0))
+            self.hop_y = math.sin(now * 7) * 3 * self.dpi
+            if abs(self.fvx) > 25:
+                self.dir = 1 if self.fvx > 0 else -1
+            if st == "fly" and dist < 22 * self.dpi:
+                self.fly_pts.pop(0)
+                done = not self.fly_pts
+            if done:
+                self.hop_y, self.angle_t = 0.0, 0.0
+                self.vx, self.vy = self.fvx / 25.0 * 0.4, 0.0
+                self.go("air")
         elif st == "tp_out":
             self.glitch = min(1.0, age / self.state_dur)
             if age > self.state_dur:
@@ -1578,6 +1716,7 @@ class Capri:
         if self.state in ("tp_out", "tp_in"):
             self.sx = max(0.12, 1.0 - 0.9 * self.glitch ** 1.5)
             self.sy = 1.0 + 0.12 * self.glitch
+        self.update_particles(dt)
         self.scheduled(now)
         self.place()
         self.draw(now)
@@ -1586,7 +1725,78 @@ class Capri:
         if int(now * 2) % 6 == 0:
             self.root.attributes("-topmost", True)
 
+    def activity_phrase(self):
+        return awareness.PHRASE.get(self.ctx, "") if (self.aware and self.ctx) else ""
+
+    def set_aware(self, on):
+        self.aware = bool(on)
+        self.settings["aware"] = self.aware
+        self.save_settings()
+        if not self.aware:
+            self.ctx = None
+        self.say("I'll keep an eye on which app you're in. Never what you type." if self.aware
+                 else "Okay, I'm not watching your apps anymore.", 5)
+
+    def react_context(self, cat):
+        self.say(awareness.line(cat, self.rng), 7)
+        icon, act = {"cyberpunk": ("star", "dance"), "game": ("star", None), "video": (None, "lounge"),
+                     "music": ("note", "dance"), "coding": (None, "perch"), "writing": (None, "perch"),
+                     "chat": ("?", "curious"), "social": ("?", None), "school": ("star", None),
+                     "ai": ("?", None)}.get(cat, (None, None))
+        if icon:
+            self.set_icon(icon, 3.0)
+        if act == "dance":
+            self.go("dance", 4)
+        elif act == "lounge":
+            self.go("lounge", 20)
+        elif act == "curious":
+            self.go("curious", 6)
+        elif act == "perch" and self.surfaces and not self.surf:
+            self.teleport("perch")
+
+    def watch_context(self, now):
+        """Notice what kind of app is in front and when you come back from being away (Windows only)."""
+        if not self.win32.ok or now < self.next_watch:
+            return
+        self.next_watch = now + 2.0
+        idle = self.win32.idle_seconds()
+        if idle > 600 and not self.away:
+            self.away = True
+            if self.state in ("idle", "perch", "walk", "lounge", "curious"):
+                self.go("sleep")
+        elif self.away and idle < 5:
+            self.away = False
+            self.poke_awake()
+            self.say(self.rng.choice(["Welcome back, choom!", "There you are. I counted the minutes.",
+                                      "Oh! You're back!"]), 5)
+            self.react("happy")
+            self.set_icon("heart", 1.6)
+        if not self.aware:
+            return
+        if not self.settings.get("aware_notice") and now - self.t_start > 25:
+            self.settings["aware_notice"] = True
+            self.save_settings()
+            self.say("Heads up: I can see which app is in front (never what you type). Only a short hint like "
+                     "'coding' goes to the AI when we chat. Right-click me > Awareness to turn it off.", 16)
+        cat = awareness.classify(self.win32.foreground_title())      # the title is not kept anywhere
+        if cat != self.ctx:
+            self.ctx, self.ctx_since, self.ctx_done = cat, now, False
+            return
+        if not cat:
+            return
+        passive = self.state in ("idle", "perch", "walk")
+        if not self.ctx_done and now - self.ctx_since >= 8 and passive and not self.calm:
+            self.ctx_done = True
+            if now >= self.ctx_cool.get(cat, 0):
+                self.ctx_cool[cat] = now + 240
+                self.react_context(cat)
+        after = awareness.NUDGE_AFTER.get(cat)
+        if after and now - self.ctx_since > after and now >= self.ctx_nudge and not self.calm:
+            self.ctx_nudge = now + 1200
+            self.say(awareness.nudge(cat), 10)
+
     def scheduled(self, now):
+        self.watch_context(now)
         if self.speaker.speaking:
             self.talk_until = now + 0.3          # her mouth moves while she talks
         err = self.speaker.last_error
@@ -1602,7 +1812,7 @@ class Capri:
                 self.say(f"Focus done! {BREAK_MIN} min break. Move around.", 12, speak="priority")
                 self.timer_mode, self.timer_end = "break", now + BREAK_MIN * 60
                 self.poke_awake()
-                self.go("dance", 3.0)
+                self.party()
             else:
                 self.say("Break's over. Another round?", 12, speak="priority")
                 self.timer_mode = self.timer_end = None
@@ -1768,6 +1978,9 @@ class Capri:
         m.add_command(label="Remind me...", command=lambda: ReminderDialog(self))
         m.add_separator()
         m.add_command(label="Teleport", command=self.teleport)
+        m.add_command(label="Fly around", command=lambda: self.start_fly("fly"))
+        m.add_command(label="Orbit my cursor", command=lambda: self.start_fly("orbit"))
+        m.add_command(label="Party!", command=self.party)
         m.add_command(label="Dance", command=lambda: self.go("dance", 3.5))
         m.add_command(label="Lounge", command=lambda: self.go("lounge", 15))
         m.add_command(label="Take a nap", command=lambda: self.go("sleep"))
@@ -1789,6 +2002,10 @@ class Capri:
             m.add_command(label="Voice: no speech engine found", state="disabled")
         m.add_command(label=f"Calm mode: {'on' if self.calm else 'off'}", command=self.toggle_calm)
         m.add_command(label=f"Check-ins: {'on' if self.checkins else 'off'}", command=self.toggle_checkins)
+        if self.win32.ok:
+            seen = f" (sees: {self.ctx})" if (self.aware and self.ctx) else ""
+            m.add_command(label=f"Awareness: {'on' if self.aware else 'off'}{seen}",
+                          command=lambda: self.set_aware(not self.aware))
         m.add_separator()
         m.add_command(label="Quit", command=self.quit)
         try:
@@ -1858,6 +2075,19 @@ class Capri:
                                image=self._emote_photo, anchor="sw")
         if self.icon and now < self.icon[2]:
             self.draw_icon(c, now, lfx, top)
+        if self.state in ("fly", "orbit"):
+            sp = math.hypot(self.fvx, self.fvy)
+            if sp > 120:
+                ux, uy = -self.fvx / sp, -self.fvy / sp
+                cx, cy = lfx, y0 + h * 0.5
+                for i in range(5):
+                    off = (i - 2) * 16
+                    ox, oy = -uy * off, ux * off
+                    ln = 14 + (i % 3) * 8 + min(30.0, sp / 40.0)
+                    c.create_line(cx + ox + ux * 34, cy + oy + uy * 34, cx + ox + ux * (34 + ln), cy + oy + uy * (34 + ln),
+                                  fill=C_GREEN if i % 2 else C_RED, width=2)
+        for px_, py_, _vx, _vy, col, _life in self.parts:
+            c.create_rectangle(px_, py_, px_ + 4, py_ + 4, fill=col, outline="")
         base_y = max(40, top - 6)
         if self.timer_end:
             left = max(0, int(self.timer_end - now))

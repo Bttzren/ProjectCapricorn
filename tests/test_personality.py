@@ -1,5 +1,6 @@
 import calendar
 import os
+import re
 import random
 import sys
 import time
@@ -127,8 +128,8 @@ class MindTests(unittest.TestCase):
         self.assertGreater(sum(any(w in l.lower() for w in P.SLANG) for l in pools), len(pools) // 2)
         for line in pools:
             self.assertLessEqual(len(line), 120, line)
-        bad = ("fuck", "shit", "bitch", "damn", "hell ", "ass ")
-        self.assertFalse([l for l in pools if any(b in l.lower() + " " for b in bad)])
+        bad = re.compile(r"\b(fuck\w*|shit\w*|bitch\w*|damn\w*|hell|ass|asshole|crap)\b")
+        self.assertEqual([l for l in pools if bad.search(l.lower())], [])
 
     def test_default_persona_asks_for_slang_but_stays_pg(self):
         sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))

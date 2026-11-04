@@ -15,6 +15,23 @@ WHAT SHE DOES
   Drag to pick her up, fling to throw her. Click: poke. Double-click: chat.
   Right-click (Ctrl-click Mac): menu (focus timer, reminders, teleport, dance, lounge, nap, calm mode).
 
+FLYING & EXPRESSION
+  She flies around the screen on her own (sometimes a slow tour, sometimes a fast zoom, sometimes
+  circling your cursor) and lands when she's done. Playful moods fly more, sleepy ones less,
+  lonely ones circle your cursor. Right-click > Fly around / Orbit my cursor / Party!, or /fly /zoom
+  /orbit /party in chat. Finishing a focus timer sets off a confetti party. Over her head she shows
+  icons: ! ? hearts, stars, music notes, anger marks.
+
+AWARENESS (Windows only)
+  She can tell roughly what you're doing and react: coding, watching a video, music, school work,
+  chatting, writing, games (extra excited about Cyberpunk 2077), social media (she'll nudge you if
+  you scroll for 25 minutes), or chatting with another AI. She also notices when you've been away
+  for 10+ minutes (she naps) and greets you when you're back.
+  PRIVACY: she only reads the TITLE of the front window and turns it into a one-word category.
+  The title is never stored, logged or sent anywhere. She never sees what you type or what's on
+  your screen. When you chat, only a short hint such as "coding" is added to the AI's instructions.
+  Turn it off any time: right-click > Awareness, or /aware off.
+
 PERSONALITY
   She talks like a Night City local (choom, preem, nova, gonk, eddies, chrome...), kept PG.
   The same slang is built into her canned lines and into the AI persona prompt.
@@ -59,5 +76,6 @@ FILES she writes: ~/.capri/ (settings, chat history, capri.log for errors)
 Linux has no real transparency (dark box). Perching on other apps' windows is Windows-only.
 
 DEVELOPING
-  personality.py  moods, memory, lines (no Tk)       voice.py  speech: Fish Audio + system voice (no Tk)
+  personality.py  moods, memory, lines (no Tk)       awareness.py  window title -> activity (no Tk)
+        voice.py  speech: Fish Audio + system voice (no Tk)
   Tests:  python -m unittest discover -s tests

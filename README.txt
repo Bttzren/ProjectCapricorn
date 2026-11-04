@@ -52,7 +52,8 @@ SETTINGS & HANDS
 EDDIES, SKINS & GAMES
   Eddies (Night City money) come from: finishing focus sessions (+10), daily visits (streak bonus),
   finishing to-dos (+5), your first chat each day, beating her at tag (+5), and achievements
-  (First Gig, Grinder, Night Owl, Regular, Chrome Veteran, Task Slayer, Quick Hands, Chatterbox).
+  (First Gig, Grinder, Night Owl, Regular, Chrome Veteran, Task Slayer, Quick Hands, Chatterbox,
+  Netrunner, Ice Breaker, Ramen Regular).
   Spend them on skins (palette swaps): Ocean 30, Acid 30, Chrome 60, Gold 100.
   Settings > Look & Progress, or  /stats   /skin   /skin <name>   /skin buy <name>
   TAG: /tag (or right-click > Play tag). She runs from your cursor for 25 seconds and glitch-
@@ -61,6 +62,20 @@ EDDIES, SKINS & GAMES
   hourly (not in calm mode).
   TOYS: /roll d20 (or 2d6, 100), /coin, /8ball <question>
   She also glitches (RGB split) for a moment every minute or so, because she's a glitchy AI.
+
+MORE STUFF
+  BREACH PROTOCOL (hacking minigame): /hack or right-click > Hack. Fill the buffer so it contains the
+    daemon sequences. First pick is in the TOP row, then alternate column / row; cells can't be
+    reused; 45 seconds. Every puzzle is solvable. Pays 5 eddies per daemon (+5 for all of them).
+  SOUND EFFECTS: little synthesized blips and jingles (no audio files). Never cuts her voice off.
+    Settings > Sound effects, or /sfx on|off.
+  PEEKING: she sometimes peeks out from the edge of the screen, then slides back in.
+  RAMEN: /feed (or right-click > Feed ramen) costs 3 eddies and makes her very happy. If you haven't
+    fed her in 6+ hours she'll hint at it now and then.
+  NIGHT CITY RADIO: /radio on for a DJ drop every few minutes (off by default).
+  SPECIAL DAYS: she greets you on holidays (New Year, Valentine's, Pi Day, Halloween, Night City Day,
+    Christmas) and on YOUR birthday: /birthday 03-27.
+  BATTERY (Windows laptops): she warns you at 20% and cheers when you plug in.
 
 PERSONALITY
   She talks like a Night City local (choom, preem, nova, gonk, eddies, chrome...), kept PG.
@@ -109,5 +124,6 @@ DEVELOPING
   personality.py  moods, memory, lines (no Tk)       awareness.py  window title -> activity (no Tk)
         voice.py  speech: Fish Audio + system voice (no Tk)
   hands.py        key presses / clicks with safety rails (no Tk)
+  breach.py  hacking puzzle   sfx.py  sound effects   world.py  holidays, radio, battery (all no Tk)
   progress.py     eddies, streaks, achievements, skins (no Tk)   skins.py  palette swaps   fun.py  dice, todos
   Tests:  python -m unittest discover -s tests

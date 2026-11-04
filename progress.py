@@ -21,6 +21,9 @@ ACHIEVEMENTS = [
     ("todo_5", "Task Slayer", "Finish 5 to-dos", lambda p: p.count("todo") >= 5, 20),
     ("tag_win", "Quick Hands", "Catch Capri in tag", lambda p: p.count("tag_win") >= 1, 10),
     ("chat_50", "Chatterbox", "Send 50 messages", lambda p: p.count("chat") >= 50, 15),
+    ("netrunner", "Netrunner", "Complete every daemon in a breach", lambda p: p.count("breach_perfect") >= 1, 20),
+    ("ice_breaker", "Ice Breaker", "Run 5 breaches", lambda p: p.count("breach_run") >= 5, 20),
+    ("ramen_5", "Ramen Regular", "Feed Capri ramen 5 times", lambda p: p.count("feed") >= 5, 10),
 ]
 
 
@@ -57,6 +60,23 @@ class Progress:
     # -- change
     def earn(self, n):
         self.s["eddies"] = max(0, self.eddies + int(n))
+
+    def spend(self, n):
+        """Pay n eddies if you have them."""
+        if self.eddies < n:
+            return False
+        self.earn(-n)
+        return True
+
+    def record_breach(self, done, total):
+        """A breach finished with `done` of `total` daemons. Returns messages to show."""
+        c = self.s["counts"]
+        c["breach_run"] = c.get("breach_run", 0) + 1
+        gain = 5 * done + (5 if done == total and total > 0 else 0)
+        if done == total and total > 0:
+            c["breach_perfect"] = c.get("breach_perfect", 0) + 1
+        self.earn(gain)
+        return [f"Breach: {done}/{total} daemons, +{gain} eddies."] + self._check()
 
     def login(self, today=None):
         """Daily streak. Returns messages to show (empty if already counted today)."""

@@ -137,6 +137,10 @@ class Mind:
         self.affection = min(100.0, self.affection + 3.0)
         self.last_interaction = now
 
+    def fed(self, now):
+        self.affection = min(100.0, self.affection + 8.0)
+        self.last_interaction = now
+
     def annoyed(self, now, secs=300):
         self.annoyed_until = now + secs
         self.last_interaction = now

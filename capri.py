@@ -21,12 +21,15 @@ import tkinter as tk
 from tkinter import font as tkfont
 
 import awareness
+import breach
 import fun
 import hands
 import personality
 import progress
+import sfx
 import skins
 import voice
+import world
 
 try:
     from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageTk
@@ -367,6 +370,25 @@ class Win32:
             return ((ct.windll.kernel32.GetTickCount() - li.dwTime) & 0xFFFFFFFF) / 1000.0
         except Exception:
             return 0.0
+
+    def battery(self):
+        """(percent or None, plugged_in). Desktops without a battery report (None, True)."""
+        if not self.ok:
+            return None, True
+        try:
+            ct = self.ct
+
+            class POWER(ct.Structure):
+                _fields_ = [("ac", ct.c_ubyte), ("flag", ct.c_ubyte), ("pct", ct.c_ubyte), ("sys", ct.c_ubyte),
+                            ("life", ct.c_ulong), ("full", ct.c_ulong)]
+            st = POWER()
+            if not ct.windll.kernel32.GetSystemPowerStatus(ct.byref(st)):
+                return None, True
+            if st.flag == 128 or st.pct > 100:           # no battery / unknown
+                return None, True
+            return int(st.pct), st.ac == 1
+        except Exception:
+            return None, True
 
 
 # ------------------------------------------------------------------ art
@@ -1033,7 +1055,7 @@ class ChatWindow:
             self.system_line("/focus [min]  /remind <min> <text>  /name <you>  /mood  /key <api key>  "
                              "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
                              "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /stats  /skin  /tp  /dance  "
-                             "/sleep  /calm  /clear")
+                             "/sleep  /calm  /hack  /feed  /radio  /sfx  /birthday  /clear")
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
@@ -1053,6 +1075,32 @@ class ChatWindow:
             save_api_key(parts[1])
             self.drop_keybar()
             self.system_line("Key saved. Real chat unlocked.")
+        elif cmd == "/hack":
+            p.open_breach()
+        elif cmd == "/feed":
+            if p.feed():
+                self.system_line("Ramen served. -3 eddies.")
+            else:
+                self.system_line("Ramen costs 3 eddies. You have " + str(p.prog.eddies) + ".", err=True)
+        elif cmd in ("/radio", "/sfx"):
+            key = cmd[1:]
+            arg = parts[1].lower() if len(parts) > 1 else ""
+            if arg in ("on", "off"):
+                p.settings[key] = arg == "on"
+                if key == "sfx":
+                    p.sfx.enabled = arg == "on"
+                p.save_settings()
+                self.system_line(f"{key}: {arg}")
+            else:
+                self.system_line(f"/{key} on | off   (now: {'on' if p.settings.get(key, key == 'sfx') else 'off'})")
+        elif cmd == "/birthday":
+            bd = world.parse_birthday(parts[1] if len(parts) > 1 else "")
+            if bd:
+                p.settings["birthday"] = bd
+                p.save_settings()
+                self.system_line(f"Birthday saved: {bd}. I'll remember, choom.")
+            else:
+                self.system_line("Tell me like /birthday 03-27 (month-day).", err=True)
         elif cmd == "/tag":
             p.start_tag()
         elif cmd == "/stats":
@@ -1400,6 +1448,9 @@ class SettingsWindow:
         self.check(box, "Calm mode (she stays put and stops chatting)", "calm", False, self.pet.set_calm)
         self.check(box, "Check-ins (water, stretch, eat reminders)", "checkins", True, self.pet.set_checkins)
         self.check(box, "Fly around the screen", "fly_enabled", True)
+        self.check(box, "Sound effects (blips and jingles)", "sfx", True,
+                   lambda v: setattr(self.pet.sfx, "enabled", bool(v)))
+        self.check(box, "Night City Radio chatter (a DJ drop every few minutes)", "radio", False)
         self.check(box, "Awareness: notice which app is in front, and when I'm away"
                         + ("" if self.pet.win32.ok else " (Windows only)"), "aware", True, self.pet.set_aware,
                    state="normal" if self.pet.win32.ok else "disabled")
@@ -1431,6 +1482,127 @@ class SettingsWindow:
         except tk.TclError:
             pass
         self.pet.settings_win = None
+
+
+class BreachWindow:
+    """Breach Protocol: fill the buffer so it contains the daemons. First pick is in the top row, then
+    alternate column / row. Pays eddies for every daemon you complete."""
+    TIME = 45
+
+    def __init__(self, pet):
+        self.pet = pet
+        self.game = breach.Breach(rng=pet.rng)
+        self.over = False
+        mono = pick_font(pet.root, "Consolas", "Menlo", "DejaVu Sans Mono", "Courier New")
+        self.mono = mono
+        w = self.win = tk.Toplevel(pet.root)
+        w.title("Breach Protocol")
+        w.configure(bg=C_BLACK)
+        w.attributes("-topmost", True)
+        w.resizable(False, False)
+        w.protocol("WM_DELETE_WINDOW", self.close)
+        top = tk.Frame(w, bg=C_BLACK)
+        top.pack(fill="x", padx=14, pady=(12, 4))
+        tk.Label(top, text="BREACH PROTOCOL", bg=C_BLACK, fg=C_GREEN, font=(mono, 14, "bold")).pack(side="left")
+        self.timer = tk.Label(top, text="", bg=C_BLACK, fg=C_RED, font=(mono, 14, "bold"))
+        self.timer.pack(side="right")
+        mid = tk.Frame(w, bg=C_BLACK)
+        mid.pack(padx=14, pady=4)
+        grid = tk.Frame(mid, bg=C_BLACK, highlightthickness=1, highlightbackground=C_GREEN)
+        grid.pack(side="left", padx=(0, 14))
+        self.cells = {}
+        for r in range(self.game.size):
+            for c in range(self.game.size):
+                lb = tk.Label(grid, text=self.game.grid[r][c], width=4, height=2, font=(mono, 13, "bold"),
+                              bg=C_BLACK, fg=C_GREEN, cursor="hand2")
+                lb.grid(row=r, column=c, padx=1, pady=1)
+                lb.bind("<Button-1>", lambda e, r=r, c=c: self.click(r, c))
+                self.cells[(r, c)] = lb
+        side = tk.Frame(mid, bg=C_BLACK)
+        side.pack(side="left", anchor="n")
+        tk.Label(side, text="DAEMONS", bg=C_BLACK, fg=C_DIM, font=(mono, 9, "bold")).pack(anchor="w")
+        self.daemon_lbls = []
+        for d in self.game.daemons:
+            lb = tk.Label(side, text="", bg=C_BLACK, fg=C_TEXT, font=(mono, 10), justify="left", anchor="w")
+            lb.pack(anchor="w", pady=(6, 0))
+            self.daemon_lbls.append(lb)
+        tk.Label(w, text="BUFFER", bg=C_BLACK, fg=C_DIM, font=(mono, 9, "bold")).pack(anchor="w", padx=14, pady=(8, 0))
+        buf = tk.Frame(w, bg=C_BLACK)
+        buf.pack(anchor="w", padx=14, pady=4)
+        self.slots = []
+        for _ in range(self.game.buffer):
+            lb = tk.Label(buf, text="--", width=4, font=(mono, 12, "bold"), bg=C_PANEL2, fg=C_DIM)
+            lb.pack(side="left", padx=2)
+            self.slots.append(lb)
+        self.status = tk.Label(w, text="Pick a code in the TOP row to start.", bg=C_BLACK, fg=C_DIM, font=(mono, 9),
+                               wraplength=420, justify="left")
+        self.status.pack(anchor="w", padx=14, pady=(6, 4))
+        flat_button(w, "CLOSE", self.close, C_PANEL2, C_TEXT, "#2a2a40", (mono, 9, "bold"), 16, 5).pack(pady=(0, 12))
+        self.deadline = time.time() + self.TIME
+        self.refresh()
+        self.tick()
+        w.geometry(f"+{max(0, pet.sw // 2 - 230)}+{max(0, pet.sh // 2 - 230)}")
+
+    def refresh(self):
+        g = self.game
+        legal = g.legal()
+        used = set(g.picks)
+        for pos, lb in self.cells.items():
+            if pos in used:
+                lb.config(text="[ ]", fg=C_DIM, bg=C_BLACK)
+            elif pos in legal and not self.over:
+                lb.config(text=g.grid[pos[0]][pos[1]], fg="#ffd400", bg="#1a2a1f")
+            else:
+                lb.config(text=g.grid[pos[0]][pos[1]], fg="#2f7a52", bg=C_BLACK)
+        codes = g.codes
+        for i, lb in enumerate(self.slots):
+            lb.config(text=codes[i] if i < len(codes) else "--", fg=C_GREEN if i < len(codes) else C_DIM)
+        for d, lb in zip(g.daemons, self.daemon_lbls):
+            k = g.progress(d)
+            ok = k == len(d.seq)
+            lb.config(text=f"{'OK ' if ok else '   '}{d.name}\n   {' '.join(d.seq)}  [{k}/{len(d.seq)}]",
+                      fg=C_GREEN if ok else C_TEXT)
+
+    def click(self, r, c):
+        if self.over:
+            return
+        if self.game.pick(r, c):
+            self.pet.sfx.play("click")
+            self.refresh()
+            if self.game.done():
+                self.finish()
+        else:
+            self.status.config(text="Not allowed: pick from the highlighted row/column.", fg=C_RED)
+
+    def tick(self):
+        if self.over:
+            return
+        try:
+            left = max(0.0, self.deadline - time.time())
+            self.timer.config(text=f"{left:04.1f}")
+            if left <= 0:
+                return self.finish()
+            self.win.after(100, self.tick)
+        except tk.TclError:
+            pass
+
+    def finish(self):
+        if self.over:
+            return
+        self.over = True
+        done, total = self.game.score(), len(self.game.daemons)
+        self.refresh()
+        self.status.config(text=f"BREACH {'COMPLETE' if done == total else 'ENDED'}: {done}/{total} daemons.",
+                           fg=C_GREEN if done else C_RED)
+        self.pet.breach_result(done, total)
+
+    def close(self):
+        self.over = True
+        try:
+            self.win.destroy()
+        except tk.TclError:
+            pass
+        self.pet.breach_win = None
 
 
 class ReminderDialog:
@@ -1495,6 +1667,8 @@ class Capri:
             self.settings["skin"] = "neon"
         self.speaker = make_speaker()
         self.hands = hands.Hands(level=self.settings.get("hands", "visual"), log=log)
+        self.sfx = sfx.Sfx(os.path.join(data_dir(), "sfx"), voice.play_file, enabled=bool(self.settings.get("sfx", True)),
+                           busy=lambda: self.speaker.speaking, log=log)
         self.art = load_art(self.dpi, self.settings.get("skin", "neon"))
         self.fw, self.fh = self.art.w, self.art.h
         self.Wd = max(280, int(self.fh * 1.25) + 30)
@@ -1544,6 +1718,15 @@ class Capri:
         self.busy_since, self.typing_along = None, False
         self.twitch_until, self.next_twitch = 0.0, now + 40
         self.tag, self.next_todo = None, now + 3600
+        self.battery_state, self.next_battery, self.next_radio = {}, now + 20, now + 300
+        self.peek_side, self.peek_said, self.breach_win, self.next_hungry = 0, False, None, now + 3600
+        self.settings.setdefault("last_fed", time.time())
+        lt = time.localtime()
+        today = time.strftime("%Y-%m-%d", lt)
+        special = world.special_day(lt.tm_mon, lt.tm_mday, self.settings.get("birthday", ""), self.mind.user_name)
+        if special and self.settings.get("special_seen") != today:
+            self.settings["special_seen"] = today
+            self.msgs.append(special[1])
         self.next_save = now + 60
         self.pointer = (0, 0)
         self.pointer_prev = (0, 0, now)
@@ -1750,6 +1933,7 @@ class Capri:
             opts.append(("look", 9))
         if self.settings.get("fly_enabled", True):
             opts += [("fly", 9), ("zoom", 3), ("orbit", 5)]
+        opts.append(("peek", 6))
         if self.surfaces and not self.surf:
             opts.append(("perch", 16))
         if self.surf:
@@ -1774,6 +1958,8 @@ class Capri:
             self.go("curious", 8)
         elif name in ("fly", "zoom", "orbit"):
             self.start_fly(name)
+        elif name == "peek":
+            self.start_peek()
         elif name == "look":
             self.go("idle", self.rng.uniform(2.5, 4.5))
             self.anim = self.rng.choice(("look-a", "look-b"))
@@ -1823,6 +2009,7 @@ class Capri:
         del self.parts[:-160]
 
     def party(self):
+        self.sfx.play("success")
         self.spawn_confetti()
         self.start_fly("fly")
 
@@ -1928,6 +2115,17 @@ class Capri:
             if age > (self.state_dur or 3):
                 self.hop_y = 0
                 self.go("perch" if self.surf else "idle", 2.0)
+        elif st == "peek":
+            wa = self.work_area()
+            side = self.peek_side or 1
+            inside = wa[0] + self.fw * 0.7 if side < 0 else wa[2] - self.fw * 0.7
+            if age > (self.state_dur or 5.0):                 # slide back in, then carry on
+                if not self.peek_said:                        # the line waits until the bubble can be read
+                    self.peek_said = True
+                    self.say(self.rng.choice(["Peekaboo.", "Don't mind me.", "Psst. Choom.", "Boo. Kidding."]), 3)
+                self.fx += (inside - self.fx) * min(1.0, 6.0 * dt)
+                if abs(inside - self.fx) < 6:
+                    self.go("idle", self.rng.uniform(1.5, 3.5))
         elif st == "flee":
             if not self.tag:
                 return self.go("air")
@@ -2107,6 +2305,7 @@ class Capri:
             self.chat.images.clear()
         self.spawn_confetti(30)
         self.say("New look. How do I look, choom?", 5)
+        self.sfx.play("confirm")
         return True, "Skin: " + progress.SKINS[sid][0]
 
     def start_tag(self):
@@ -2136,8 +2335,86 @@ class Capri:
             self.say(f"Got me in {t:.1f}s! Preem reflexes.{tail}", 7, speak="priority")
             self.spawn_confetti(30)
             self.award("tag_win")
+            self.sfx.play("success")
         else:
             self.say("You couldn't catch me. Nova.", 5)
+            self.sfx.play("fail")
+
+    def start_peek(self):
+        """Peek out from the side of the screen, then slide back in."""
+        if self.state in ("tp_out", "tp_in", "drag"):
+            return
+        wa = self.work_area()
+        self.surf = None
+        self.peek_side = self.rng.choice((-1, 1))
+        self.fx = wa[0] + self.fw * 0.05 if self.peek_side < 0 else wa[2] - self.fw * 0.05    # half of her shows
+        self.fy = self.ground()
+        self.dir = 1 if self.peek_side < 0 else -1          # looking back toward the screen
+        self.angle = self.angle_t = 0.0
+        self.go("peek", self.rng.uniform(4.0, 7.0))
+        self.anim = "look-a" if "look-a" in getattr(self.art, "map", {}) else "idle"
+        self.peek_said = False
+
+    def feed(self):
+        """Ramen: costs 3 eddies, makes her happy."""
+        if not self.prog.spend(3):
+            self.say("Ramen costs 3 eddies, choom. You're short.", 4, speak=None)
+            return False
+        now = time.time()
+        self.settings["last_fed"] = now
+        self.mind.fed(now)
+        self.say(self.rng.choice(["Ramen! You're preem.", "Noodles. Nova.", "Slurp. Best gig ever."]), 5,
+                 speak="priority")
+        self.set_icon("heart", 2.0)
+        self.spawn_confetti(15)
+        self.react("happy")
+        self.sfx.play("confirm")
+        self.award("feed")
+        return True
+
+    def open_breach(self):
+        if self.breach_win:
+            try:
+                if self.breach_win.win.winfo_exists():
+                    self.breach_win.win.lift()
+                    return
+            except tk.TclError:
+                pass
+        self.breach_win = BreachWindow(self)
+        self.say("Jack in, choom. Match the daemons.", 4)
+
+    def breach_result(self, done, total):
+        self.msgs += self.prog.record_breach(done, total)
+        self.save_settings()
+        if done == total:
+            self.say("Breach complete! Preem netrunning.", 6, speak="priority")
+            self.spawn_confetti(40)
+            self.sfx.play("success")
+        elif done:
+            self.say(f"Partial breach: {done}/{total}. Not bad, choom.", 5)
+            self.sfx.play("confirm")
+        else:
+            self.say("Flatlined. The ICE won this round.", 5)
+            self.sfx.play("fail")
+
+    def watch_world(self, now):
+        """Battery, Night City Radio and hunger. All local; nothing is sent anywhere."""
+        battery = getattr(self.win32, "battery", None)
+        if battery and self.win32.ok and now >= self.next_battery:
+            self.next_battery = now + 30
+            pct, plugged = battery()
+            line = world.battery_event(self.battery_state, pct, plugged)
+            if line:
+                self.say(line, 8, speak="priority")
+                self.set_icon("!" if not plugged else "heart", 3.0)
+                self.sfx.play("alert" if not plugged else "confirm")
+        if self.settings.get("radio") and now >= self.next_radio and not self.calm:
+            self.next_radio = now + self.rng.randint(240, 480)
+            self.say(self.rng.choice(world.RADIO), 8)
+        if now >= self.next_hungry and not self.calm:
+            self.next_hungry = now + 3 * 3600
+            if now - self.settings.get("last_fed", now) > 6 * 3600:
+                self.say("Hungry, choom. /feed me ramen? 3 eddies.", 8)
 
     def set_hands(self, level):
         self.hands.set_level(level)
@@ -2183,6 +2460,7 @@ class Capri:
         self.say(msg, 4, speak=None)
         if ok:
             self.set_icon("star", 1.4)
+            self.sfx.play("click")
         return ok, msg
 
     def queue_action(self, action, arg, label, secs, cancel_on_input=False):
@@ -2194,6 +2472,7 @@ class Capri:
         self.pending = {"action": action, "arg": arg, "label": label, "t0": now, "at": now + secs,
                         "shown": None, "cancel_on_input": cancel_on_input}
         self.set_icon("!", secs)
+        self.sfx.play("alert")
         return True, f"{label} in {secs} seconds. Click where you want it. Click me to cancel."
 
     def cancel_pending(self, msg="Okay, cancelled."):
@@ -2334,13 +2613,15 @@ class Capri:
         if self.msgs and now > self.bubble_until + 0.4 and now - self.t_start > 8:
             text = self.msgs.pop(0)
             self.say(text, 7, speak="priority")
-            if text.startswith("Achievement"):
+            if text.startswith(("Achievement", "Happy", "Merry")):
                 self.spawn_confetti(40)
+            self.sfx.play("achievement" if text.startswith("Achievement") else "blip")
         if now >= self.next_todo and not self.calm:
             self.next_todo = now + self.rng.randint(3600, 5400)
             nag = self.todos.nag()
             if nag:
                 self.say(nag, 9)
+        self.watch_world(now)
         if self.speaker.speaking:
             self.talk_until = now + 0.3          # her mouth moves while she talks
         err = self.speaker.last_error
@@ -2367,6 +2648,7 @@ class Capri:
             self.poke_awake()
             self.say("Reminder: " + r[1], 15, speak="priority")
             self.set_icon("!", 3.0)
+            self.sfx.play("alert")
             self.hop(7)
         if self.checkins and now >= self.next_checkin and not self.calm:
             self.next_checkin = now + random.randint(*CHECKIN_EVERY)
@@ -2458,6 +2740,7 @@ class Capri:
             self.root.after(900, self.teleport)
             return
         self.mind.poke(now)
+        self.sfx.play("blip")
         self.say(self.mind.line("poke", now), 2.5)
         if self.mind.affection > 60 and self.rng.random() < 0.5:
             self.set_icon("heart", 1.6)
@@ -2530,6 +2813,8 @@ class Capri:
         m.add_command(label="Orbit my cursor", command=lambda: self.start_fly("orbit"))
         m.add_command(label="Party!", command=self.party)
         m.add_command(label="Play tag", command=self.start_tag)
+        m.add_command(label="Hack (Breach Protocol)", command=self.open_breach)
+        m.add_command(label="Feed ramen (3 eddies)", command=self.feed)
         m.add_command(label="Dance", command=lambda: self.go("dance", 3.5))
         m.add_command(label="Lounge", command=lambda: self.go("lounge", 15))
         m.add_command(label="Take a nap", command=lambda: self.go("sleep"))
@@ -2573,7 +2858,8 @@ class Capri:
     # ---- drawing
     def place(self):
         wa = self.work_area()
-        self.fx = min(max(self.fx, wa[0] + 10), wa[2] - 10)
+        if self.state != "peek":                          # peeking is the one time she may hang off the edge
+            self.fx = min(max(self.fx, wa[0] + 10), wa[2] - 10)
         x = int(self.fx - self.Wd / 2)
         y = int(self.fy - (self.Hd - 8))
         g = f"{self.Wd}x{self.Hd}+{x}+{y}"

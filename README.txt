@@ -100,6 +100,17 @@ GAME MODE (she hypes your kills and roasts your deaths)
   (There's also an offline option: game_events.json with reference images of fixed screen patches, see
    game_events.example.json. It never sends anything anywhere, but needs setting up per game.)
 
+MINI GAMES, BADGES AND DAILY GIGS
+  /rps rock|paper|scissors   rock-paper-scissors against her (score kept while she runs)
+  /trivia                    she asks a question, just type the answer
+  /guess                     guess her secret number (1-100) in 7 tries; she says higher/lower
+  /gigs                      3 small real-life tasks a day (water, stretch, look away...)
+  /gigdone <number>          tick one off
+  /badges                    your badges and progress, plus your daily-open streak
+  Badges unlock from pokes, flights, mini games, wins, chat commands, finished to-dos/habits/gigs,
+  focus sessions, game kills, tag, and opening Capri several days in a row. She congratulates you
+  (AI-written, spoken) and throws confetti. Only counters are saved, in settings.json.
+
 AI-WRITTEN LINES (everything she says out loud)
   With a Claude or Gemini key, the words she speaks and shows in her bubble are written by the AI, not
   chosen from a list: pokes, idle chatter, check-ins, greetings, startling or annoying her, flying,

@@ -25,12 +25,14 @@ import awareness
 import breach
 import daylog
 import fun
+import gamemode
 import habits
 import hands
 import journal
 import ledges
 import memory
 import personality
+import reactor
 import sfx
 import simon
 import voice
@@ -52,6 +54,8 @@ TICK_MS = 40
 HAND_COMMANDS = {"/pause": ("playpause", None), "/next": ("next", None), "/prev": ("prev", None),
                  "/volup": ("volup", None), "/voldown": ("voldown", None), "/mute": ("mute", None),
                  "/shot": ("screenshot", None), "/lock": ("lock", None)}
+GAME_COMMANDS = {"/kill": ("kill", 1), "/death": ("death", 1), "/ace": ("ace", 1), "/clutch": ("clutch", 1),
+                 "/rw": ("round_win", 1), "/rl": ("round_loss", 1)}
 SPRITE_HEIGHT = 170            # on-screen sprite height at 100% display scaling
 SLEEP_AFTER = 300              # seconds without poking her before she naps
 FOCUS_MIN, BREAK_MIN = 25, 5
@@ -1060,7 +1064,7 @@ class ChatWindow:
             self.system_line("/focus [min]  /remind <min> <text>  /name <you>  /mood  /key <api key>  "
                              "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
                              "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /tp  /dance  "
-                             "/sleep  /calm  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /remember  /facts  /feel  "
+                             "/sleep  /calm  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /remember  /facts  /feel  "
                              "/journal  /day  /horoscope  /lore  /clear")
         elif cmd == "/clear":
             self.clear()
@@ -1081,6 +1085,59 @@ class ChatWindow:
             save_api_key(parts[1])
             self.drop_keybar()
             self.system_line("Key saved. Real chat unlocked.")
+        elif cmd in GAME_COMMANDS:
+            kind, count = GAME_COMMANDS[cmd]
+            if cmd == "/kill" and len(parts) > 1 and parts[1].isdigit():
+                count = max(1, min(5, int(parts[1])))
+            p.game_event(kind, count)
+            self.system_line(p.game.status())
+        elif cmd == "/gg":
+            arg = parts[1].lower() if len(parts) > 1 else ""
+            if arg in ("win", "w", "loss", "l", "lose"):
+                p.game_event("match_win" if arg in ("win", "w") else "match_loss")
+                self.system_line(p.game.status())
+                p.root.after(9000, p.end_game)                     # the recap comes after her reaction
+            elif p.game:
+                p.end_game()
+                self.system_line("Game session over.")
+            else:
+                self.system_line("/gg win | loss    (ends the game session with a recap)", err=True)
+        elif cmd == "/kd":
+            self.system_line(p.game.status() if p.game else
+                             "No game session. Launch a game, or start one with /kill or /death.")
+        elif cmd == "/roast":
+            arg = parts[1].lower() if len(parts) > 1 else ""
+            if arg in gamemode.LEVELS:
+                p.settings["roast"] = arg
+                p.save_settings()
+                if p.game:
+                    p.game.level = arg
+                self.system_line(f"Roast level: {arg}.")
+            else:
+                self.system_line("/roast off | mild | spicy    (now: " + p.settings.get("roast", "mild")
+                                 + ")   off = only supportive, spicy = she'll tell you that was ass.")
+        elif cmd == "/match":
+            res = gamemode.parse_match(text.split(None, 1)[1] if len(parts) > 1 else "")
+            if res:
+                if not p.game:
+                    p.start_game("other", manual=True)
+                p.game.apply_result(res.get("rounds"), res.get("kd"))
+                self.system_line(p.game.recap())
+                p.say(p.game.recap(), 12, speak="priority")
+                p.end_game(quiet=True)
+            else:
+                self.system_line("Tell me like /match 13-7 15/12   (rounds won-lost, then kills/deaths)", err=True)
+        elif cmd == "/game":
+            if len(parts) > 1 and parts[1].lower() == "end":
+                p.end_game()
+                self.system_line("Game session over.")
+            else:
+                self.system_line(p.game.status() if p.game else "No game running.")
+                detectors = sum(len(v) for v in p.game_cfg.values())
+                self.system_line(f"Automatic detection: {detectors} detector(s) loaded for "
+                                 + (", ".join(p.game_cfg) or "no games") + ". Manual: /kill /death /rw /rl /ace /clutch.")
+                for w in p.game_cfg_warnings[:3]:
+                    self.system_line("game_events.json: " + w, err=True)
         elif cmd == "/sit":
             p.sit_somewhere()
         elif cmd == "/ledges":
@@ -1350,6 +1407,7 @@ class SettingsWindow:
         pad.pack(fill="x", padx=8, pady=(0, 8))
         self.build_hands(pad)
         self.build_voice(pad)
+        self.build_gaming(pad)
         self.build_behavior(pad)
         self.build_keys(pad)
         w.update_idletasks()
@@ -1470,6 +1528,29 @@ class SettingsWindow:
         self.pet.set_fish_key(entry.get().strip())
         entry.delete(0, "end")
         self.show_engine()
+
+    def build_gaming(self, parent):
+        box = self.section(parent, "GAMING",
+                           "When a game is in front (Windows, Awareness on) she keeps small and quiet and comments on "
+                           "your play. Tell her what happened with /kill /death /rw /rl, or set up automatic "
+                           "detection (see the README).")
+        self.roast_var = tk.StringVar(value=self.pet.settings.get("roast", "mild"))
+        for value, label, note in (
+                ("off", "Supportive only", "Hype when you do well, kind words when you die."),
+                ("mild", "Light roasts (default)", "Playful teasing when you die: tragic, gonk, skill issue."),
+                ("spicy", "Spicy", "She'll tell you that was ass. Mild swearing, no slurs.")):
+            self.radio(box, label, self.roast_var, value, self.pick_roast, note)
+        self.check(box, "Stay small and quiet while a game is in front", "game_quiet", True)
+        tk.Frame(box, bg=C_PANEL, height=6).pack()
+
+    def pick_roast(self):
+        v = self.roast_var.get()
+        self.pet.settings["roast"] = v
+        self.pet.save_settings()
+        if self.pet.game:
+            self.pet.game.level = v
+        self.pet.say({"off": "Only nice words. For now.", "mild": "Light roasts it is.",
+                      "spicy": "Spicy mode. Don't cry."}[v], 4, speak=None)
 
     def build_behavior(self, parent):
         box = self.section(parent, "BEHAVIOUR")
@@ -1889,6 +1970,13 @@ class Capri:
         self.peek_side, self.peek_said, self.breach_win, self.next_hungry = 0, False, None, now + 3600
         self.simon_win, self.last_watch, self.next_memory_cb = None, now, now + 7200
         self.scanner, self.ledges, self.ledge_counter, self.ledge_next = ledges.Scanner(), [], 0, 0.0
+        self.game, self.game_seen, self.game_manual, self.reactor, self.calm_before_game = None, now, False, None, None
+        self.game_cfg, self.game_cfg_warnings = {}, []
+        for folder in (app_dir(), data_dir()):                     # optional automatic detectors (README)
+            cfg, warns = reactor.load_config(os.path.join(folder, "game_events.json"))
+            if cfg or warns:
+                self.game_cfg, self.game_cfg_warnings = cfg, warns
+                break
         self.settings.setdefault("last_fed", time.time())
         lt = time.localtime()
         today = time.strftime("%Y-%m-%d", lt)
@@ -2507,6 +2595,9 @@ class Capri:
             if self.ledges:
                 self.ledges = []
             return
+        if self.game:                                        # never screenshot a game looking for ledges
+            self.ledges = []
+            return
         result = self.scanner.take()
         if result is not None:
             self.ledges, self.ledge_counter = ledges.track(self.ledges, result, self.ledge_counter)
@@ -2581,6 +2672,83 @@ class Capri:
         self.anim = "jump"
         if not quiet:
             self.say(self.rng.choice(["Found a spot!", "That box looks sit-able.", "Ooh, a ledge."]), 3)
+
+    def start_game(self, key, manual=False):
+        """A game session: she keeps small and quiet and comments on events."""
+        self.end_game(quiet=True)
+        self.game = gamemode.Session(key, self.rng, self.settings.get("roast", "mild"))
+        self.game_manual, self.game_seen = manual, time.time()
+        if self.settings.get("game_quiet", True):
+            self.calm_before_game, self.calm = self.calm, True
+        self.surf, self.icon = None, None
+        wa = self.work_area()
+        self.fx, self.fy = wa[2] - self.fw * 0.8, float(self.ground())      # tuck into the corner
+        self.go("idle", 5)
+        self.say(self.game.start_line(), 6, speak="priority")
+        dets = self.game_cfg.get(key)
+        if dets:
+            self.reactor = reactor.Reactor(dets, (self.sw, self.sh))
+            self.reactor.start()
+
+    def end_game(self, quiet=False):
+        g, self.game = self.game, None
+        if not g:
+            return
+        if self.reactor:
+            self.reactor.stop()
+            self.reactor = None
+        if self.calm_before_game is not None:
+            self.calm, self.calm_before_game = self.calm_before_game, None
+        if g.events or g.minutes() >= 10:
+            hist = self.settings.setdefault("games", [])
+            hist.append(g.summary())                                   # numbers only
+            del hist[:-20]
+            self.save_settings()
+            if not quiet:
+                self.say(g.recap(), 14, speak="priority")
+
+    def game_tick(self, now, key, has_title):
+        """Start a session when a supported game is in front; end it once it has been gone a while."""
+        if key:
+            self.game_seen = now
+            if not self.game:
+                self.start_game(key)
+            elif self.game.key == "other":
+                self.game.key, self.game_manual = key, False
+            elif self.game.key != key:
+                self.start_game(key)
+        elif self.game and has_title and now - self.game_seen > (3 * 3600 if self.game_manual else 180):
+            self.end_game()
+
+    def game_event(self, kind, n=1):
+        """Something happened in the game (you told her, or a detector saw it). She reacts out loud."""
+        if not self.game:
+            self.start_game("other", manual=True)
+        self.game.level = self.settings.get("roast", "mild")
+        line = self.game.event(kind, n)
+        if line:
+            self.say(line, 6, speak="priority")
+        if kind in ("kill", "ace", "clutch", "round_win", "match_win"):
+            self.set_icon("star", 1.6)
+            self.sfx.play("success" if kind in ("ace", "clutch", "match_win") else "confirm")
+            if kind in ("ace", "clutch", "match_win"):
+                self.spawn_confetti(30)
+            self.react("happy")
+        else:
+            self.sfx.play("fail")
+            self.react("error")
+        return line
+
+    def drain_reactor(self):
+        if not self.reactor:
+            return
+        for kind, count in self.reactor.take():
+            self.game_event(kind, count)
+        if self.reactor and self.reactor.error:
+            err, self.reactor.error = self.reactor.error, ""
+            self.reactor.stop()
+            self.reactor = None
+            self.say(f"Auto-detect stopped ({err}). You can still tell me with /kill and /death.", 8, speak=None)
 
     def start_peek(self):
         """Peek out from the side of the screen, then slide back in."""
@@ -2807,6 +2975,10 @@ class Capri:
                                    fill=C_GREEN if (k, r) in lit else C_PANEL2, outline="")
 
     def activity_phrase(self):
+        g = self.game
+        if g:
+            tone = "be supportive" if g.level == "off" else "cheer their good plays and tease them when they die"
+            return f"playing {g.name} (this session: {g.kills} kills, {g.deaths} deaths); {tone}"
         return awareness.PHRASE.get(self.ctx, "") if (self.aware and self.ctx) else ""
 
     def set_aware(self, on):
@@ -2860,7 +3032,9 @@ class Capri:
             self.save_settings()
             self.say("Heads up: I can see which app is in front (never what you type). Only a short hint like "
                      "'coding' goes to the AI when we chat. Right-click me > Awareness to turn it off.", 16)
-        cat = awareness.classify(self.win32.foreground_title())      # the title is not kept anywhere
+        title = self.win32.foreground_title()
+        cat = awareness.classify(title)                              # the title is not kept anywhere
+        self.game_tick(now, gamemode.detect_game(title), bool(title))
         dt, self.last_watch = min(5.0, now - self.last_watch), now
         if self.settings.get("track_time", True) and idle < 60:      # only the category's minutes are saved
             self.daylog.add(time.strftime("%Y-%m-%d"), cat, dt)
@@ -2883,6 +3057,7 @@ class Capri:
     def scheduled(self, now):
         self.watch_context(now)
         self.watch_ledges(now)
+        self.drain_reactor()
         if self.pending:
             self.tick_pending(now)
         if self.msgs and now > self.bubble_until + 0.4 and now - self.t_start > 8:
@@ -3125,6 +3300,8 @@ class Capri:
 
     def quit(self):
         self.speaker.stop()
+        if self.reactor:
+            self.reactor.stop()
         self.mind.sync(time.time())
         self.save_settings()
         if self.chat and self.chat.alive():

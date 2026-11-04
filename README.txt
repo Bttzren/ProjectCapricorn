@@ -71,6 +71,26 @@ MORE STUFF
     Christmas) and on YOUR birthday: /birthday 03-27.
   BATTERY (Windows laptops): she warns you at 20% and cheers when you plug in.
 
+GAME MODE (she hypes your kills and roasts your deaths)
+  When a supported game is in front (Valorant, CS2, Apex, Overwatch, Fortnite, League, Rocket League,
+  Cyberpunk 2077; needs Windows + Awareness on) she tucks into a corner, stays quiet, and keeps a K/D
+  for the session. When you close the game she gives a recap ("Valorant: 15 kills, 12 deaths..."). Only
+  the numbers are kept (last 20 sessions), never what you did.
+  TELL HER WHAT HAPPENED (works for any game, any OS):
+     /kill [2-5]   /death   /ace   /clutch   /rw (round won)   /rl (round lost)
+     /gg win|loss  (match over)   /kd (status)   /match 13-7 15/12 (rounds 13-7, kills/deaths)
+  ROAST LEVEL: /roast off | mild | spicy  (or Settings > Gaming). off = only supportive. mild (default)
+     = "that was tragic, gonk". spicy = she'll tell you that was ass (mild swearing, never slurs).
+  Her chat replies know what you're playing and your session K/D too.
+  IMPORTANT FOR FULLSCREEN: games in "Fullscreen" can hide her. Use "Windowed Fullscreen" / borderless.
+  AUTOMATIC KILL/DEATH DETECTION (optional, experimental): games don't give other programs your kills
+  (Valorant's anti-cheat blocks that, and Capri never touches the game's memory or files). The only
+  honest way is to watch a few small patches of your screen that the game draws in a fixed place when
+  something happens (a death banner, a kill marker, VICTORY). To use it, put a game_events.json next to
+  capri.py (see game_events.example.json) pointing at reference screenshots of those patches. Capri then
+  compares just those small patches 2-3 times a second, only while that game is in front. Patches are
+  compared in memory and thrown away. Nothing is saved or sent. /game shows what's loaded.
+
 SCREEN LEDGES (she sits on boxes on your screen)  - OFF by default, needs your OK
   She can look at your screen, find boxes (cards, text boxes, images, panels) and fly over to sit on
   their top edge. If the page scrolls she rides along; if the box goes away she falls.
@@ -144,6 +164,6 @@ DEVELOPING
         voice.py  speech: Fish Audio + system voice (no Tk)
   hands.py        key presses / clicks with safety rails (no Tk)
   breach.py  hacking puzzle   sfx.py  sound effects   world.py  holidays, radio, battery (all no Tk)
-  ledges.py  screen box detection   simon.py  habits.py  memory.py  journal.py  daylog.py  autostart.py
+  gamemode.py  game commentary   reactor.py  screen-patch detectors   ledges.py  screen box detection   simon.py  habits.py  memory.py  journal.py  daylog.py  autostart.py
   fun.py  dice, to-dos, horoscope
   Tests:  python -m unittest discover -s tests

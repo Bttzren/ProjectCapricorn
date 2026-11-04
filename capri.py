@@ -20,13 +20,20 @@ import urllib.request
 import tkinter as tk
 from tkinter import font as tkfont
 
+import autostart
 import awareness
 import breach
+import daylog
 import fun
+import habits
 import hands
+import journal
+import ledges
+import memory
 import personality
 import progress
 import sfx
+import simon
 import skins
 import voice
 import world
@@ -958,7 +965,8 @@ class ChatWindow:
         mind = self.pet.mind
         mind.chatted(now)
         self.pet.award("chat")
-        persona = self.persona + " " + mind.context(now, self.pet.doing(), self.pet.activity_phrase())
+        persona = (self.persona + " " + mind.context(now, self.pet.doing(), self.pet.activity_phrase())
+                   + " " + self.pet.memory.context()).strip()
         offline = None if read_api_key() else mind.offline_reply(text, now)
         snapshot = [{"role": m["role"], "content": m["content"]} for m in self.history[-20:]]
         threading.Thread(target=self.work, args=(snapshot, persona, offline), daemon=True).start()
@@ -1055,7 +1063,8 @@ class ChatWindow:
             self.system_line("/focus [min]  /remind <min> <text>  /name <you>  /mood  /key <api key>  "
                              "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
                              "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /stats  /skin  /tp  /dance  "
-                             "/sleep  /calm  /hack  /feed  /radio  /sfx  /birthday  /clear")
+                             "/sleep  /calm  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /remember  /facts  /feel  "
+                             "/journal  /day  /horoscope  /lore  /clear")
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
@@ -1075,6 +1084,87 @@ class ChatWindow:
             save_api_key(parts[1])
             self.drop_keybar()
             self.system_line("Key saved. Real chat unlocked.")
+        elif cmd == "/sit":
+            p.sit_somewhere()
+        elif cmd == "/ledges":
+            arg = parts[1].lower() if len(parts) > 1 else ""
+            if arg == "on":
+                self.system_line("Screen ledges: on." if p.enable_ledges(parent=self.win)
+                                 else "Okay, I left it off.")
+            elif arg == "off":
+                p.disable_ledges()
+                self.system_line("Screen ledges: off. I stopped looking.")
+            else:
+                self.system_line(f"Screen ledges: {'on' if p.settings.get('ledges') else 'off'} "
+                                 f"({len(p.ledges)} spot(s) in view).  /ledges on | off    /sit = perch on one")
+        elif cmd == "/simon":
+            p.open_simon()
+        elif cmd == "/habit":
+            today = time.strftime("%Y-%m-%d")
+            sub = parts[1].lower() if len(parts) > 1 else ""
+            if sub == "add" and len(parts) > 2:
+                name = p.habits.add(text.split(None, 2)[2])
+                p.save_settings()
+                self.system_line(f"Habit added: {name}. Check it off with /did <number>." if name
+                                 else "Couldn't add that (empty, duplicate, or you have 8 already).", err=not name)
+            elif sub in ("rm", "remove", "del") and len(parts) > 2 and parts[2].isdigit():
+                name = p.habits.remove(int(parts[2]))
+                p.save_settings()
+                self.system_line(f"Removed: {name}" if name else "Which one? /habit shows the numbers.", err=not name)
+            else:
+                for line in p.habits.lines(today):
+                    self.system_line(line)
+        elif cmd == "/did":
+            today = time.strftime("%Y-%m-%d")
+            ok, name, streak = p.habits.check(int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0, today)
+            if ok:
+                p.award("habit")
+                extra = ""
+                if streak in (7, 30):
+                    p.prog.earn(10 if streak == 7 else 30)
+                    extra = f" {streak}-day streak bonus!"
+                    p.spawn_confetti(40)
+                p.save_settings()
+                self.system_line(f"{name}: done! {streak}-day streak.{extra}")
+                p.react("happy")
+            elif name:
+                self.system_line(f"You already did {name} today.", err=True)
+            else:
+                self.system_line("Which one? /habit shows the numbers.", err=True)
+        elif cmd == "/remember":
+            fact = p.memory.remember(text.split(None, 1)[1]) if len(parts) > 1 else None
+            p.save_settings()
+            self.system_line(f"Got it: {fact}" if fact else "Tell me something new: /remember I have a dog named Rex",
+                             err=not fact)
+        elif cmd == "/forget":
+            gone = p.memory.forget(int(parts[1])) if len(parts) > 1 and parts[1].isdigit() else None
+            p.save_settings()
+            self.system_line(f"Forgot: {gone}" if gone else "Which one? /facts shows the numbers.", err=not gone)
+        elif cmd == "/facts":
+            for line in p.memory.lines():
+                self.system_line(line)
+        elif cmd == "/feel":
+            today = time.strftime("%Y-%m-%d")
+            if len(parts) > 1 and parts[1].isdigit() and 1 <= int(parts[1]) <= 5:
+                first = p.journal.add(today, int(parts[1]), text.split(None, 2)[2] if len(parts) > 2 else "")
+                if first:
+                    p.award("feel")
+                p.save_settings()
+                p.mind.chatted(time.time())
+                self.system_line(p.journal.reply(int(parts[1]), p.rng))
+            else:
+                self.system_line("/feel 1-5 [note]   for example: /feel 4 good day", err=True)
+        elif cmd == "/journal":
+            for line in p.journal.lines():
+                self.system_line(line)
+        elif cmd == "/day":
+            self.system_line(p.daylog.summary(time.strftime("%Y-%m-%d")))
+            if not (p.aware and p.settings.get("track_time", True)) or not p.win32.ok:
+                self.system_line("(Time tracking needs Windows, Awareness on, and 'Track time' on in Settings.)")
+        elif cmd == "/horoscope":
+            self.system_line(fun.horoscope(time.strftime("%Y-%m-%d"), p.settings.get("birthday", "")))
+        elif cmd == "/lore":
+            self.system_line(p.rng.choice(fun.LORE))
         elif cmd == "/hack":
             p.open_breach()
         elif cmd == "/feed":
@@ -1451,12 +1541,43 @@ class SettingsWindow:
         self.check(box, "Sound effects (blips and jingles)", "sfx", True,
                    lambda v: setattr(self.pet.sfx, "enabled", bool(v)))
         self.check(box, "Night City Radio chatter (a DJ drop every few minutes)", "radio", False)
+        self.check(box, "Track time per kind of app for the daily /day recap (minutes only, no titles)",
+                   "track_time", True, state="normal" if self.pet.win32.ok else "disabled")
+        self.auto_var = tk.BooleanVar(value=autostart.is_enabled())
+        tk.Checkbutton(box, text="Start Capri when I log in (Windows)", variable=self.auto_var,
+                       command=self.toggle_autostart, bg=C_PANEL, fg=C_TEXT, selectcolor=C_PANEL2,
+                       activebackground=C_PANEL, activeforeground=C_TEXT, anchor="w", font=(self.fam, 9),
+                       highlightthickness=0, bd=0, disabledforeground=C_DIM,
+                       state="normal" if IS_WIN else "disabled").pack(fill="x", padx=8, pady=1)
+        self.ledge_var = tk.BooleanVar(value=bool(self.pet.settings.get("ledges", False)))
+        tk.Checkbutton(box, text="Screen ledges: let her look at my screen for boxes to sit on",
+                       variable=self.ledge_var, command=self.toggle_ledges, bg=C_PANEL, fg=C_TEXT,
+                       selectcolor=C_PANEL2, activebackground=C_PANEL, activeforeground=C_TEXT, anchor="w",
+                       font=(self.fam, 9), highlightthickness=0, bd=0, wraplength=335, justify="left").pack(
+            fill="x", padx=8, pady=1)
+        tk.Label(box, text="She takes a screenshot every few seconds, looks for box edges on your computer, then "
+                           "throws it away. Nothing is saved or sent. Pauses on banking, password and private pages.",
+                 bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=345, justify="left").pack(
+            anchor="w", padx=10, pady=(0, 6))
         self.check(box, "Awareness: notice which app is in front, and when I'm away"
                         + ("" if self.pet.win32.ok else " (Windows only)"), "aware", True, self.pet.set_aware,
                    state="normal" if self.pet.win32.ok else "disabled")
         tk.Label(box, text="Awareness only reads the title of the front window. It's never stored, logged or sent.",
                  bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=345, justify="left").pack(anchor="w", padx=10,
                                                                                                    pady=(2, 8))
+
+    def toggle_ledges(self):
+        if self.ledge_var.get():
+            if not self.pet.enable_ledges(parent=self.win):
+                self.ledge_var.set(False)
+        else:
+            self.pet.disable_ledges()
+
+    def toggle_autostart(self):
+        ok, msg = autostart.enable() if self.auto_var.get() else autostart.disable()
+        if not ok:
+            self.auto_var.set(autostart.is_enabled())
+        self.pet.say(msg, 5, speak=None)
 
     def build_keys(self, parent):
         box = self.section(parent, "AI CHAT KEY", "A Claude (sk-ant...) or Gemini key for real AI chat. "
@@ -1605,6 +1726,113 @@ class BreachWindow:
         self.pet.breach_win = None
 
 
+class SimonWindow:
+    """Simon: watch the colours light up, then repeat them. One more colour every round."""
+    COLORS = {"green": ("#0a5a2a", C_GREEN), "red": ("#5a0c22", C_RED), "blue": ("#0d2a5a", "#4b8cff"),
+              "yellow": ("#5a4f00", "#ffd400")}
+
+    def __init__(self, pet):
+        self.pet = pet
+        self.game = None
+        self.locked = True
+        self.gen = 0
+        mono = pick_font(pet.root, "Consolas", "Menlo", "DejaVu Sans Mono", "Courier New")
+        w = self.win = tk.Toplevel(pet.root)
+        w.title("Simon")
+        w.configure(bg=C_BLACK)
+        w.attributes("-topmost", True)
+        w.resizable(False, False)
+        w.protocol("WM_DELETE_WINDOW", self.close)
+        top = tk.Frame(w, bg=C_BLACK)
+        top.pack(fill="x", padx=14, pady=(12, 6))
+        tk.Label(top, text="SIMON", bg=C_BLACK, fg=C_GREEN, font=(mono, 14, "bold")).pack(side="left")
+        self.round_lbl = tk.Label(top, text="", bg=C_BLACK, fg=C_RED, font=(mono, 14, "bold"))
+        self.round_lbl.pack(side="right")
+        grid = tk.Frame(w, bg=C_BLACK)
+        grid.pack(padx=14, pady=4)
+        self.btns = {}
+        for i, color in enumerate(simon.COLORS):
+            lb = tk.Label(grid, text="", width=11, height=5, bg=self.COLORS[color][0], cursor="hand2")
+            lb.grid(row=i // 2, column=i % 2, padx=4, pady=4)
+            lb.bind("<Button-1>", lambda e, c=color: self.click(c))
+            self.btns[color] = lb
+        self.status = tk.Label(w, text="", bg=C_BLACK, fg=C_DIM, font=(mono, 10))
+        self.status.pack(pady=(6, 4))
+        flat_button(w, "NEW GAME", self.start, C_PANEL2, C_TEXT, "#2a2a40", (mono, 9, "bold"), 16, 5).pack(pady=(0, 12))
+        w.geometry(f"+{max(0, pet.sw // 2 - 160)}+{max(0, pet.sh // 2 - 230)}")
+        self.start()
+
+    def alive(self, gen):
+        try:
+            return gen == self.gen and bool(self.win.winfo_exists())
+        except tk.TclError:
+            return False
+
+    def start(self):
+        self.gen += 1
+        self.game = simon.Simon(self.pet.rng)
+        self.next_round()
+
+    def next_round(self):
+        seq = self.game.next_round()
+        self.locked = True
+        self.round_lbl.config(text=f"ROUND {len(seq)}")
+        self.status.config(text="Watch...", fg=C_DIM)
+        gen = self.gen
+        self.win.after(700, lambda: self.play(seq, 0, gen))
+
+    def play(self, seq, i, gen):
+        if not self.alive(gen):
+            return
+        if i >= len(seq):
+            self.locked = False
+            self.status.config(text="Your turn!", fg=C_GREEN)
+            return
+        self.flash(seq[i])
+        self.win.after(650, lambda: self.play(seq, i + 1, gen))
+
+    def flash(self, color):
+        lb = self.btns[color]
+        lb.config(bg=self.COLORS[color][1])
+        self.pet.sfx.play("simon_" + color)
+        gen = self.gen
+
+        def dim():
+            try:
+                lb.config(bg=self.COLORS[color][0])
+            except tk.TclError:
+                pass
+        self.win.after(380, dim)
+
+    def click(self, color):
+        if self.locked or self.game.over:
+            return
+        self.flash(color)
+        res = self.game.press(color)
+        if res == "wrong":
+            self.finish()
+        elif res == "round_done":
+            self.locked = True
+            self.status.config(text="Nice!", fg=C_GREEN)
+            gen = self.gen
+            self.win.after(900, lambda: self.alive(gen) and self.next_round())
+
+    def finish(self):
+        self.locked = True
+        n = self.game.completed
+        self.status.config(text=f"Game over: {n} round(s). NEW GAME to try again.", fg=C_RED)
+        self.pet.sfx.play("fail")
+        self.pet.simon_result(n)
+
+    def close(self):
+        self.gen += 1
+        try:
+            self.win.destroy()
+        except tk.TclError:
+            pass
+        self.pet.simon_win = None
+
+
 class ReminderDialog:
     def __init__(self, pet):
         self.pet = pet
@@ -1662,6 +1890,10 @@ class Capri:
         self.mind = personality.Mind(self.settings)
         self.prog = progress.Progress(self.settings.setdefault("progress", {}))
         self.todos = fun.Todos(self.settings.setdefault("todos", []))
+        self.habits = habits.Habits(self.settings.setdefault("habits", []))
+        self.memory = memory.Memory(self.settings.setdefault("memory", []))
+        self.daylog = daylog.DayLog(self.settings.setdefault("daylog", {}))
+        self.journal = journal.Journal(self.settings.setdefault("journal", []))
         self.msgs = list(self.prog.login())
         if not self.prog.owns(self.settings.get("skin", "neon")):
             self.settings["skin"] = "neon"
@@ -1720,6 +1952,8 @@ class Capri:
         self.tag, self.next_todo = None, now + 3600
         self.battery_state, self.next_battery, self.next_radio = {}, now + 20, now + 300
         self.peek_side, self.peek_said, self.breach_win, self.next_hungry = 0, False, None, now + 3600
+        self.simon_win, self.last_watch, self.next_memory_cb = None, now, now + 7200
+        self.scanner, self.ledges, self.ledge_counter, self.ledge_next = ledges.Scanner(), [], 0, 0.0
         self.settings.setdefault("last_fed", time.time())
         lt = time.localtime()
         today = time.strftime("%Y-%m-%d", lt)
@@ -1788,6 +2022,7 @@ class Capri:
         fg = self.win32.foreground() if self.win32.ok else None
         if fg:
             s.append(fg)
+        s += [(d["l"], d["t"], d["r"], d["t"] + 10, d["id"]) for d in self.ledges]
         wa = self.work_area()
         self.surfaces = [r for r in s if wa[1] + 40 < r[1] < wa[3] - 80 and r[2] - r[0] > 160]
 
@@ -1934,6 +2169,8 @@ class Capri:
         if self.settings.get("fly_enabled", True):
             opts += [("fly", 9), ("zoom", 3), ("orbit", 5)]
         opts.append(("peek", 6))
+        if self.settings.get("ledges", False) and self.ledges and not self.surf:
+            opts.append(("ledge", 14))
         if self.surfaces and not self.surf:
             opts.append(("perch", 16))
         if self.surf:
@@ -1960,6 +2197,8 @@ class Capri:
             self.start_fly(name)
         elif name == "peek":
             self.start_peek()
+        elif name == "ledge":
+            self.sit_somewhere(quiet=True)
         elif name == "look":
             self.go("idle", self.rng.uniform(2.5, 4.5))
             self.anim = self.rng.choice(("look-a", "look-b"))
@@ -2340,6 +2579,98 @@ class Capri:
             self.say("You couldn't catch me. Nova.", 5)
             self.sfx.play("fail")
 
+    def scan_masks(self):
+        """Screen rectangles of her own windows, so she never sits on herself."""
+        rects = []
+        for w in [self.root] + [c for c in self.root.winfo_children() if isinstance(c, tk.Toplevel)]:
+            try:
+                if w.winfo_viewable():
+                    rects.append((w.winfo_rootx(), w.winfo_rooty(), w.winfo_width(), w.winfo_height()))
+            except tk.TclError:
+                pass
+        return rects
+
+    def watch_ledges(self, now):
+        """Look for boxes on screen to sit on. Only when the user switched it on. Nothing is kept."""
+        if not self.settings.get("ledges", False):
+            if self.ledges:
+                self.ledges = []
+            return
+        result = self.scanner.take()
+        if result is not None:
+            self.ledges, self.ledge_counter = ledges.track(self.ledges, result, self.ledge_counter)
+        if self.scanner.error:
+            err, self.scanner.error = self.scanner.error, ""
+            self.settings["ledges"] = False
+            self.ledges = []
+            self.save_settings()
+            self.say(f"I can't see the screen ({err}). Screen ledges are off.", 7, speak=None)
+            return
+        if now < self.ledge_next or self.scanner.busy or self.state == "drag":
+            return
+        self.ledge_next = now + (2.5 if self.surf else 4.0)
+        if self.win32.ok and self.win32.idle_seconds() > 120:
+            return                                           # nobody's there: rest, keep the last view
+        title = self.win32.foreground_title() if self.win32.ok else ""
+        if not ledges.should_scan(title):
+            self.ledges = []                                 # looks private: look away completely
+            return
+        self.scanner.start(self.scan_masks(), (self.sw, self.sh))
+
+    def enable_ledges(self, parent=None, ask=True):
+        """Switch screen ledges on, but only after the user agrees to what it does. Returns True if on."""
+        if ask:
+            from tkinter import messagebox
+            if not messagebox.askyesno(
+                    "Let Capri look at your screen?",
+                    "To find boxes to sit on, Capri takes a screenshot every few seconds and looks for box "
+                    "edges, entirely on your computer.\n\n* The screenshot lives in memory for a moment, then "
+                    "it's thrown away.\n* Nothing is saved to disk or sent anywhere.\n* She pauses on pages "
+                    "that look private (banking, passwords, private browsing).\n\nAnything on your screen is "
+                    "briefly visible to her code, so only turn this on if you're comfortable with that. You can "
+                    "switch it off any time.\n\nTurn on screen ledges?",
+                    parent=parent, default="no", icon="warning"):
+                return False
+        self.settings["ledges"] = True
+        self.ledge_next = 0.0
+        self.save_settings()
+        self.say("Okay! Let me look around for somewhere to sit.", 5, speak=None)
+        return True
+
+    def disable_ledges(self):
+        self.settings["ledges"] = False
+        self.ledges = []
+        self.scanner.take()
+        self.save_settings()
+        if self.surf and str(self.surf[0]).startswith("L"):
+            self.surf = None
+            self.go("air")
+        self.say("Okay, I stopped looking at your screen.", 4, speak=None)
+
+    def sit_somewhere(self, quiet=False):
+        """Fly to a box on screen and land on its top edge."""
+        if not self.settings.get("ledges", False):
+            if not quiet:
+                self.say("Turn on 'Screen ledges' in Settings first.", 5, speak=None)
+            return
+        spots = [d for d in self.ledges if d["r"] - d["l"] > 160]
+        if not spots or self.state in ("tp_out", "tp_in", "drag"):
+            if not quiet:
+                self.say("I don't see anywhere to sit yet. Looking...", 4, speak=None)
+            self.ledge_next = 0.0
+            return
+        d = self.rng.choice(spots)
+        self.surf = None
+        self.icon = None
+        self.fvx = self.fvy = 0.0
+        x = self.rng.uniform(d["l"] + self.fw * 0.5, max(d["l"] + self.fw * 0.5 + 1, d["r"] - self.fw * 0.5))
+        self.fly_pts = [(x, d["t"] - 45)]                    # arrive just above it, then drop onto the edge
+        self.fly_speed = 620.0
+        self.go("fly", None)
+        self.anim = "jump"
+        if not quiet:
+            self.say(self.rng.choice(["Found a spot!", "That box looks sit-able.", "Ooh, a ledge."]), 3)
+
     def start_peek(self):
         """Peek out from the side of the screen, then slide back in."""
         if self.state in ("tp_out", "tp_in", "drag"):
@@ -2383,6 +2714,22 @@ class Capri:
         self.breach_win = BreachWindow(self)
         self.say("Jack in, choom. Match the daemons.", 4)
 
+    def open_simon(self):
+        if self.simon_win:
+            try:
+                if self.simon_win.win.winfo_exists():
+                    self.simon_win.win.lift()
+                    return
+            except tk.TclError:
+                pass
+        self.simon_win = SimonWindow(self)
+        self.say("Watch the lights, choom. Then copy them.", 4)
+
+    def simon_result(self, rounds):
+        self.msgs += self.prog.record_simon(rounds)
+        self.save_settings()
+        self.say(f"Simon: {rounds} round(s). " + ("Nova memory!" if rounds >= 8 else "Not bad, choom."), 5)
+
     def breach_result(self, done, total):
         self.msgs += self.prog.record_breach(done, total)
         self.save_settings()
@@ -2415,6 +2762,27 @@ class Capri:
             self.next_hungry = now + 3 * 3600
             if now - self.settings.get("last_fed", now) > 6 * 3600:
                 self.say("Hungry, choom. /feed me ramen? 3 eddies.", 8)
+        lt = time.localtime(now)
+        today = time.strftime("%Y-%m-%d", lt)
+        if not self.calm and self.state in ("idle", "perch", "walk", "lounge"):
+            if lt.tm_hour >= 20 and self.settings.get("habit_nag_day") != today:
+                self.settings["habit_nag_day"] = today
+                nag = self.habits.nag(today)
+                if nag:
+                    self.say(nag, 9)
+            elif (lt.tm_hour * 60 + lt.tm_min >= 20 * 60 + 30 and self.settings.get("journal_prompt_day") != today
+                  and not self.journal.has(today)):
+                self.settings["journal_prompt_day"] = today
+                self.say("How was today, 1 to 5? Tell me: /feel 4 pretty good", 10)
+            elif (lt.tm_hour >= 21 and self.settings.get("recap_day") != today
+                  and self.settings.get("track_time", True) and self.daylog.total(today) >= 20):
+                self.settings["recap_day"] = today
+                self.say(self.daylog.summary(today), 12)
+        if now >= self.next_memory_cb and not self.calm:
+            self.next_memory_cb = now + self.rng.randint(5400, 9000)
+            line = self.memory.callback(self.rng)
+            if line:
+                self.say(line, 8)
 
     def set_hands(self, level):
         self.hands.set_level(level)
@@ -2590,6 +2958,9 @@ class Capri:
             self.say("Heads up: I can see which app is in front (never what you type). Only a short hint like "
                      "'coding' goes to the AI when we chat. Right-click me > Awareness to turn it off.", 16)
         cat = awareness.classify(self.win32.foreground_title())      # the title is not kept anywhere
+        dt, self.last_watch = min(5.0, now - self.last_watch), now
+        if self.settings.get("track_time", True) and idle < 60:      # only the category's minutes are saved
+            self.daylog.add(time.strftime("%Y-%m-%d"), cat, dt)
         if cat != self.ctx:
             self.ctx, self.ctx_since, self.ctx_done = cat, now, False
             return
@@ -2608,6 +2979,7 @@ class Capri:
 
     def scheduled(self, now):
         self.watch_context(now)
+        self.watch_ledges(now)
         if self.pending:
             self.tick_pending(now)
         if self.msgs and now > self.bubble_until + 0.4 and now - self.t_start > 8:
@@ -2814,6 +3186,8 @@ class Capri:
         m.add_command(label="Party!", command=self.party)
         m.add_command(label="Play tag", command=self.start_tag)
         m.add_command(label="Hack (Breach Protocol)", command=self.open_breach)
+        m.add_command(label="Sit on something (screen ledges)", command=self.sit_somewhere)
+        m.add_command(label="Memory game (Simon)", command=self.open_simon)
         m.add_command(label="Feed ramen (3 eddies)", command=self.feed)
         m.add_command(label="Dance", command=lambda: self.go("dance", 3.5))
         m.add_command(label="Lounge", command=lambda: self.go("lounge", 15))

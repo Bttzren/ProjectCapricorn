@@ -53,7 +53,7 @@ EDDIES, SKINS & GAMES
   Eddies (Night City money) come from: finishing focus sessions (+10), daily visits (streak bonus),
   finishing to-dos (+5), your first chat each day, beating her at tag (+5), and achievements
   (First Gig, Grinder, Night Owl, Regular, Chrome Veteran, Task Slayer, Quick Hands, Chatterbox,
-  Netrunner, Ice Breaker, Ramen Regular).
+  Netrunner, Ice Breaker, Ramen Regular, Photographic Memory, Creature of Habit, Dear Diary).
   Spend them on skins (palette swaps): Ocean 30, Acid 30, Chrome 60, Gold 100.
   Settings > Look & Progress, or  /stats   /skin   /skin <name>   /skin buy <name>
   TAG: /tag (or right-click > Play tag). She runs from your cursor for 25 seconds and glitch-
@@ -76,6 +76,31 @@ MORE STUFF
   SPECIAL DAYS: she greets you on holidays (New Year, Valentine's, Pi Day, Halloween, Night City Day,
     Christmas) and on YOUR birthday: /birthday 03-27.
   BATTERY (Windows laptops): she warns you at 20% and cheers when you plug in.
+
+SCREEN LEDGES (she sits on boxes on your screen)  - OFF by default, needs your OK
+  She can look at your screen, find boxes (cards, text boxes, images, panels) and fly over to sit on
+  their top edge. If the page scrolls she rides along; if the box goes away she falls.
+  Turn on: Settings > "Screen ledges", or /ledges on (she asks first). /sit makes her perch on one now,
+  right-click > Sit on something. /ledges off stops it.
+  PRIVACY, in plain words: every few seconds she takes a screenshot IN MEMORY, looks for box edges on
+  your own computer, and throws the screenshot away. Nothing is saved to disk or sent anywhere. Her own
+  windows are ignored. She stops looking while the front window looks private (banking, passwords,
+  sign-in, private browsing) and while you're away. Anything on screen is briefly visible to her code,
+  so only turn it on if you're comfortable with that. Windows/Mac need nothing extra (Mac asks for
+  Screen Recording permission); Linux needs an X11 session.
+
+SHE KNOWS YOU
+  MEMORY: /remember my favorite game is Minecraft, /facts, /forget 1. She brings facts up now and
+    then, and they're added to her chat instructions (only what you told her to remember). Local only.
+  HABITS: /habit add drink water, /habit, /did 1 (check off), /habit rm 2. Streaks, +2 eddies each
+    check-off, bonuses at 7 and 30 days, a gentle reminder at 8pm for anything left.
+  JOURNAL: around 8:30pm she asks how today was. /feel 4 good day, /journal for the last week.
+  DAILY RECAP (Windows): /day shows time per KIND of app (coding 2h, videos 45m...), with an evening
+    recap. Only category totals are kept for 14 days. Never window titles. Settings > Track time.
+  SIMON: /simon (or right-click > Memory game). Repeat the growing colour sequence. Eddies by round.
+  HOROSCOPE & LORE: /horoscope (uses your /birthday), /lore.
+  START WITH WINDOWS: Settings > "Start Capri when I log in" (puts a tiny Capri.vbs in your Startup
+    folder; untick it to remove).
 
 PERSONALITY
   She talks like a Night City local (choom, preem, nova, gonk, eddies, chrome...), kept PG.
@@ -125,5 +150,6 @@ DEVELOPING
         voice.py  speech: Fish Audio + system voice (no Tk)
   hands.py        key presses / clicks with safety rails (no Tk)
   breach.py  hacking puzzle   sfx.py  sound effects   world.py  holidays, radio, battery (all no Tk)
+  ledges.py  screen box detection   simon.py  habits.py  memory.py  journal.py  daylog.py  autostart.py
   progress.py     eddies, streaks, achievements, skins (no Tk)   skins.py  palette swaps   fun.py  dice, todos
   Tests:  python -m unittest discover -s tests

@@ -8,7 +8,7 @@ from datetime import date, timedelta
 SKINS = {"neon": ("Neon", 0), "ocean": ("Ocean", 30), "acid": ("Acid", 30), "chrome": ("Chrome", 60),
          "gold": ("Gold", 100)}
 
-EARN = {"focus": 10, "todo": 5, "tag_win": 5}
+EARN = {"focus": 10, "todo": 5, "tag_win": 5, "habit": 2, "feel": 2}
 CHAT_DAY_BONUS = 2
 
 # id, name, description, test(progress) -> bool, reward
@@ -24,6 +24,9 @@ ACHIEVEMENTS = [
     ("netrunner", "Netrunner", "Complete every daemon in a breach", lambda p: p.count("breach_perfect") >= 1, 20),
     ("ice_breaker", "Ice Breaker", "Run 5 breaches", lambda p: p.count("breach_run") >= 5, 20),
     ("ramen_5", "Ramen Regular", "Feed Capri ramen 5 times", lambda p: p.count("feed") >= 5, 10),
+    ("simon_8", "Photographic Memory", "Reach round 8 in Simon", lambda p: p.count("simon_best") >= 8, 15),
+    ("habit_10", "Creature of Habit", "Check off 10 habits", lambda p: p.count("habit") >= 10, 15),
+    ("journal_7", "Dear Diary", "Write 7 journal entries", lambda p: p.count("feel") >= 7, 15),
 ]
 
 
@@ -77,6 +80,15 @@ class Progress:
             c["breach_perfect"] = c.get("breach_perfect", 0) + 1
         self.earn(gain)
         return [f"Breach: {done}/{total} daemons, +{gain} eddies."] + self._check()
+
+    def record_simon(self, rounds):
+        """A Simon game ended after `rounds` completed rounds. Returns messages."""
+        c = self.s["counts"]
+        c["simon_run"] = c.get("simon_run", 0) + 1
+        c["simon_best"] = max(c.get("simon_best", 0), int(rounds))
+        gain = min(12, int(rounds) // 2)
+        self.earn(gain)
+        return [f"Simon: {rounds} round(s), +{gain} eddies."] + self._check()
 
     def login(self, today=None):
         """Daily streak. Returns messages to show (empty if already counted today)."""

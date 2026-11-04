@@ -83,13 +83,31 @@ GAME MODE (she hypes your kills and roasts your deaths)
      = "that was tragic, gonk". spicy = she'll tell you that was ass (mild swearing, never slurs).
   Her chat replies know what you're playing and your session K/D too.
   IMPORTANT FOR FULLSCREEN: games in "Fullscreen" can hide her. Use "Windowed Fullscreen" / borderless.
-  AUTOMATIC KILL/DEATH DETECTION (optional, experimental): games don't give other programs your kills
-  (Valorant's anti-cheat blocks that, and Capri never touches the game's memory or files). The only
-  honest way is to watch a few small patches of your screen that the game draws in a fixed place when
-  something happens (a death banner, a kill marker, VICTORY). To use it, put a game_events.json next to
-  capri.py (see game_events.example.json) pointing at reference screenshots of those patches. Capri then
-  compares just those small patches 2-3 times a second, only while that game is in front. Patches are
-  compared in memory and thrown away. Nothing is saved or sent. /game shows what's loaded.
+  AUTOMATIC KILL/DEATH DETECTION - the AI SPOTTER (works for ANY game):
+     Turn on Settings > AI > "AI Spotter" (she asks first). While a game is in front (or after /watch on)
+     she takes a small shrunken screenshot every few seconds and asks the AI (Claude or Gemini, your key)
+     whether something just happened: a kill, a death, round/match won or lost, a clutch, an ace. It tells
+     her what it saw AND what to say, so K/D and commentary update by themselves. A small eye shows next
+     to her whenever she's looking (grey while paused). /watch shows status, /watch off stops,
+     /look what is this error?  = one-off look at the screen with a question.
+     PRIVACY & COST, plainly: the shrunken screenshot IS SENT to your AI provider (Anthropic or Google),
+     so it can include anything visible on your screen. Capri never saves it. It is only sent when the
+     screen changed, she pauses on banking / password / sign-in / private-browsing windows, while you're
+     away, and while her own windows are in front. It uses your API credits: very roughly $1-3 an hour with
+     Claude (Haiku); set the interval to 10s to cut that, and there's a daily limit (600 looks by default,
+     vision_daily_cap in settings.json). She never acts on what the AI says: it can only make her talk
+     and count K/D.
+  (There's also an offline option: game_events.json with reference images of fixed screen patches, see
+   game_events.example.json. It never sends anything anywhere, but needs setting up per game.)
+
+AI-WRITTEN LINES
+  With a Claude or Gemini key she writes her own lines (pokes, idle chatter, check-ins, greetings,
+  reactions to what you're doing, game comments, recaps) instead of the preset lines. Each is a tiny AI
+  call (Haiku, ~80 tokens). The preset lines are only a fallback: used when there's no key, no internet,
+  the AI errors or takes more than 5 seconds, or the limit is hit (10 a minute, 800 a day). After 3
+  failures in a row she goes back to presets for 5 minutes and tells you why. /ailines on|off.
+  She's told her mood, what you're doing, your /remember facts and your roast level, and what she said
+  recently so she doesn't repeat herself. Timers, reminders and system messages stay exact, not AI.
 
 SCREEN LEDGES (she sits on boxes on your screen)  - OFF by default, needs your OK
   She can look at your screen, find boxes (cards, text boxes, images, panels) and fly over to sit on
@@ -164,6 +182,6 @@ DEVELOPING
         voice.py  speech: Fish Audio + system voice (no Tk)
   hands.py        key presses / clicks with safety rails (no Tk)
   breach.py  hacking puzzle   sfx.py  sound effects   world.py  holidays, radio, battery (all no Tk)
-  gamemode.py  game commentary   reactor.py  screen-patch detectors   ledges.py  screen box detection   simon.py  habits.py  memory.py  journal.py  daylog.py  autostart.py
+  gamemode.py  game commentary   reactor.py  screen-patch detectors   speech.py  vision.py  AI lines + spotter   ledges.py  screen box detection   simon.py  habits.py  memory.py  journal.py  daylog.py  autostart.py
   fun.py  dice, to-dos, horoscope
   Tests:  python -m unittest discover -s tests

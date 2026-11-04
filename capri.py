@@ -6,6 +6,7 @@ reacts to your cursor, runs focus timers, and chats (Claude or Gemini key).
 
 Run:  python capri.py          Preview a Codex/Petdex sheet:  python capri.py --pet-preview
 """
+import collections
 import json
 import math
 import os
@@ -35,6 +36,8 @@ import personality
 import reactor
 import sfx
 import simon
+import speech
+import vision
 import voice
 import world
 
@@ -61,6 +64,8 @@ SLEEP_AFTER = 300              # seconds without poking her before she naps
 FOCUS_MIN, BREAK_MIN = 25, 5
 CHECKIN_EVERY = (40 * 60, 70 * 60)
 MODEL = os.environ.get("CAPRI_MODEL", "claude-sonnet-5-5")
+LINE_MODEL = os.environ.get("CAPRI_LINE_MODEL", "claude-haiku-5-5")        # short lines: fast and cheap
+VISION_MODEL = os.environ.get("CAPRI_VISION_MODEL", "claude-haiku-5-5")    # looking at screenshots
 GEMINI_MODELS = [m for m in (os.environ.get("CAPRI_GEMINI_MODEL"),) if m] or [
     "gemini-flash-latest", "gemini-3.8-flash", "gemini-2.5-flash"]
 KEY = "#ff00ff"               # Windows transparency key
@@ -243,8 +248,8 @@ def clean_history(messages):
     return out
 
 
-def claude_reply(key, messages, persona):
-    body = json.dumps({"model": MODEL, "max_tokens": 400, "system": persona,
+def claude_reply(key, messages, persona, max_tokens=400, model=None):
+    body = json.dumps({"model": model or MODEL, "max_tokens": max_tokens, "system": persona,
                        "messages": clean_history(messages)}).encode()
     req = urllib.request.Request(
         "https://api.anthropic.com/v1/messages", data=body,
@@ -254,11 +259,11 @@ def claude_reply(key, messages, persona):
     return text or "(empty reply, try again)"
 
 
-def gemini_reply(key, messages, persona):
+def gemini_reply(key, messages, persona, max_tokens=800, model=None):
     contents = [{"role": "user" if m["role"] == "user" else "model", "parts": [{"text": m["content"]}]}
                 for m in clean_history(messages)]
     body = json.dumps({"systemInstruction": {"parts": [{"text": persona}]}, "contents": contents,
-                       "generationConfig": {"maxOutputTokens": 800}}).encode()
+                       "generationConfig": {"maxOutputTokens": max_tokens}}).encode()
     last = "no Gemini model worked"
     for model in list(GEMINI_MODELS):
         req = urllib.request.Request(
@@ -280,12 +285,44 @@ def gemini_reply(key, messages, persona):
     raise RuntimeError(last)
 
 
-def llm_reply(messages, persona):
+def llm_reply(messages, persona, max_tokens=None, model=None):
     key = read_api_key()
     if not key:
         raise RuntimeError("No API key yet. Put your key in api_key.txt next to me and restart.")
     fn = gemini_reply if detect_provider(key) == "gemini" else claude_reply
-    return fn(key, messages, persona)
+    kw = {}
+    if max_tokens:
+        kw["max_tokens"] = max_tokens
+    if model:
+        kw["model"] = model
+    return fn(key, messages, persona, **kw)
+
+
+def vision_ask(system, media_type, b64, prompt, max_tokens=120):
+    """Ask the vision model about ONE shrunken screenshot. The image goes to the AI provider that owns your key."""
+    key = read_api_key()
+    if not key:
+        raise RuntimeError("401: no API key")
+    if detect_provider(key) == "gemini":
+        body = json.dumps(vision.gemini_body(system, media_type, b64, prompt, max_tokens)).encode()
+        last = "no Gemini model worked"
+        for model in list(GEMINI_MODELS):
+            req = urllib.request.Request(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent", data=body,
+                headers={"Content-Type": "application/json", "x-goog-api-key": key})
+            try:
+                return vision.gemini_text(http_json(req, timeout=25))
+            except RuntimeError as exc:
+                last = str(exc)
+                if last[:3] in ("400:", "404:") and "key" not in last.lower():
+                    continue
+                raise
+        raise RuntimeError(last)
+    body = json.dumps(vision.anthropic_body(VISION_MODEL, system, media_type, b64, prompt, max_tokens)).encode()
+    req = urllib.request.Request(
+        "https://api.anthropic.com/v1/messages", data=body,
+        headers={"content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01"})
+    return vision.anthropic_text(http_json(req, timeout=25))
 
 
 # ------------------------------------------------------------------ Windows helpers
@@ -1064,7 +1101,7 @@ class ChatWindow:
             self.system_line("/focus [min]  /remind <min> <text>  /name <you>  /mood  /key <api key>  "
                              "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
                              "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /tp  /dance  "
-                             "/sleep  /calm  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /remember  /facts  /feel  "
+                             "/sleep  /calm  /watch  /look  /ailines  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /remember  /facts  /feel  "
                              "/journal  /day  /horoscope  /lore  /clear")
         elif cmd == "/clear":
             self.clear()
@@ -1085,6 +1122,42 @@ class ChatWindow:
             save_api_key(parts[1])
             self.drop_keybar()
             self.system_line("Key saved. Real chat unlocked.")
+        elif cmd == "/watch":
+            arg = parts[1].lower() if len(parts) > 1 else ""
+            sp = p.spotter
+            if arg == "on":
+                if p.settings.get("ai_vision") or p.enable_vision(parent=self.win):
+                    ok = p.start_spotter(manual=True)
+                    self.system_line("Watching your screen. A little eye shows while I look." if ok
+                                     else "Couldn't start. Do I have an AI key?", err=not ok)
+                else:
+                    self.system_line("Okay, I left it off.")
+            elif arg == "off":
+                p.stop_spotter()
+                self.system_line("Stopped watching.")
+            else:
+                if sp and sp.active:
+                    self.system_line(f"Watching: on ({'paused right now' if not sp.allowed else 'looking'}), every "
+                                     f"{sp.interval:g}s. Sent {sp.stats['sent']}, skipped {sp.stats['static']} static. "
+                                     f"Used today: {sp.budget.used_today() if sp.budget else 0}.")
+                else:
+                    self.system_line("Watching: off.  /watch on | off    (AI sees small screenshots; see Settings > AI)")
+        elif cmd == "/look":
+            if p.settings.get("ai_vision") or p.enable_vision(parent=self.win):
+                p.look(text.split(None, 1)[1] if len(parts) > 1 else "")
+                self.system_line("Looking...")
+            else:
+                self.system_line("Okay, I won't look.")
+        elif cmd == "/ailines":
+            arg = parts[1].lower() if len(parts) > 1 else ""
+            if arg in ("on", "off"):
+                p.settings["ai_lines"] = arg == "on"
+                p.save_settings()
+                self.system_line("AI-written lines: " + arg + ("" if arg == "off" else ("" if read_api_key()
+                                 else "  (needs an AI key; using presets until you add one)")))
+            else:
+                self.system_line("AI-written lines: " + ("on" if p.settings.get("ai_lines", True) else "off")
+                                 + f"   used today: {p.ai_budget.used_today()}   /ailines on | off")
         elif cmd in GAME_COMMANDS:
             kind, count = GAME_COMMANDS[cmd]
             if cmd == "/kill" and len(parts) > 1 and parts[1].isdigit():
@@ -1408,6 +1481,7 @@ class SettingsWindow:
         self.build_hands(pad)
         self.build_voice(pad)
         self.build_gaming(pad)
+        self.build_ai(pad)
         self.build_behavior(pad)
         self.build_keys(pad)
         w.update_idletasks()
@@ -1551,6 +1625,44 @@ class SettingsWindow:
             self.pet.game.level = v
         self.pet.say({"off": "Only nice words. For now.", "mild": "Light roasts it is.",
                       "spicy": "Spicy mode. Don't cry."}[v], 4, speak=None)
+
+    def build_ai(self, parent):
+        box = self.section(parent, "AI",
+                           "With a key (Claude or Gemini) she writes her own lines instead of preset ones. Presets "
+                           "are only used with no key, no internet, or when the daily limit is hit.")
+        self.check(box, "AI-written lines (pokes, chatter, check-ins, game comments)", "ai_lines", True)
+        self.vision_var = tk.BooleanVar(value=bool(self.pet.settings.get("ai_vision", False)))
+        tk.Checkbutton(box, text="AI Spotter: let her watch my screen and comment (sends screenshots to the AI)",
+                       variable=self.vision_var, command=self.toggle_vision, bg=C_PANEL, fg=C_TEXT,
+                       selectcolor=C_PANEL2, activebackground=C_PANEL, activeforeground=C_TEXT, anchor="w",
+                       font=(self.fam, 9), highlightthickness=0, bd=0, wraplength=335, justify="left").pack(
+            fill="x", padx=8, pady=1)
+        tk.Label(box, text="While watching, a small shrunken screenshot is SENT to your AI provider every few seconds "
+                           "(only when the screen changed). It uses your API credits (roughly $1-3 an hour with "
+                           "Claude), is never saved by Capri, and pauses on banking, password and private windows. "
+                           "It starts by itself when a game is in front; /watch on works for anything else.",
+                 bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=345, justify="left").pack(
+            anchor="w", padx=10, pady=(2, 4))
+        tk.Label(box, text="Look every:", bg=C_PANEL, fg=C_DIM, font=(self.fam, 8)).pack(anchor="w", padx=10)
+        self.interval_var = tk.IntVar(value=int(self.pet.settings.get("vision_interval", 6)))
+        row = tk.Frame(box, bg=C_PANEL)
+        row.pack(anchor="w", padx=10, pady=(0, 8))
+        for secs in (4, 6, 10):
+            tk.Radiobutton(row, text=f"{secs}s", variable=self.interval_var, value=secs, command=self.pick_interval,
+                           bg=C_PANEL, fg=C_TEXT, selectcolor=C_PANEL2, activebackground=C_PANEL,
+                           activeforeground=C_TEXT, font=(self.fam, 9), highlightthickness=0, bd=0).pack(side="left",
+                                                                                                         padx=(0, 10))
+
+    def toggle_vision(self):
+        if self.vision_var.get():
+            if not self.pet.enable_vision(parent=self.win):
+                self.vision_var.set(False)
+        else:
+            self.pet.disable_vision()
+
+    def pick_interval(self):
+        self.pet.settings["vision_interval"] = int(self.interval_var.get())
+        self.pet.save_settings()
 
     def build_behavior(self, parent):
         box = self.section(parent, "BEHAVIOUR")
@@ -1971,6 +2083,14 @@ class Capri:
         self.simon_win, self.last_watch, self.next_memory_cb = None, now, now + 7200
         self.scanner, self.ledges, self.ledge_counter, self.ledge_next = ledges.Scanner(), [], 0, 0.0
         self.game, self.game_seen, self.game_manual, self.reactor, self.calm_before_game = None, now, False, None, None
+        self.persona_text = read_first(["persona.txt"]) or DEFAULT_PERSONA
+        self.ai_budget = speech.Budget(per_min=10, per_day=int(self.settings.get("ai_daily_cap", 800)),
+                                       store=self.settings.setdefault("ai_day", {}))
+        self.ai_results, self.ai_pending, self.ai_seq, self.ai_inflight = queue.Queue(), {}, 0, 0
+        self.ai_fails, self.ai_pause_until = 0, 0.0
+        self.recent_lines = collections.deque(maxlen=8)
+        self.spotter, self.spotter_manual, self.spotter_until = None, False, 0.0
+        self.spotter_ctx_at, self.look_results = 0.0, queue.Queue()
         self.game_cfg, self.game_cfg_warnings = {}, []
         for folder in (app_dir(), data_dir()):                     # optional automatic detectors (README)
             cfg, warns = reactor.load_config(os.path.join(folder, "game_events.json"))
@@ -2005,7 +2125,8 @@ class Capri:
         for seq in ("<Button-3>", "<Button-2>", "<Control-Button-1>"):
             c.bind(seq, self.show_menu)
         self.place()
-        self.say(self.mind.greeting(now), 7)
+        self.say_ai("greeting", {"away": f"They were away about {self.mind.away_hours:.0f} hours." if self.mind.away_hours >= 3 else ""},
+                    self.mind.greeting(now), 7)
         self.tick()
 
     # ---- environment
@@ -2673,6 +2794,199 @@ class Capri:
         if not quiet:
             self.say(self.rng.choice(["Found a spot!", "That box looks sit-able.", "Ooh, a ledge."]), 3)
 
+    # ---- lines the AI writes (presets are only the fallback)
+    def ai_enabled(self):
+        return bool(self.settings.get("ai_lines", True) and read_api_key() and time.time() >= self.ai_pause_until)
+
+    def ai_system(self, now=None):
+        now = now or time.time()
+        return speech.system_prompt(self.persona_text, self.mind.context(now, self.doing(), self.activity_phrase()),
+                                    self.settings.get("roast", "mild"), self.memory.context())
+
+    def say_ai(self, kind, facts, fallback, secs=6.0, speak="ambient"):
+        """Let the AI write this line. The preset `fallback` is used only if the AI is off, busy or too slow."""
+        if not self.ai_enabled() or self.ai_inflight >= 2 or not self.ai_budget.allow():
+            if fallback:
+                self.say(fallback, secs, speak=speak)
+            return
+        now = time.time()
+        self.ai_seq += 1
+        rid = self.ai_seq
+        self.ai_pending[rid] = {"deadline": now + 5.0, "fallback": fallback, "secs": secs, "speak": speak,
+                                "expired": False}
+        self.ai_inflight += 1
+        system = self.ai_system(now)
+        user = speech.user_prompt(kind, facts, list(self.recent_lines))
+        threading.Thread(target=self._ai_worker, args=(rid, system, user), daemon=True).start()
+
+    def _ai_worker(self, rid, system, user):
+        try:
+            text = speech.sanitize(llm_reply([{"role": "user", "content": user}], system, max_tokens=80,
+                                             model=LINE_MODEL))
+            self.ai_results.put((rid, text, ""))
+        except Exception as exc:
+            self.ai_results.put((rid, "", str(exc) or type(exc).__name__))
+
+    def drain_ai(self, now):
+        while True:
+            try:
+                rid, text, err = self.ai_results.get_nowait()
+            except queue.Empty:
+                break
+            self.ai_inflight = max(0, self.ai_inflight - 1)
+            p = self.ai_pending.pop(rid, None)
+            if err:
+                self.ai_fails += 1
+                log("ai line failed: " + err[:120])
+                if self.ai_fails == 3:
+                    self.ai_pause_until = now + 300
+                    self.say("My AI brain isn't answering (" + err[:50] + "). Preset lines for a few minutes.", 8,
+                             speak=None)
+            else:
+                self.ai_fails = 0
+            if p is None or p["expired"]:
+                continue                                 # she already said the preset; a late reply is dropped
+            line = text or p["fallback"]
+            if line:
+                self.say(line, p["secs"], speak=p["speak"])
+            if text:
+                self.recent_lines.append(text)
+        for p in self.ai_pending.values():
+            if now > p["deadline"] and not p["expired"]:
+                p["expired"] = True
+                if p["fallback"]:
+                    self.say(p["fallback"], p["secs"], speak=p["speak"])
+        while True:
+            try:
+                text, err = self.look_results.get_nowait()
+            except queue.Empty:
+                break
+            if err:
+                text = "I couldn't look: " + err[:100]
+            if self.chat and self.chat.alive():
+                self.chat.add_bubble("assistant", text)
+            else:
+                self.say(text[:140], 10)
+
+    # ---- the AI spotter: looks at the screen (sends a small screenshot to your AI provider)
+    def enable_vision(self, parent=None, ask=True):
+        """Switch the AI spotter on, but only after the user agrees to what it does. Returns True if on."""
+        if ask:
+            from tkinter import messagebox
+            if not messagebox.askyesno(
+                    "Let Capri watch your screen with AI?",
+                    "While she's watching, Capri takes a small shrunken screenshot every few seconds (only when the "
+                    "screen changed) and SENDS it to your AI provider (Claude or Gemini, whichever key you use) so "
+                    "the AI can see what's happening and react.\n\n* It can include ANYTHING visible on your "
+                    "screen at that moment.\n* Capri doesn't save the screenshots. The provider's own data policy "
+                    "applies to what it receives.\n* It pauses on banking, password and private-browsing windows "
+                    "and while you're away.\n* It uses your API credits: very roughly $1-3 an hour with Claude "
+                    "(there is a daily limit).\n* It starts by itself when a game is in front. /watch on works "
+                    "for anything else.\n\nOnly turn this on if you're comfortable with that. You can switch it "
+                    "off any time. Turn on AI screen watching?", parent=parent, default="no", icon="warning"):
+                return False
+        self.settings["ai_vision"] = True
+        self.save_settings()
+        self.say("Okay. I'll watch when you game, if you give me a key.", 5, speak=None)
+        return True
+
+    def disable_vision(self):
+        self.settings["ai_vision"] = False
+        self.save_settings()
+        self.stop_spotter()
+        self.say("Okay, I stopped watching your screen.", 4, speak=None)
+
+    def start_spotter(self, manual=False):
+        if not read_api_key():
+            self.say("I need an AI key to watch. Add one in Settings.", 5, speak=None)
+            return False
+        if self.spotter and self.spotter.active:
+            self.spotter_manual = self.spotter_manual or manual
+            return True
+        cap = int(self.settings.get("vision_daily_cap", 600))
+        self.spotter = vision.Spotter(
+            ledges.capture, self._spotter_ask, interval=float(self.settings.get("vision_interval", 6)),
+            budget=speech.Budget(per_min=20, per_day=cap, store=self.settings.setdefault("vision_day", {})))
+        self.spotter_manual = manual
+        self.spotter_until = time.time() + 2 * 3600 if manual else 0.0
+        self.refresh_spotter(time.time())          # privacy check + prompts BEFORE the first frame can be sent
+        self.spotter.start()
+        self.say("I'm watching. A little eye shows whenever I'm looking.", 5, speak=None)
+        return True
+
+    def stop_spotter(self):
+        if self.spotter:
+            self.spotter.stop()
+        self.spotter, self.spotter_manual, self.spotter_until = None, False, 0.0
+
+    def _spotter_ask(self, media_type, b64, recent, game, system, question=None):
+        return vision_ask(system, media_type, b64, question or vision.spotter_user(game, recent),
+                          200 if question else 120)
+
+    def refresh_spotter(self, now, context=True):
+        """Decide whether the spotter may look right now, and keep the AI's instructions current."""
+        sp = self.spotter
+        title = self.win32.foreground_title() if self.win32.ok else ""
+        idle = self.win32.idle_seconds() if self.win32.ok else 0.0
+        sp.allowed = ledges.should_scan(title) and idle < 120 and (not self.win32.ok or bool(title))
+        if context:                                          # what the AI is told about her and the user
+            self.spotter_ctx_at = now
+            sp.game = self.game.name if self.game else ""
+            sp.interval = float(self.settings.get("vision_interval", 6))
+            sp.system = vision.spotter_system(self.persona_text, self.mind.context(now, self.doing(),
+                                              self.activity_phrase()), self.settings.get("roast", "mild"),
+                                              self.memory.context())
+
+    def update_spotter(self, now):
+        sp = self.spotter
+        if not sp:
+            return
+        if sp.error:
+            err, sp.error = sp.error, ""
+            self.stop_spotter()
+            self.say(f"I stopped watching: {err}", 8, speak=None)
+            return
+        if not sp.active:
+            return
+        if self.spotter_until and now > self.spotter_until:
+            self.stop_spotter()
+            self.say("That's two hours of watching. I'll stop. /watch on to keep going.", 6, speak=None)
+            return
+        self.refresh_spotter(now, context=now - self.spotter_ctx_at > 5)
+        for res in sp.take():
+            if res["event"] != "none":
+                self.game_event(res["event"], res["n"], line=res["say"] or None)
+            elif res["say"]:
+                self.say(res["say"], 6, speak="priority")
+                self.recent_lines.append(res["say"])
+
+    def look(self, question=""):
+        """One-off: look at the screen now and answer (in the chat if it's open, else in a bubble)."""
+        if not read_api_key():
+            self.look_results.put(("", "401: no API key"))
+            return
+        system = (speech.system_prompt(self.persona_text, self.mind.context(time.time(), self.doing()), "off",
+                                       self.memory.context())
+                  + " Answer the user's question about their screenshot in at most two short sentences.")
+        q = question.strip() or "What's going on on my screen? Comment briefly."
+
+        def work():
+            try:
+                text = vision.look_once(ledges.capture, self._spotter_ask, q, system)
+                self.look_results.put((" ".join((text or "").split())[:400] or "I looked but have nothing to say.", ""))
+            except Exception as exc:
+                self.look_results.put(("", str(exc) or type(exc).__name__))
+        threading.Thread(target=work, daemon=True).start()
+
+    def draw_eye(self, c, lfx, top):
+        sp = self.spotter
+        if not sp or not sp.active:
+            return
+        x, y = lfx - self.fw * 0.5 - 4, top + 10
+        col = C_GREEN if sp.allowed else C_DIM                 # grey while paused
+        c.create_oval(x - 9, y - 5, x + 9, y + 5, outline=col, width=2)
+        c.create_oval(x - 3, y - 3, x + 3, y + 3, fill=col, outline="")
+
     def start_game(self, key, manual=False):
         """A game session: she keeps small and quiet and comments on events."""
         self.end_game(quiet=True)
@@ -2684,11 +2998,13 @@ class Capri:
         wa = self.work_area()
         self.fx, self.fy = wa[2] - self.fw * 0.8, float(self.ground())      # tuck into the corner
         self.go("idle", 5)
-        self.say(self.game.start_line(), 6, speak="priority")
+        self.say_ai("game_start", {"game": self.game.name}, self.game.start_line(), 6, speak="priority")
         dets = self.game_cfg.get(key)
         if dets:
             self.reactor = reactor.Reactor(dets, (self.sw, self.sh))
             self.reactor.start()
+        if self.settings.get("ai_vision") and read_api_key():
+            self.start_spotter(manual=False)
 
     def end_game(self, quiet=False):
         g, self.game = self.game, None
@@ -2697,6 +3013,8 @@ class Capri:
         if self.reactor:
             self.reactor.stop()
             self.reactor = None
+        if not self.spotter_manual:
+            self.stop_spotter()
         if self.calm_before_game is not None:
             self.calm, self.calm_before_game = self.calm_before_game, None
         if g.events or g.minutes() >= 10:
@@ -2705,7 +3023,8 @@ class Capri:
             del hist[:-20]
             self.save_settings()
             if not quiet:
-                self.say(g.recap(), 14, speak="priority")
+                self.say_ai("recap", {"game": g.name, "kills": g.kills, "deaths": g.deaths, "rw": g.rounds_w,
+                                      "rl": g.rounds_l, "minutes": int(g.minutes())}, g.recap(), 14, speak="priority")
 
     def game_tick(self, now, key, has_title):
         """Start a session when a supported game is in front; end it once it has been gone a while."""
@@ -2720,14 +3039,19 @@ class Capri:
         elif self.game and has_title and now - self.game_seen > (3 * 3600 if self.game_manual else 180):
             self.end_game()
 
-    def game_event(self, kind, n=1):
-        """Something happened in the game (you told her, or a detector saw it). She reacts out loud."""
+    def game_event(self, kind, n=1, line=None):
+        """Something happened in the game (you told her, a detector or the AI spotter saw it)."""
         if not self.game:
             self.start_game("other", manual=True)
-        self.game.level = self.settings.get("roast", "mild")
-        line = self.game.event(kind, n)
+        g = self.game
+        g.level = self.settings.get("roast", "mild")
+        preset = g.event(kind, n)                       # counts it. The preset line is only a fallback
         if line:
             self.say(line, 6, speak="priority")
+            self.recent_lines.append(line)
+        elif preset:
+            self.say_ai("game", {"game": g.name, "event": kind, "n": n, "kills": g.kills, "deaths": g.deaths,
+                                 "kstreak": g.kstreak, "dstreak": g.dstreak}, preset, 6, speak="priority")
         if kind in ("kill", "ace", "clutch", "round_win", "match_win"):
             self.set_icon("star", 1.6)
             self.sfx.play("success" if kind in ("ace", "clutch", "match_win") else "confirm")
@@ -2737,7 +3061,7 @@ class Capri:
         else:
             self.sfx.play("fail")
             self.react("error")
-        return line
+        return preset
 
     def drain_reactor(self):
         if not self.reactor:
@@ -2991,7 +3315,7 @@ class Capri:
                  else "Okay, I'm not watching your apps anymore.", 5)
 
     def react_context(self, cat):
-        self.say(awareness.line(cat, self.rng), 7)
+        self.say_ai("context", {"activity": awareness.PHRASE.get(cat, cat)}, awareness.line(cat, self.rng), 7)
         icon, act = {"cyberpunk": ("star", "dance"), "game": ("star", None), "video": (None, "lounge"),
                      "music": ("note", "dance"), "coding": (None, "perch"), "writing": (None, "perch"),
                      "chat": ("?", "curious"), "social": ("?", None), "school": ("star", None),
@@ -3052,12 +3376,15 @@ class Capri:
         after = awareness.NUDGE_AFTER.get(cat)
         if after and now - self.ctx_since > after and now >= self.ctx_nudge and not self.calm:
             self.ctx_nudge = now + 1200
-            self.say(awareness.nudge(cat), 10)
+            self.say_ai("nudge", {"activity": awareness.PHRASE.get(cat, cat), "minutes": int((now - self.ctx_since) / 60)},
+                        awareness.nudge(cat), 10)
 
     def scheduled(self, now):
         self.watch_context(now)
         self.watch_ledges(now)
         self.drain_reactor()
+        self.drain_ai(now)
+        self.update_spotter(now)
         if self.pending:
             self.tick_pending(now)
         if self.msgs and now > self.bubble_until + 0.4 and now - self.t_start > 8:
@@ -3102,10 +3429,10 @@ class Capri:
         if self.checkins and now >= self.next_checkin and not self.calm:
             self.next_checkin = now + random.randint(*CHECKIN_EVERY)
             self.poke_awake()
-            self.say(self.mind.line("checkin", now), 10)
+            self.say_ai("checkin", {}, self.mind.line("checkin", now), 10)
         if now >= self.next_chatter and self.state in ("idle", "perch") and not self.calm:
             self.next_chatter = now + random.randint(60, 150)
-            self.say(self.mind.line("idle", now), 4)
+            self.say_ai("idle", {}, self.mind.line("idle", now), 5)
 
     def react_to_pointer(self, now, dt):
         mx, my = self.pointer
@@ -3190,7 +3517,7 @@ class Capri:
             return
         self.mind.poke(now)
         self.sfx.play("blip")
-        self.say(self.mind.line("poke", now), 2.5)
+        self.say_ai("poke", {}, self.mind.line("poke", now), 4)
         if self.mind.affection > 60 and self.rng.random() < 0.5:
             self.set_icon("heart", 1.6)
         if self.state in ("idle", "perch", "walk", "sleep", "lounge", "curious"):
@@ -3302,6 +3629,7 @@ class Capri:
         self.speaker.stop()
         if self.reactor:
             self.reactor.stop()
+        self.stop_spotter()
         self.mind.sync(time.time())
         self.save_settings()
         if self.chat and self.chat.alive():
@@ -3356,6 +3684,8 @@ class Capri:
         top = y0
         if self.typing_along:
             self.draw_keyboard(c, lfx, lfy)
+        if self.spotter and self.spotter.active:
+            self.draw_eye(c, lfx, y0)
         if self.state == "sleep":
             ph = int(now * 2) % 3
             c.create_text(lfx + self.fw * 0.1 + ph * 10, top - 2 - ph * 12, text="z",

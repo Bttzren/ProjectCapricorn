@@ -21,10 +21,8 @@ import urllib.request
 import tkinter as tk
 from tkinter import font as tkfont
 
-import arcade
 import autostart
 import awareness
-import badges
 import breach
 import daylog
 import fun
@@ -992,10 +990,7 @@ class ChatWindow:
 
     def submit(self, text):
         if text.startswith("/"):
-            self.pet.count("chats")
             return self.command(text)
-        if self.pet.awaiting and self.answer_game(text):
-            return
         if self.busy:
             return self.system_line("Hold on, still thinking about the last one.")
         self.add_bubble("user", text)
@@ -1098,42 +1093,6 @@ class ChatWindow:
             lbl.bind("<Button-1>", lambda e, t=text: self.copy(t))
             self.reset_face()
 
-    def answer_game(self, text):
-        """A plain message while a mini game is waiting for an answer. True if it was used."""
-        p = self.pet
-        if p.awaiting == "trivia":
-            self.add_bubble("user", text)
-            ok, right = p.trivia.answer(text)
-            p.awaiting = ""
-            if ok:
-                p.count("wins")
-                self.system_line(f"Correct! Score: {p.trivia.score}/{p.trivia.asked}.")
-                p.say_moment("the user just answered a trivia question correctly", "Nova! Big brain, choom.", 4, wait=3)
-                p.react("happy")
-            else:
-                self.system_line(f"Nope. It was: {right}. Score: {p.trivia.score}/{p.trivia.asked}.")
-                p.say_moment(f"the user got a trivia question wrong, the answer was {right}", "Ouch. Not even close.", 4, wait=3)
-            return True
-        if p.awaiting == "guess" and p.guess:
-            if not text.strip().isdigit():
-                return False
-            self.add_bubble("user", text)
-            res = p.guess.guess(int(text))
-            if res in ("win", "lose"):
-                p.awaiting = ""
-            if res == "win":
-                p.count("wins")
-                self.system_line(f"Yes! It was {p.guess.target}, in {p.guess.tries} tries.")
-                p.say_moment(f"the user guessed your secret number in {p.guess.tries} tries", "Got it. Lucky, choom.", 4, wait=3)
-                p.react("happy")
-            elif res == "lose":
-                self.system_line(f"Out of tries. It was {p.guess.target}.")
-                p.say_moment("the user failed to guess your secret number", "Too slow. Better luck next time.", 4, wait=3)
-            else:
-                self.system_line(f"Too {res}. {p.guess.max_tries - p.guess.tries} tries left.")
-            return True
-        return False
-
     def command(self, text):
         parts = text.split(None, 2)
         cmd = parts[0].lower()
@@ -1143,7 +1102,7 @@ class ChatWindow:
                              "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
                              "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /tp  /dance  "
                              "/sleep  /calm  /watch  /look  /ailines  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /remember  /facts  /feel  "
-                             "/journal  /day  /horoscope  /lore  /rps  /trivia  /guess  /gigs  /gigdone  /badges  /clear")
+                             "/journal  /day  /horoscope  /lore  /clear")
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
@@ -1293,7 +1252,6 @@ class ChatWindow:
                     extra = f" {streak} days in a row. Nova!"
                     p.spawn_confetti(40)
                 p.save_settings()
-                p.count("done")
                 self.system_line(f"{name}: done! {streak}-day streak.{extra}")
                 p.react("happy")
             elif name:
@@ -1360,56 +1318,6 @@ class ChatWindow:
             p.start_tag()
         elif cmd == "/roll":
             self.system_line(fun.roll(parts[1] if len(parts) > 1 else "", p.rng))
-        elif cmd == "/rps":
-            pick = arcade.rps_pick(parts[1] if len(parts) > 1 else "")
-            if not pick:
-                self.system_line("Play like /rps rock  (or paper, scissors).", err=True)
-            else:
-                mine, res = arcade.rps_play(pick, p.rng)
-                p.count("games")
-                p.rps_score[("win", "loss", "tie").index(res)] += 1
-                w, l, t = p.rps_score
-                words = {"win": "You win", "loss": "I win", "tie": "Tie"}[res]
-                self.system_line(f"You: {pick}. Me: {mine}. {words}!  (W{w} L{l} T{t})")
-                if res == "win":
-                    p.count("wins")
-                p.say_moment(f"you played rock paper scissors with the user: you picked {mine}, they picked {pick}, "
-                             + {"win": "they won", "loss": "you won", "tie": "it is a tie"}[res],
-                             {"win": "Fine. You got me.", "loss": "Ha! Mine.", "tie": "Tie. Again."}[res], 4, wait=3)
-        elif cmd == "/trivia":
-            q = p.trivia.ask()
-            p.awaiting = "trivia"
-            p.count("games")
-            self.system_line("Trivia: " + q + "   (just type your answer)")
-        elif cmd == "/guess":
-            p.guess = arcade.Guess(p.rng)
-            p.awaiting = "guess"
-            p.count("games")
-            self.system_line(f"I'm thinking of a number from 1 to {p.guess.hi}. {p.guess.max_tries} tries. Type a number.")
-        elif cmd == "/badges":
-            for line in p.badges.lines():
-                self.system_line(line)
-        elif cmd == "/gigs":
-            today = time.strftime("%Y-%m-%d")
-            for i, g in enumerate(badges.todays_gigs(p.gig_store, today, p.rng), 1):
-                self.system_line(f"{i}. [{'x' if g['done'] else ' '}] {g['text']}")
-            self.system_line("Finish one with /gigdone <number>.")
-            p.save_settings()
-        elif cmd == "/gigdone":
-            today = time.strftime("%Y-%m-%d")
-            ok, gig, alldone = badges.finish_gig(p.gig_store, today, p.rng,
-                                                 int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0)
-            if not ok:
-                self.system_line("Which one? /gigs shows today's numbers.", err=True)
-            else:
-                p.save_settings()
-                p.count("done")
-                self.system_line(f"Gig done: {gig}" + ("  All three! Nova day." if alldone else ""))
-                if alldone:
-                    p.spawn_confetti(50)
-                p.say_moment(f"the user just finished a daily gig ({gig})" + (" and that was all three for today" if alldone else ""),
-                             "Gig done. Preem.", 4, wait=3)
-                p.react("happy")
         elif cmd == "/coin":
             self.system_line(fun.coin(p.rng))
         elif cmd == "/8ball":
@@ -1430,7 +1338,6 @@ class ChatWindow:
             done = p.todos.finish(int(parts[1])) if len(parts) > 1 and parts[1].isdigit() else None
             if done:
                 self.system_line(f"Done: {done}")
-                p.count("done")
                 p.react("happy")
             else:
                 self.system_line("Which one? /todo shows the numbers.", err=True)
@@ -2116,8 +2023,6 @@ class Capri:
         self.mind = personality.Mind(self.settings)
         self.todos = fun.Todos(self.settings.setdefault("todos", []))
         self.habits = habits.Habits(self.settings.setdefault("habits", []))
-        self.badges = badges.Badges(self.settings.setdefault("badges", {}))
-        self.gig_store = self.settings.setdefault("gigs", {})
         self.memory = memory.Memory(self.settings.setdefault("memory", []))
         self.daylog = daylog.DayLog(self.settings.setdefault("daylog", {}))
         self.journal = journal.Journal(self.settings.setdefault("journal", []))
@@ -2201,11 +2106,6 @@ class Capri:
         if special and self.settings.get("special_seen") != today:
             self.settings["special_seen"] = today
             self.msgs.append(special[1])
-        streak, new_badges = self.badges.visit(today)
-        if streak >= 2:
-            self.msgs.append(f"Day {streak} in a row. Welcome back, choom.")
-        for _key, title in new_badges:
-            self.msgs.append(f"New badge: {title}!")
         self.next_save = now + 60
         self.pointer = (0, 0)
         self.pointer_prev = (0, 0, now)
@@ -2217,10 +2117,6 @@ class Capri:
         self.pcache = {}
         self.cur_img = None
         self.rng = random.Random()
-        self.trivia = arcade.Trivia(self.rng)
-        self.guess = None
-        self.awaiting = ""
-        self.rps_score = [0, 0, 0]
         self.land_squash = 0.0
         self.last_top = 0.0
 
@@ -2301,14 +2197,6 @@ class Capri:
         elif state == "dance":
             self.anim = "dance"
             self.angle_t = 0.0
-
-    def count(self, counter, n=1):
-        """Tick a badge counter. A new badge gets announced, spoken and celebrated."""
-        for _key, title in self.badges.bump(counter, n):
-            self.say_moment(f"the user just earned the badge '{title}'; congratulate them",
-                            f"New badge: {title}!", 6, speak="priority", wait=4)
-            self.sfx.play("win")
-            self.spawn_confetti(40)
 
     def poke_awake(self):
         self.last_active = time.time()
@@ -2480,7 +2368,6 @@ class Capri:
         """Fly around the screen (fly), dash across it (zoom) or circle the mouse cursor (orbit)."""
         if self.state in ("tp_out", "tp_in", "drag"):
             return
-        self.count("flights")
         wa = self.work_area()
         self.surf = None
         self.icon = None
@@ -2796,7 +2683,6 @@ class Capri:
         """Mini-game: she runs from your cursor for 25 seconds. Touch her to win."""
         if self.state in ("tp_out", "tp_in", "drag"):
             return
-        self.count("tags")
         now = time.time()
         self.surf = None
         self.icon = None
@@ -3179,8 +3065,6 @@ class Capri:
         g = self.game
         g.level = self.settings.get("roast", "mild")
         preset = g.event(kind, n)                       # counts it. The preset line is only a fallback
-        if kind in ("kill", "ace"):
-            self.count("kills", 5 if kind == "ace" else max(1, min(int(n), 5)))
         if line:
             self.say(line, 6, speak="priority")
             self.recent_lines.append(line)
@@ -3558,7 +3442,6 @@ class Capri:
             self.save_settings()
         if self.timer_end and now >= self.timer_end:
             if self.timer_mode == "focus":
-                self.count("focus")
                 self.say_moment(f"the user's focus timer just finished and they get a {BREAK_MIN} minute break; "
                                 "tell them to get up and move around",
                                 f"Focus done! {BREAK_MIN} min break. Move around.", 12, speak="priority", wait=4)
@@ -3669,7 +3552,6 @@ class Capri:
             self.root.after(900, self.teleport)
             return
         self.mind.poke(now)
-        self.count("pokes")
         self.sfx.play("blip")
         self.say_ai("poke", {}, self.mind.line("poke", now), 4)
         if self.mind.affection > 60 and self.rng.random() < 0.5:

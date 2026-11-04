@@ -64,9 +64,12 @@ class SessionTests(unittest.TestCase):
         self.assertEqual((s.kills, s.deaths), (3, 1))
         self.assertAlmostEqual(s.kd, 3.0)
         self.assertIn("3/1", s.status())
-        step(s, "death")
-        self.assertIn("1 death", s.status())
-        self.assertNotIn("1 deaths", s.status())
+        one = session()
+        step(one, "death")
+        self.assertIn("1 death", one.status())
+        self.assertNotIn("1 deaths", one.status())
+        step(one, "death")
+        self.assertIn("2 deaths", one.status())
 
     def test_multikills_are_counted_and_have_their_own_lines(self):
         s = session()

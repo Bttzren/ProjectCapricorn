@@ -23,7 +23,7 @@ import urllib.request
 import wave
 
 CREATE_NO_WINDOW = 0x08000000
-FISH_URL = "https://api.fish.audio/v1/tts"
+FISH_URL = os.environ.get("CAPRI_FISH_URL", "https://api.fish.audio/v1/tts")
 DEFAULT_FISH_VOICE = "ef387f44931d4ab6a3f959a083c9fbb1"     # Capri's Fish Audio voice model
 DEFAULT_FISH_MODEL = "s1"
 
@@ -108,7 +108,18 @@ class FishVoice:
                 return self._post(text, with_model=False)
             hint = {401: "bad Fish Audio key", 402: "out of Fish Audio credits", 403: "Fish Audio key not allowed",
                     404: "voice model not found", 429: "Fish Audio rate limit"}.get(exc.code, "")
-            raise RuntimeError(f"Fish Audio {exc.code}" + (f" ({hint})" if hint else ""))
+            detail = ""
+            try:                                             # Fish's own explanation, if it sent one
+                raw = exc.read()
+                try:
+                    j = json.loads(raw)
+                    detail = str(j.get("message") or j.get("detail") or j.get("error") or "") if isinstance(j, dict) else ""
+                except ValueError:
+                    detail = raw[:100].decode("utf-8", "replace")
+            except Exception:
+                pass
+            raise RuntimeError(f"Fish Audio {exc.code}" + (f" ({hint})" if hint else "")
+                               + (f": {detail[:100]}" if detail else ""))
         except urllib.error.URLError as exc:
             raise RuntimeError(f"can't reach Fish Audio ({exc.reason})")
 

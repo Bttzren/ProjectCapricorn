@@ -4,3 +4,4 @@ api_key.txt
 dist/
 build/
 *.spec
+fish_test.wav

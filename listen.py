@@ -178,3 +178,188 @@ def listen_once(chunks, whisper, endpointer=None, min_bytes=RATE * 2 // 4):
     if state == "timeout" or len(pcm) < min_bytes:
         return "", state
     return whisper.transcribe(pcm), state
+
+
+# ================================================================== wake word ("Hey Capri" / "Choom")
+# The mic stays open ONLY while wake mode is on (the user switched it on). Every phrase is turned into text on
+# the user's computer and thrown away right away unless it starts with a wake word. Nothing is saved or sent.
+import difflib
+import queue
+
+WAKE_NAMES = {
+    "capri": {"capri", "kapri", "capree", "caprie", "cafri", "copri", "cabri", "capry", "kaprie", "caprii", "cappri",
+              "capi", "caprice", "capris"},
+    "choom": {"choom", "chum", "choomb", "shoom", "chuum", "choum", "choome", "chume", "choon", "tchoom"},
+}
+GREETINGS = {"hey", "hi", "yo", "ok", "okay", "hello", "ay", "oi", "hay", "a"}
+
+
+def _is_name(word, ratio=0.8):
+    w = re.sub(r"[^a-z]", "", word.lower())
+    if not w:
+        return None
+    for name, aliases in WAKE_NAMES.items():
+        if w in aliases or difflib.SequenceMatcher(None, w, name).ratio() >= ratio:
+            return name
+    return None
+
+
+def strip_wake(text):
+    """(matched, rest): does the phrase START with 'Hey Capri' / 'Choom' (fuzzy, Whisper mishears names)?
+    A name later in a sentence doesn't count, so talking ABOUT her doesn't wake her."""
+    t = " ".join((text or "").split())
+    if not t:
+        return False, ""
+    parts = t.split(" ")
+    i = 0
+    if parts[0].strip(",.!?").lower() in GREETINGS and len(parts) > 1:
+        i = 1
+    if _is_name(parts[i]):
+        rest = " ".join(parts[i + 1:])
+        rest = re.sub(r"^[\s,.:;!?-]+", "", rest)
+        return True, rest.strip()
+    return False, ""
+
+
+class Segmenter:
+    """Cuts a never-ending mic stream into spoken phrases. feed(pcm_chunk) -> phrase bytes when one ends, else None."""
+
+    def __init__(self, chunk_s=CHUNK / RATE, quiet_s=0.8, min_speech_s=0.4, max_s=15.0, floor=350.0, preroll=3):
+        self.chunk_s, self.quiet_s, self.min_speech_s, self.max_s = chunk_s, quiet_s, min_speech_s, max_s
+        self.floor, self.preroll = floor, preroll
+        self.reset()
+        self.noise = 0.0
+
+    def reset(self):
+        self.buf, self.pre = [], []
+        self.speaking, self.speech_s, self.quiet = False, 0.0, 0.0
+        self.total = 0.0
+
+    @property
+    def threshold(self):
+        return max(self.floor, self.noise * 2.5)
+
+    def feed(self, pcm, level=None):
+        lv = rms(pcm) if level is None else level
+        loud = lv >= self.threshold
+        if not self.speaking:
+            if not loud:
+                self.noise = lv if self.noise == 0 else self.noise * 0.95 + lv * 0.05     # learn the room's hum
+            self.pre = (self.pre + [pcm])[-self.preroll:]
+            if loud:
+                self.speech_s += self.chunk_s
+                if self.speech_s >= self.min_speech_s:
+                    self.speaking, self.buf, self.quiet = True, list(self.pre), 0.0
+                    self.total = self.chunk_s * len(self.buf)
+            else:
+                self.speech_s = 0.0
+            return None
+        self.buf.append(pcm)
+        self.total += self.chunk_s
+        self.quiet = 0.0 if loud else self.quiet + self.chunk_s
+        if self.quiet >= self.quiet_s or self.total >= self.max_s:
+            out = b"".join(self.buf)
+            self.reset()
+            return out
+        return None
+
+
+class WakeLoop:
+    """Reads the mic, finds phrases, transcribes them (off the audio thread) and reacts to wake words.
+
+    emit(kind, text): kind 'wake' (she was called, no command yet), 'command' (text to act on) or 'error'.
+    paused() -> True while she is talking or the mic is busy: audio is dropped. After 'wake' the next phrase,
+    within `follow_s` seconds, is the command even without the wake word.
+    """
+
+    def __init__(self, whisper, emit, paused=lambda: False, clock=time.time, follow_s=8.0, holdoff_s=1.2,
+                 per_min=15, max_phrase_s=12.0, segmenter=None):
+        self.whisper, self.emit, self.paused, self.clock = whisper, emit, paused, clock
+        self.follow_s, self.holdoff_s, self.per_min, self.max_phrase_s = follow_s, holdoff_s, per_min, max_phrase_s
+        self.seg = segmenter or Segmenter()
+        self.jobs = queue.Queue(maxsize=4)
+        self.expect_until, self.hold_until = 0.0, 0.0
+        self.stamps = []
+        self._stop = threading.Event()
+        self.threads = []
+
+    # ---- audio side: never blocks on the AI
+    def read(self, chunks):
+        try:
+            for c in chunks:
+                if self._stop.is_set():
+                    break
+                now = self.clock()
+                if self.paused():
+                    self.seg.reset()
+                    self.hold_until = now + self.holdoff_s
+                    continue
+                if now < self.hold_until:
+                    continue
+                utt = self.seg.feed(c)
+                if utt is not None:
+                    try:
+                        self.jobs.put_nowait(utt)
+                    except queue.Full:
+                        pass                                  # too busy: drop it rather than lag behind
+        finally:
+            close = getattr(chunks, "close", None)
+            if close:
+                close()
+
+    # ---- text side
+    def process(self, utt):
+        secs = len(utt) / 2.0 / RATE
+        now = self.clock()
+        following = now < self.expect_until
+        if secs > self.max_phrase_s and not following:
+            return                                            # music, a video, a long chat: not a command
+        self.stamps = [t for t in self.stamps if now - t < 60]
+        if len(self.stamps) >= self.per_min:
+            return
+        self.stamps.append(now)
+        try:
+            text = self.whisper.transcribe(utt)
+        except Exception as exc:
+            self.emit("error", str(exc) or type(exc).__name__)
+            return
+        del utt
+        matched, rest = strip_wake(text)
+        if following and not matched:
+            self.expect_until = 0.0
+            self.emit("command", text)
+        elif matched and rest:
+            self.expect_until = 0.0
+            self.emit("command", rest)
+        elif matched:
+            self.expect_until = self.clock() + self.follow_s
+            self.emit("wake", "")
+        # anything else was just talking: it is dropped here and never stored
+
+    def work(self):
+        while not self._stop.is_set():
+            try:
+                utt = self.jobs.get(timeout=0.3)
+            except queue.Empty:
+                continue
+            self.process(utt)
+
+    def start(self, chunk_source):
+        """chunk_source() -> iterator of PCM chunks (opens the mic). Runs on two daemon threads."""
+        self._stop.clear()
+
+        def reader():
+            try:
+                self.read(chunk_source())
+            except Exception as exc:
+                self.emit("error", str(exc) or type(exc).__name__)
+        self.threads = [threading.Thread(target=reader, daemon=True), threading.Thread(target=self.work, daemon=True)]
+        for t in self.threads:
+            t.start()
+
+    def stop(self):
+        self._stop.set()
+
+    @property
+    def running(self):
+        return bool(self.threads) and self.threads[0].is_alive() and not self._stop.is_set()

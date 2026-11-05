@@ -111,6 +111,22 @@ TALKING TO HER (voice input)
     shows you the task and asks for your OK. Saying "stop" stops a running task.
   * Needs a working microphone and Windows' microphone privacy setting on for desktop apps.
 
+HEY CAPRI / CHOOM (hands-free)
+  Turn it on with /wake on, the right-click menu ("Listen for Hey Capri / Choom"), or the checkbox in
+  Settings -> Local AI & Voice Input. Needs voice input installed (/getears). Then just say:
+      "Hey Capri, join the Discord and tell them I'll be in in 15"      "Choom, what's the weather like?"
+  Saying only "Hey Capri" makes her answer "Yeah?" and take your next sentence (within 8 seconds).
+  * The mic stays open while this is ON (Windows shows its mic indicator). Everything is turned into text
+    on your computer. Anything that doesn't START with Hey Capri / Capri / Hey Choom / Choom is thrown away
+    immediately: never saved, logged or sent anywhere. Turn it off any time (right-click her).
+  * She ignores the mic while she is talking, so she can't wake herself.
+  * Voice commands don't pop her chat window open over your game: she answers with her voice and a bubble.
+  * Tasks heard this way still show the confirmation dialog first. While she is doing a task only "Capri,
+    stop" is accepted. Say a wrong name (Whisper mishears sometimes) and she just doesn't wake.
+  * Careful in calls: if you say "choom" at the start of a sentence to your friends she WILL wake up.
+    Turn it off for calls. It also uses some CPU whenever someone talks near the mic (max 15 phrases a
+    minute are processed).
+
 BUILT-IN LOCAL AI (no key, works offline)
   Type /getbrain (about 1.1 GB, fast) or /getbrain big (2.1 GB, smarter). She downloads the official
   llama.cpp engine and a small open model (Qwen 2.5) into ~/.capri/localai, runs it on your computer

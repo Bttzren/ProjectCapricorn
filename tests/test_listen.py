@@ -137,3 +137,133 @@ class CloseTests(unittest.TestCase):
         self.assertEqual(L.intent("go away")[0], "chat")
         self.assertEqual(L.intent("go to youtube")[0], "task")
         self.assertEqual(L.intent("can you please play some music")[0], "task")
+
+
+class WakeWordTests(unittest.TestCase):
+    def test_strip_wake(self):
+        s = L.strip_wake
+        self.assertEqual(s("Hey Capri, open Discord"), (True, "open Discord"))
+        self.assertEqual(s("hey capri"), (True, ""))
+        self.assertEqual(s("Choom. what's the weather like"), (True, "what's the weather like"))
+        self.assertEqual(s("Yo choom, play some music"), (True, "play some music"))
+        self.assertEqual(s("Hey, Kapri! open spotify"), (True, "open spotify"))
+        self.assertEqual(s("hey chum open youtube"), (True, "open youtube"))
+
+    def test_not_woken_by_other_speech(self):
+        s = L.strip_wake
+        for t in ("I was telling capri about it", "what time is it", "hey Chris open the door", "the copy is ready",
+                  "hey cherry open it", "carry the box", "", "hey", "zoom call at three"):
+            self.assertFalse(s(t)[0], t)
+
+    def test_segmenter_cuts_phrases(self):
+        sg = L.Segmenter()
+        out = []
+        stream = [silence()] * 10 + [tone(4000)] * 8 + [silence()] * 12 + [silence()] * 5 + [tone(4000)] * 6 + [silence()] * 12
+        for c in stream:
+            u = sg.feed(c)
+            if u:
+                out.append(u)
+        self.assertEqual(len(out), 2)
+        self.assertGreater(len(out[0]), len(tone(4000)) * 8)       # includes the pre-roll and the whole phrase
+
+    def test_blip_is_not_a_phrase_and_hum_is_learned(self):
+        sg = L.Segmenter()
+        self.assertEqual([sg.feed(c) for c in [silence()] * 5 + [tone(4000)] + [silence()] * 20], [None] * 26)
+        sg = L.Segmenter()
+        hum = [tone(900)] * 60                                     # steady background noise
+        self.assertEqual([x for x in (sg.feed(c) for c in hum) if x], [])
+
+
+class FakeWhisper2:
+    def __init__(self, texts):
+        self.texts = list(texts)
+        self.calls = 0
+
+    def transcribe(self, pcm):
+        self.calls += 1
+        return L.clean_transcript(self.texts.pop(0))
+
+
+def phrase(n=8):
+    return [tone(4000)] * n + [silence()] * 12
+
+
+def run_loop(texts, stream, **kw):
+    events = []
+    t = [0.0]
+    w = FakeWhisper2(texts)
+    loop = L.WakeLoop(w, lambda k, x: events.append((k, x)), clock=lambda: t[0], **kw)
+    for c in stream:
+        t[0] += 0.1
+        loop.read(iter([c]))
+        while not loop.jobs.empty():
+            loop.process(loop.jobs.get())
+    return events, w, loop
+
+
+class WakeLoopTests(unittest.TestCase):
+    QUIET = [silence()] * 10
+
+    def test_command_in_one_phrase_and_other_talk_dropped(self):
+        ev, w, _ = run_loop(["just chatting with friends", "Hey Capri, open discord"],
+                            self.QUIET + phrase() + phrase())
+        self.assertEqual(ev, [("command", "open discord")])
+        self.assertEqual(w.calls, 2)
+
+    def test_wake_then_follow_up_command(self):
+        ev, _, _ = run_loop(["hey capri", "tell my friends I'm late"], self.QUIET + phrase() + phrase())
+        self.assertEqual(ev, [("wake", ""), ("command", "tell my friends I'm late")])
+
+    def test_follow_up_expires(self):
+        ev, _, _ = run_loop(["choom", "random chatter"], self.QUIET + phrase() + [silence()] * 120 + phrase(),
+                            follow_s=3.0)
+        self.assertEqual(ev, [("wake", "")])
+
+    def test_ignored_while_paused_and_just_after(self):
+        state = {"p": True}
+        events = []
+        t = [0.0]
+        w = FakeWhisper2(["hey capri open discord"] * 3)
+        loop = L.WakeLoop(w, lambda k, x: events.append((k, x)), paused=lambda: state["p"], clock=lambda: t[0])
+        for c in self.QUIET + phrase():
+            t[0] += 0.1
+            loop.read(iter([c]))
+        self.assertTrue(loop.jobs.empty())
+        self.assertEqual(w.calls, 0)
+
+    def test_long_phrases_and_rate_limit(self):
+        long_phrase = [tone(4000)] * 150 + [silence()] * 12
+        ev, w, _ = run_loop(["hey capri open x"], self.QUIET + long_phrase, max_phrase_s=5.0, segmenter=L.Segmenter(max_s=30))
+        self.assertEqual((ev, w.calls), ([], 0))
+        stream = self.QUIET + phrase() * 5
+        ev, w, _ = run_loop(["choom hi"] * 5, stream, per_min=2)
+        self.assertEqual(w.calls, 2)
+
+    def test_whisper_errors_are_reported_not_raised(self):
+        class Bad:
+            def transcribe(self, pcm):
+                raise RuntimeError("no model")
+        events = []
+        loop = L.WakeLoop(Bad(), lambda k, x: events.append((k, x)))
+        loop.process(tone(4000, 8000))
+        self.assertEqual(events, [("error", "no model")])
+
+    def test_threads_start_and_stop(self):
+        events = []
+        stream = self.QUIET + phrase()
+
+        def source():
+            for c in stream:
+                time.sleep(0.002)
+                yield c
+            while not loop._stop.is_set():
+                time.sleep(0.01)
+                yield silence()
+        import time
+        loop = L.WakeLoop(FakeWhisper2(["hey capri open spotify"]), lambda k, x: events.append((k, x)))
+        loop.start(source)
+        t0 = time.time()
+        while not events and time.time() - t0 < 5:
+            time.sleep(0.02)
+        loop.stop()
+        self.assertEqual(events, [("command", "open spotify")])

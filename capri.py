@@ -1149,6 +1149,11 @@ class ChatWindow:
             self.typewrite(lbl, text, 0)
             self.pet.react("happy")
             self.pet.speak(text, priority=True)
+            try:
+                if self.win.state() != "normal":                  # a voice command: show it above her instead
+                    self.pet.say(text[:200], 9, speak=None)
+            except tk.TclError:
+                pass
         else:
             if self.history and self.history[-1]["role"] == "user":
                 self.history.pop()
@@ -1188,7 +1193,7 @@ class ChatWindow:
                              "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
                              "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /tp  /dance  "
                              "/sleep  /calm  /watch  /look  /ailines  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /remember  /facts  /feel  "
-                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /talk  /getears  /getbrain  /brain  /clear")
+                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /talk  /wake  /getears  /getbrain  /brain  /clear")
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
@@ -1496,6 +1501,16 @@ class ChatWindow:
                                  + "  (/agent on | off).  Needs Full control and a Claude key.  Then: /do <task>")
         elif cmd == "/talk":
             p.start_listening()
+        elif cmd == "/wake":
+            arg = parts[1].lower() if len(parts) > 1 else ""
+            if arg == "on":
+                self.system_line("Listening for my name." if p.enable_wake(self.win) else "Okay, staying deaf.")
+            elif arg == "off":
+                p.disable_wake()
+                self.system_line("Wake word listening is off.")
+            else:
+                self.system_line("Wake word: " + ("ON" if p.wake is not None and p.wake.running else "off")
+                                 + "   /wake on | off   (say 'Hey Capri ...' or 'Choom ...')")
         elif cmd == "/getears":
             p.install_ears()
         elif cmd == "/getbrain":
@@ -1819,6 +1834,19 @@ class SettingsWindow:
         flat_button(box, "INSTALL VOICE INPUT", pet.install_ears, C_PANEL2, C_GREEN, "#26263a", self.f_small, 8, 4).pack(
             anchor="w", padx=10, pady=(0, 6))
         self.check(box, "Hotkey Ctrl+Alt+C to talk to her (Windows, restart to apply)", "talk_hotkey", True)
+        self.wake_var = tk.BooleanVar(value=self.pet.wake is not None and self.pet.wake.running)
+
+        def toggle_wake():
+            if self.wake_var.get():
+                if not pet.enable_wake(self.win):
+                    self.wake_var.set(False)
+            else:
+                pet.disable_wake()
+        tk.Checkbutton(box, text='Always listen for "Hey Capri" / "Choom" (mic stays open, speech stays on this '
+                                 'computer)', variable=self.wake_var, command=toggle_wake, bg=C_PANEL, fg=C_TEXT,
+                       selectcolor=C_PANEL2, activebackground=C_PANEL, activeforeground=C_TEXT, anchor="w",
+                       justify="left", font=(self.fam, 9), highlightthickness=0, bd=0, wraplength=335).pack(
+            fill="x", padx=8, pady=1)
         tk.Frame(box, bg=C_PANEL, height=4).pack()
 
     def toggle_vision(self):
@@ -2263,6 +2291,7 @@ class Capri:
         self.heard_events, self.talk_requests = queue.Queue(), queue.Queue()
         self.brain_busy = self.ears_busy = self.listening = self.listen_stop = self.hotkey_on = False
         self.whisper = None
+        self.wake = None
         BRAIN["mode"] = self.settings.get("brain", "auto") if self.settings.get("brain") in ("auto", "cloud", "local") else "auto"
         LOCAL_AI.which = self.settings.get("brain_model", "small") if self.settings.get("brain_model") in localai.MODELS else "small"
         self.agent_budget = speech.Budget(per_min=40, per_day=250, store=self.settings.setdefault("agent_budget", {}))
@@ -2307,6 +2336,8 @@ class Capri:
                     self.mind.greeting(now), 7)
         self.warm_brain()
         self.start_hotkey()
+        if self.settings.get("wake"):
+            self.start_wake()
         self.tick()
 
     # ---- environment
@@ -3228,6 +3259,55 @@ class Capri:
         if not self.hotkey_on:
             log("talk hotkey could not be registered (another app may use it)")
 
+    def enable_wake(self, parent=None):
+        from tkinter import messagebox
+        if not listen.installed():
+            self.notify("I need ears first. Type /getears and I'll install voice input.", err=True)
+            return False
+        if not messagebox.askyesno(
+                "Let Capri listen for \"Hey Capri\" and \"Choom\"?",
+                "While this is on, your MICROPHONE stays open all the time (Windows shows its mic indicator).\n\n"
+                "* Everything you say is turned into text ON YOUR COMPUTER. Nothing is sent anywhere and "
+                "nothing is saved.\n* Anything that doesn't START with \"Hey Capri\", \"Capri\", \"Hey Choom\" or "
+                "\"Choom\" is thrown away immediately.\n* If you chat with friends and say \"choom\" at the start of a "
+                "sentence she WILL wake up and answer. Turn this off (right-click her) in calls.\n* It uses some "
+                "CPU whenever someone talks near the mic.\n* Tasks she hears still ask for your OK first.\n\n"
+                "Turn on wake word listening?", parent=parent, default="no", icon="warning"):
+            return False
+        self.settings["wake"] = True
+        self.save_settings()
+        self.start_wake()
+        return True
+
+    def disable_wake(self):
+        self.settings["wake"] = False
+        self.save_settings()
+        self.stop_wake()
+        self.notify("Okay, I'm not listening for my name any more.")
+
+    def start_wake(self):
+        if self.wake is not None and self.wake.running:
+            return True
+        if not listen.installed():
+            return False
+        if self.whisper is None:
+            self.whisper = listen.Whisper(self.settings.get("ears_model", listen.MODEL))
+        q = self.heard_events
+        loop = listen.WakeLoop(
+            self.whisper,
+            lambda kind, text: q.put(("wake",) if kind == "wake" else
+                                     (("error", text, "wake") if kind == "error" else ("heard", text, "wake"))),
+            paused=lambda: self.speaker.speaking or self.listening)
+        loop.start(lambda: listen.mic_chunks(lambda: loop._stop.is_set()))
+        self.wake = loop
+        self.notify("Listening for \"Hey Capri\" and \"Choom\" now. Right-click me to turn it off.", secs=6)
+        return True
+
+    def stop_wake(self):
+        if self.wake is not None:
+            self.wake.stop()
+            self.wake = None
+
     def start_listening(self):
         """Push-to-talk. The mic is only open while she says 'Listening...', then it closes."""
         if self.listening:
@@ -3259,12 +3339,23 @@ class Capri:
                 item = self.heard_events.get_nowait()
             except queue.Empty:
                 return
-            self.listening = False
+            from_wake = len(item) > 2 and item[2] == "wake" or item[0] == "wake"
+            if not from_wake:
+                self.listening = False
+            if item[0] == "wake":                                   # she was called: say she's listening
+                self.sfx.play("blip")
+                self.react("think")
+                self.say("Yeah?", 6, speak=None)
+                continue
             if item[0] == "error":
+                if from_wake:
+                    self.stop_wake()
                 self.notify("My ears failed: " + item[1][:140] + " (check your microphone and Windows' mic privacy "
                             "setting)", err=True, secs=9)
                 continue
             kind, body = listen.intent(item[1])
+            if self.agent is not None and kind != "stop":
+                continue                                            # busy doing a task: only 'stop' is accepted
             if kind == "none":
                 self.say("Didn't catch that.", 3, speak=None)
             elif kind == "stop":
@@ -3278,7 +3369,7 @@ class Capri:
                 if not ok:
                     self.notify(why, err=True, secs=8)
             else:
-                self.open_chat()
+                self.open_chat(hidden=from_wake)
                 if self.chat and self.chat.alive():
                     self.chat.submit(body)
 
@@ -4078,14 +4169,18 @@ class Capri:
         self.save_settings()
         self.say("Check-ins on." if self.checkins else "Check-ins off.", 3, speak=None)
 
-    def open_chat(self):
+    def open_chat(self, hidden=False):
+        """hidden=True makes the chat window without showing it (voice commands must not steal focus from a game)."""
         self.poke_awake()
         if self.chat and self.chat.alive():
-            self.chat.win.deiconify()
-            self.chat.win.lift()
-            self.chat.entry.focus_set()
+            if not hidden:
+                self.chat.win.deiconify()
+                self.chat.win.lift()
+                self.chat.entry.focus_set()
             return
         self.chat = ChatWindow(self)
+        if hidden:
+            self.chat.win.withdraw()
         if "chat_geom" not in self.settings or "+" not in self.settings.get("chat_geom", ""):
             w, h = 400, 600
             x = int(self.fx + self.fw) if self.fx < self.sw / 2 else int(self.fx - self.fw - w)
@@ -4106,6 +4201,10 @@ class Capri:
         else:
             m.add_command(label=f"Start focus timer ({FOCUS_MIN} min)", command=self.start_focus)
         m.add_command(label="Talk to Capri (voice)", command=self.start_listening)
+        if self.wake is not None and self.wake.running:
+            m.add_command(label="Stop listening for \"Hey Capri\"", command=self.disable_wake)
+        else:
+            m.add_command(label="Listen for \"Hey Capri\" / \"Choom\"", command=self.enable_wake)
         m.add_command(label="Remind me...", command=lambda: ReminderDialog(self))
         if self.agent is not None:
             m.add_command(label="STOP the task", command=self.stop_agent)

@@ -100,6 +100,29 @@ GAME MODE (she hypes your kills and roasts your deaths)
   (There's also an offline option: game_events.json with reference images of fixed screen patches, see
    game_events.example.json. It never sends anything anywhere, but needs setting up per game.)
 
+TALKING TO HER (voice input)
+  Type /getears once (or Settings -> Local AI & Voice Input). She installs faster-whisper + sounddevice.
+  Then talk with ANY of: the hotkey Ctrl+Alt+C (Windows), the MIC button in the chat, the right-click menu
+  "Talk to Capri", or /talk. She says "Listening...", stops when you stop talking (or click her), turns
+  your speech into text ON YOUR COMPUTER (no key, nothing uploaded; the first use downloads a ~150 MB
+  speech model) and treats it like a typed message. "Hey Capri" at the start is optional.
+  * She is NOT always listening: the mic is open only after you trigger it and closes right after.
+  * Phrases that start like a task (open..., join..., tell my friends..., play...) go to /do, which still
+    shows you the task and asks for your OK. Saying "stop" stops a running task.
+  * Needs a working microphone and Windows' microphone privacy setting on for desktop apps.
+
+BUILT-IN LOCAL AI (no key, works offline)
+  Type /getbrain (about 1.1 GB, fast) or /getbrain big (2.1 GB, smarter). She downloads the official
+  llama.cpp engine and a small open model (Qwen 2.5) into ~/.capri/localai, runs it on your computer
+  (127.0.0.1 only, never reachable from other devices) and uses it for her lines and chat.
+  Already run Ollama or LM Studio? She uses Ollama automatically; for LM Studio or others set
+  CAPRI_LOCAL_URL (for example http://127.0.0.1:1234).
+  /brain auto   cloud AI when you have a key, the local AI when offline or with no key (default)
+  /brain cloud  always your Claude/Gemini key      /brain local  always the local AI
+  /getbrain remove deletes it. Honest limits: a small model is dumber than Claude (simple replies, sometimes
+  odd), uses 1-3 GB of RAM while running, and is slow on old PCs. It is text only: screen watching (/watch,
+  the AI Spotter) and tasks (/do) still need a Claude key.
+
 DOING TASKS FOR YOU (/do)
   Tell her what you want done and she operates the computer: she looks at your screen, then clicks, types
   and presses keys, one step at a time, until it's finished. Example:

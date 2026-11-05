@@ -32,6 +32,8 @@ import habits
 import hands
 import journal
 import ledges
+import listen
+import localai
 import memory
 import personality
 import reactor
@@ -291,8 +293,47 @@ def gemini_reply(key, messages, persona, max_tokens=800, model=None):
     raise RuntimeError(last)
 
 
+LOCAL_AI = localai.LocalAI()
+BRAIN = {"mode": "auto"}          # auto: cloud when there's a key, local otherwise | cloud | local
+
+
+def refresh_imports():
+    """After pip installs a package while she's running, make it importable without a restart."""
+    import importlib
+    import site
+    importlib.invalidate_caches()
+    try:
+        us = site.getusersitepackages()
+        if os.path.isdir(us) and us not in sys.path:
+            sys.path.append(us)
+    except Exception:
+        pass
+
+
+def ai_available():
+    """Can she write text right now with something (a key and/or a local AI)?"""
+    mode = BRAIN["mode"]
+    if mode == "local":
+        return LOCAL_AI.available()
+    if mode == "cloud":
+        return bool(read_api_key())
+    return bool(read_api_key()) or LOCAL_AI.available()
+
+
 def llm_reply(messages, persona, max_tokens=None, model=None):
     key = read_api_key()
+    mode = BRAIN["mode"]
+    if mode == "local" or (mode == "auto" and not key):
+        return LOCAL_AI.reply(messages, persona, max_tokens or 300)
+    try:
+        return cloud_reply(key, messages, persona, max_tokens, model)
+    except RuntimeError as exc:
+        if mode == "auto" and str(exc).startswith("Can't reach the server") and LOCAL_AI.available():
+            return LOCAL_AI.reply(messages, persona, max_tokens or 300)          # offline: use the local AI
+        raise
+
+
+def cloud_reply(key, messages, persona, max_tokens=None, model=None):
     if not key:
         raise RuntimeError("No API key yet. Put your key in api_key.txt next to me and restart.")
     fn = gemini_reply if detect_provider(key) == "gemini" else claude_reply
@@ -406,6 +447,31 @@ class Win32:
             return buf.value
         except Exception:
             return ""
+
+    def hotkey(self, letter, on_press):
+        """Global Ctrl+Alt+<letter>. on_press runs on a helper thread, so it must only queue something."""
+        if not self.ok or not letter:
+            return False
+        ok = threading.Event()
+        res = {}
+
+        def run():
+            try:
+                ct, wt, u = self.ct, self.wt, self.u
+                res["ok"] = bool(u.RegisterHotKey(None, 0x4361, 0x1 | 0x2 | 0x4000, ord(letter.upper())))
+                ok.set()
+                if not res["ok"]:
+                    return
+                msg = wt.MSG()
+                while u.GetMessageW(ct.byref(msg), None, 0, 0) > 0:
+                    if msg.message == 0x0312:
+                        on_press()
+            except Exception:
+                res["ok"] = False
+                ok.set()
+        threading.Thread(target=run, daemon=True).start()
+        ok.wait(2)
+        return bool(res.get("ok"))
 
     def cursor_pos(self):
         """(x, y) of the mouse, safe to call from any thread. None where unknown."""
@@ -828,7 +894,7 @@ class ChatWindow:
         flat_button(right, "CLEAR", self.clear, C_PANEL2, C_TEXT, "#2a2a40", self.f_small, 8, 3).pack(side="left", padx=3)
 
         self.keybar = None
-        if not read_api_key():
+        if not ai_available():
             self.build_keybar()
 
         # input area (packed first so it stays at the bottom)
@@ -848,8 +914,10 @@ class ChatWindow:
         self.entry.pack(fill="x", expand=True)
         self.entry.bind("<Return>", self.on_enter)
         self.entry.bind("<KeyRelease>", self.autogrow)
+        flat_button(row, "MIC", lambda: self.pet.start_listening(), C_PANEL2, C_GREEN, "#26263a",
+                    (self.fam, 9, "bold"), 10, 9).pack(side="left", padx=(8, 0), fill="y")
         flat_button(row, "SEND", self.send, C_GREEN, C_BLACK, "#3dffa0", (self.fam, 9, "bold"), 14, 9).pack(
-            side="left", padx=(8, 0), fill="y")
+            side="left", padx=(6, 0), fill="y")
 
         # messages
         mid = tk.Frame(w, bg=C_BG)
@@ -1023,7 +1091,7 @@ class ChatWindow:
         mind.chatted(now)
         persona = (self.persona + " " + mind.context(now, self.pet.doing(), self.pet.activity_phrase())
                    + " " + self.pet.memory.context()).strip()
-        offline = None if read_api_key() else mind.offline_reply(text, now)
+        offline = None if ai_available() else mind.offline_reply(text, now)
         snapshot = [{"role": m["role"], "content": m["content"]} for m in self.history[-20:]]
         threading.Thread(target=self.work, args=(snapshot, persona, offline), daemon=True).start()
         self.win.after(100, self.poll)
@@ -1120,7 +1188,7 @@ class ChatWindow:
                              "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
                              "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /tp  /dance  "
                              "/sleep  /calm  /watch  /look  /ailines  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /remember  /facts  /feel  "
-                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /clear")
+                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /talk  /getears  /getbrain  /brain  /clear")
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
@@ -1171,7 +1239,7 @@ class ChatWindow:
             if arg in ("on", "off"):
                 p.settings["ai_lines"] = arg == "on"
                 p.save_settings()
-                self.system_line("AI-written lines: " + arg + ("" if arg == "off" else ("" if read_api_key()
+                self.system_line("AI-written lines: " + arg + ("" if arg == "off" else ("" if ai_available()
                                  else "  (needs an AI key; using presets until you add one)")))
             else:
                 self.system_line("AI-written lines: " + ("on" if p.settings.get("ai_lines", True) else "off")
@@ -1426,6 +1494,26 @@ class ChatWindow:
             else:
                 self.system_line("Tasks: " + ("on" if p.settings.get("agent") else "off")
                                  + "  (/agent on | off).  Needs Full control and a Claude key.  Then: /do <task>")
+        elif cmd == "/talk":
+            p.start_listening()
+        elif cmd == "/getears":
+            p.install_ears()
+        elif cmd == "/getbrain":
+            arg = parts[1].lower() if len(parts) > 1 else "small"
+            if arg == "remove":
+                p.remove_brain()
+            elif arg in localai.MODELS:
+                p.install_brain(arg)
+            else:
+                self.system_line("/getbrain  (small, 1.1 GB)   /getbrain big  (3B, 2.1 GB, smarter)   /getbrain remove\n"
+                                 "Or install Ollama and she'll use it automatically.", err=True)
+        elif cmd == "/brain":
+            arg = parts[1].lower() if len(parts) > 1 else ""
+            if arg in ("auto", "cloud", "local"):
+                p.set_brain(arg)
+            self.system_line(f"AI brain: {BRAIN['mode']}  (/brain auto | cloud | local)\n"
+                             f"Cloud key: {'yes' if read_api_key() else 'no'}   Local AI: {LOCAL_AI.status()}\n"
+                             "auto = cloud when you have a key (local if you're offline), local if no key.")
         elif cmd == "/getvoice":
             if voice.edge_installed():
                 p.speaker = make_speaker()
@@ -1533,6 +1621,7 @@ class SettingsWindow:
         self.build_voice(pad)
         self.build_gaming(pad)
         self.build_ai(pad)
+        self.build_local(pad)
         self.build_behavior(pad)
         self.build_keys(pad)
         w.update_idletasks()
@@ -1703,6 +1792,34 @@ class SettingsWindow:
                            bg=C_PANEL, fg=C_TEXT, selectcolor=C_PANEL2, activebackground=C_PANEL,
                            activeforeground=C_TEXT, font=(self.fam, 9), highlightthickness=0, bd=0).pack(side="left",
                                                                                                          padx=(0, 10))
+
+    def build_local(self, parent):
+        pet = self.pet
+        box = self.section(parent, "LOCAL AI & VOICE INPUT",
+                           "A free AI that runs on YOUR computer (no key, works offline, nothing sent anywhere) and "
+                           "talking to her with your voice (speech is turned into text on your computer too).")
+        self.brain_var = tk.StringVar(value=BRAIN["mode"])
+        for value, label, note in (
+                ("auto", "Automatic", "Cloud AI when you have a key (local AI if you're offline); local AI otherwise."),
+                ("cloud", "Cloud only", "Always your Claude/Gemini key."),
+                ("local", "Local only", "Always the AI on this computer. Nothing leaves it.")):
+            self.radio(box, label, self.brain_var, value, lambda: pet.set_brain(self.brain_var.get()), note)
+        tk.Label(box, text="Local AI now: " + LOCAL_AI.status(), bg=C_PANEL, fg=C_DIM, font=(self.fam, 8),
+                 wraplength=340, justify="left").pack(anchor="w", padx=10, pady=(6, 2))
+        row = tk.Frame(box, bg=C_PANEL)
+        row.pack(anchor="w", padx=10, pady=(2, 4))
+        flat_button(row, "INSTALL LOCAL AI (1.1 GB)", lambda: pet.install_brain("small"), C_PANEL2, C_GREEN,
+                    "#26263a", self.f_small, 8, 4).pack(side="left", padx=(0, 6))
+        flat_button(row, "BIGGER (2.1 GB)", lambda: pet.install_brain("big"), C_PANEL2, C_TEXT, "#26263a",
+                    self.f_small, 8, 4).pack(side="left")
+        tk.Label(box, text="Voice input: " + ("installed. Ctrl+Alt+C, the MIC button or /talk."
+                                              if listen.installed() else "not installed yet."),
+                 bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=340, justify="left").pack(
+            anchor="w", padx=10, pady=(6, 2))
+        flat_button(box, "INSTALL VOICE INPUT", pet.install_ears, C_PANEL2, C_GREEN, "#26263a", self.f_small, 8, 4).pack(
+            anchor="w", padx=10, pady=(0, 6))
+        self.check(box, "Hotkey Ctrl+Alt+C to talk to her (Windows, restart to apply)", "talk_hotkey", True)
+        tk.Frame(box, bg=C_PANEL, height=4).pack()
 
     def toggle_vision(self):
         if self.vision_var.get():
@@ -2142,6 +2259,12 @@ class Capri:
         self.recent_lines = collections.deque(maxlen=8)
         self.agent = None
         self.agent_events = queue.Queue()
+        self.brain_events, self.ears_events = queue.Queue(), queue.Queue()
+        self.heard_events, self.talk_requests = queue.Queue(), queue.Queue()
+        self.brain_busy = self.ears_busy = self.listening = self.listen_stop = self.hotkey_on = False
+        self.whisper = None
+        BRAIN["mode"] = self.settings.get("brain", "auto") if self.settings.get("brain") in ("auto", "cloud", "local") else "auto"
+        LOCAL_AI.which = self.settings.get("brain_model", "small") if self.settings.get("brain_model") in localai.MODELS else "small"
         self.agent_budget = speech.Budget(per_min=40, per_day=250, store=self.settings.setdefault("agent_budget", {}))
         self.voice_install = None
         self.spotter, self.spotter_manual, self.spotter_until = None, False, 0.0
@@ -2182,6 +2305,8 @@ class Capri:
         self.place()
         self.say_ai("greeting", {"away": f"They were away about {self.mind.away_hours:.0f} hours." if self.mind.away_hours >= 3 else ""},
                     self.mind.greeting(now), 7)
+        self.warm_brain()
+        self.start_hotkey()
         self.tick()
 
     # ---- environment
@@ -2256,6 +2381,7 @@ class Capri:
         if not res:
             return
         ok, err = res
+        refresh_imports()
         if ok and voice.edge_installed():
             self.speaker = make_speaker()
             msg = f"Neural voice installed. Voice engine: {self.speaker.engine}."
@@ -2890,7 +3016,7 @@ class Capri:
 
     # ---- lines the AI writes (presets are only the fallback)
     def ai_enabled(self):
-        return bool(self.settings.get("ai_lines", True) and read_api_key() and time.time() >= self.ai_pause_until)
+        return bool(self.settings.get("ai_lines", True) and ai_available() and time.time() >= self.ai_pause_until)
 
     def ai_system(self, now=None):
         now = now or time.time()
@@ -2987,6 +3113,174 @@ class Capri:
         self.save_settings()
         self.say("Okay. I'll watch when you game, if you give me a key.", 5, speak=None)
         return True
+
+    # ---- local AI and voice input
+    def notify(self, text, err=False, secs=6.0):
+        self.say(text, secs, speak=None)
+        if self.chat and self.chat.alive():
+            self.chat.system_line(text, err=err)
+
+    def set_brain(self, mode):
+        BRAIN["mode"] = mode
+        self.settings["brain"] = mode
+        self.save_settings()
+        self.warm_brain()
+
+    def warm_brain(self):
+        """Start the local engine in the background when it will be used, so the first line isn't late."""
+        if (BRAIN["mode"] == "local" or (BRAIN["mode"] == "auto" and not read_api_key())) and LOCAL_AI.available():
+            threading.Thread(target=self._warm, daemon=True).start()
+
+    def _warm(self):
+        try:
+            LOCAL_AI.start()
+        except RuntimeError as exc:
+            log("local ai: " + str(exc))
+
+    def install_brain(self, which="small"):
+        if self.brain_busy:
+            return self.notify("I'm already downloading it. Hang on.", err=True)
+        self.brain_busy = True
+        what = localai.MODELS[which][3]
+        self.notify(f"Installing a local AI: {what}. This downloads about {localai.MODELS[which][2]} MB. "
+                    "You can keep using me.", secs=9)
+
+        def work():
+            try:
+                LOCAL_AI.install.progress = lambda m: self.brain_events.put(("note", m))
+                LOCAL_AI.install.run(which)
+                self.brain_events.put(("ok", which))
+            except Exception as exc:
+                log("brain install failed: " + str(exc))
+                self.brain_events.put(("err", str(exc) or type(exc).__name__))
+        threading.Thread(target=work, daemon=True).start()
+
+    def remove_brain(self):
+        LOCAL_AI.remove()
+        LOCAL_AI.refresh()
+        self.notify("Local AI removed.")
+
+    def drain_brain(self):
+        while True:
+            try:
+                item = self.brain_events.get_nowait()
+            except queue.Empty:
+                break
+            if item[0] == "note":
+                self.notify(item[1], secs=5)
+            elif item[0] == "ok":
+                self.brain_busy = False
+                self.settings["brain_model"] = LOCAL_AI.which = item[1]
+                self.save_settings()
+                LOCAL_AI.refresh()
+                self.notify("Local AI installed. It runs on your computer, no key needed. /brain shows which AI I use.",
+                            secs=9)
+                self.warm_brain()
+            else:
+                self.brain_busy = False
+                self.notify("Couldn't install the local AI: " + item[1][:160], err=True, secs=10)
+        while True:
+            try:
+                item = self.ears_events.get_nowait()
+            except queue.Empty:
+                break
+            self.ears_busy = False
+            refresh_imports()
+            if item[0] == "ok" and listen.installed():
+                self.notify("Voice input installed. Press Ctrl+Alt+C, click MIC or type /talk and speak. "
+                            "The first time she downloads a speech model (about 150 MB).", secs=10)
+                self.start_hotkey()
+            else:
+                self.notify("Couldn't install voice input: " + item[1][:140]
+                            + ". Try: py -m pip install faster-whisper sounddevice", err=True, secs=10)
+        while True:
+            try:
+                self.talk_requests.get_nowait()
+            except queue.Empty:
+                break
+            self.start_listening()
+
+    def install_ears(self):
+        if listen.installed():
+            return self.notify("Voice input is already installed. /talk to try it.")
+        if self.ears_busy:
+            return self.notify("Already installing. Hang on.", err=True)
+        self.ears_busy = True
+        self.notify("Installing voice input (faster-whisper + sounddevice). This takes a minute...", secs=8)
+
+        def work():
+            import subprocess
+            try:
+                r = subprocess.run([sys.executable, "-m", "pip", "install", "--user", *listen.PACKAGES],
+                                   capture_output=True, text=True, timeout=900,
+                                   creationflags=0x08000000 if sys.platform.startswith("win") else 0)
+                tail = (r.stderr or r.stdout or "").strip().splitlines()[-1:] or [""]
+                self.ears_events.put(("ok" if r.returncode == 0 else "err", tail[0]))
+            except (OSError, subprocess.SubprocessError) as exc:
+                self.ears_events.put(("err", str(exc)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def start_hotkey(self):
+        if self.hotkey_on or not self.win32.ok or not self.settings.get("talk_hotkey", True) or not listen.installed():
+            return
+        self.hotkey_on = self.win32.hotkey(str(self.settings.get("talk_key", "C"))[:1] or "C",
+                                           lambda: self.talk_requests.put(1))
+        if not self.hotkey_on:
+            log("talk hotkey could not be registered (another app may use it)")
+
+    def start_listening(self):
+        """Push-to-talk. The mic is only open while she says 'Listening...', then it closes."""
+        if self.listening:
+            self.listen_stop = True                     # pressing it again means 'I'm done talking'
+            return
+        if not listen.installed():
+            return self.notify("I need ears first. Type /getears in my chat and I'll install voice input.", err=True)
+        self.listening, self.listen_stop = True, False
+        self.speaker.stop()                             # never listen to herself
+        self.say("Listening... (click me to finish)", 10, speak=None)
+        self.sfx.play("blip")
+        self.react("think")
+        if self.whisper is None:
+            self.whisper = listen.Whisper(self.settings.get("ears_model", listen.MODEL))
+        whisper = self.whisper
+
+        def work():
+            try:
+                text, state = listen.listen_once(listen.mic_chunks(lambda: self.listen_stop), whisper)
+                self.heard_events.put(("heard", text, state))
+            except Exception as exc:                    # no mic, no permission, model download failed...
+                log(f"listening failed: {type(exc).__name__}: {exc}")
+                self.heard_events.put(("error", str(exc) or type(exc).__name__))
+        threading.Thread(target=work, daemon=True).start()
+
+    def drain_heard(self):
+        while True:
+            try:
+                item = self.heard_events.get_nowait()
+            except queue.Empty:
+                return
+            self.listening = False
+            if item[0] == "error":
+                self.notify("My ears failed: " + item[1][:140] + " (check your microphone and Windows' mic privacy "
+                            "setting)", err=True, secs=9)
+                continue
+            kind, body = listen.intent(item[1])
+            if kind == "none":
+                self.say("Didn't catch that.", 3, speak=None)
+            elif kind == "stop":
+                if self.agent is not None:
+                    self.stop_agent()
+                else:
+                    self.say("Okay.", 2, speak=None)
+            elif kind == "task":
+                self.notify(f'Heard: "{body}"', secs=5)
+                ok, why = self.start_agent(body)
+                if not ok:
+                    self.notify(why, err=True, secs=8)
+            else:
+                self.open_chat()
+                if self.chat and self.chat.alive():
+                    self.chat.submit(body)
 
     # ---- doing tasks for the user (the agent)
     def agent_ready(self):
@@ -3599,6 +3893,8 @@ class Capri:
         self.drain_reactor()
         self.drain_ai(now)
         self.drain_agent()
+        self.drain_brain()
+        self.drain_heard()
         self.check_voice_install()
         self.update_spotter(now)
         if self.pending:
@@ -3729,6 +4025,9 @@ class Capri:
         if self.agent is not None:
             self.stop_agent()
             return
+        if self.listening:
+            self.listen_stop = True
+            return
         self.clicks = [t for t in self.clicks if now - t < 6] + [now]
         if len(self.clicks) >= 2 and now - self.clicks[-2] < 0.4:
             self.open_chat()
@@ -3806,6 +4105,7 @@ class Capri:
             m.add_command(label="Stop timer", command=self.stop_timer)
         else:
             m.add_command(label=f"Start focus timer ({FOCUS_MIN} min)", command=self.start_focus)
+        m.add_command(label="Talk to Capri (voice)", command=self.start_listening)
         m.add_command(label="Remind me...", command=lambda: ReminderDialog(self))
         if self.agent is not None:
             m.add_command(label="STOP the task", command=self.stop_agent)

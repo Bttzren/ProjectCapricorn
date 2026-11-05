@@ -153,3 +153,23 @@ class HearIntentTests(unittest.TestCase):
         self.assertEqual(i("summarize what I copied")[0], "clip")        # the clipboard wins when you mention it
         self.assertEqual(i("what did you say")[0], "chat")
         self.assertEqual(i("tell me what the weather is")[0], "chat")
+
+
+class TapTests(unittest.TestCase):
+    def test_tap_gets_kept_chunks_only_and_errors_dont_break_listening(self):
+        got = []
+        t = [0.0]
+        mute = {"on": False}
+        loop = H.HearLoop(muted=lambda: mute["on"], clock=lambda: t[0], holdoff_s=0.0)
+        loop.tap = got.append
+        loop.feed(tone(1000))
+        mute["on"] = True
+        loop.feed(tone(1000))
+        self.assertEqual(len(got), 1)                                # muted audio never reaches the tap
+        mute["on"] = False
+
+        def bad(_):
+            raise ValueError("x")
+        loop.tap = bad
+        loop.feed(tone(1000))
+        self.assertGreater(loop.ring.seconds_held(), 0)

@@ -305,6 +305,7 @@ class Speaker:
         self.fish, self.edge, self.threaded, self.log = fish, edge, threaded, log or (lambda m: None)
         self.player = player or (lambda p: play_file(p, self.platform, which, popen))
         self.proc = None
+        self.call_player = None             # plays a file into a call (virtual cable); see audioout.py
         self.last_start = -1e9
         self.last_error = ""
         self._gen = 0
@@ -325,9 +326,13 @@ class Speaker:
             return True
         return self.clock() < self._until
 
-    def speak(self, text, priority=False):
-        """Say `text`. Priority lines interrupt; others are dropped if she is busy or spoke just now."""
+    def speak(self, text, priority=False, call=False):
+        """Say `text`. Priority lines interrupt; others are dropped if she is busy or spoke just now.
+        call=True also plays it into the voice call (needs the neural voice and a call_player)."""
         if not self.available:
+            return False
+        if call and not ((self.fish or self.edge) and self.call_player):
+            self.last_error = "speaking into a call needs her neural voice (/getvoice) and a virtual cable"
             return False
         line = clean(text)
         if not line:
@@ -342,16 +347,16 @@ class Speaker:
         self.last_start = now
         if self.fish or self.edge:
             self._gen += 1
-            job = threading.Thread(target=self._fish_job, args=(line, self._gen), daemon=True)
+            job = threading.Thread(target=self._fish_job, args=(line, self._gen, call), daemon=True)
             if self.threaded:
                 self._fetching = True
                 job.start()
             else:
-                self._fish_job(line, self._gen)
+                self._fish_job(line, self._gen, call)
             return True
         return self._speak_system(line)
 
-    def _fish_job(self, line, gen):
+    def _fish_job(self, line, gen, call=False):
         self._fetching = True
         try:
             path = None
@@ -365,12 +370,12 @@ class Speaker:
                     self.last_error = str(exc)
                     self.log(f"{name} failed: {exc}")
             if path is None:
-                if gen == self._gen and self.argv:
+                if gen == self._gen and self.argv and not call:
                     self._speak_system(line)
                 return
             if gen != self._gen:                         # stopped or replaced while downloading
                 return
-            res = self.player(path)
+            res = (self.call_player if call and self.call_player else self.player)(path)
             if res is None:
                 self.last_error = "no audio player found for Capri's voice"
                 if self.argv:

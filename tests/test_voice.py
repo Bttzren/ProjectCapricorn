@@ -398,3 +398,38 @@ class EdgeVoiceTests(unittest.TestCase):
         voice.play_file("/tmp/a.mp3", "linux", which=lambda n: "/usr/bin/" + n if n == "mpg123" else None,
                         popen=lambda argv, **kw: got.append(argv))
         self.assertEqual(got[0][0], "/usr/bin/mpg123")
+
+
+class CallRoutingTests(unittest.TestCase):
+    class Good:
+        def fetch(self, t):
+            return "/tmp/x.mp3"
+
+    def test_call_speech_goes_to_the_call_player_and_needs_neural_voice(self):
+        local, call = [], []
+        sp = voice.Speaker(platform="linux", which=lambda n: None, edge=self.Good(), threaded=False,
+                           player=lambda p: (local.append(p), (None, 1.0))[1])
+        self.assertFalse(sp.speak("hello friends", priority=True, call=True))       # no call player yet
+        self.assertIn("virtual cable", sp.last_error)
+        sp.call_player = lambda p: (call.append(p), (None, 2.0))[1]
+        self.assertTrue(sp.speak("hello friends", priority=True, call=True))
+        self.assertEqual((call, local), (["/tmp/x.mp3"], []))
+        sp.stop()
+        sp.speak("just for me", priority=True)
+        self.assertEqual(local, ["/tmp/x.mp3"])                                      # ordinary speech stays local
+
+    def test_system_voice_cannot_speak_into_a_call(self):
+        sp = voice.Speaker(platform="linux", which=lambda n: "/usr/bin/espeak", threaded=False)
+        sp.call_player = lambda p: (None, 1.0)
+        self.assertFalse(sp.speak("hi", priority=True, call=True))
+
+    def test_failed_call_voice_does_not_leak_to_the_system_voice(self):
+        class Bad:
+            def fetch(self, t):
+                raise RuntimeError("offline")
+        said = []
+        sp = voice.Speaker(platform="linux", which=lambda n: "/usr/bin/espeak", edge=Bad(), threaded=False)
+        sp.call_player = lambda p: (None, 1.0)
+        sp._speak_system = lambda line: said.append(line) or True
+        sp.speak("secret call line", priority=True, call=True)
+        self.assertEqual(said, [])

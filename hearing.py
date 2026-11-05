@@ -100,6 +100,7 @@ class HearLoop:
     def __init__(self, muted=lambda: False, ring=None, beats=None, clock=time.time, holdoff_s=1.0):
         self.muted, self.ring, self.beats, self.clock = muted, ring or Ring(), beats or BeatDetector(), clock
         self.holdoff_s = holdoff_s
+        self.tap = None                                 # optional: called with every kept chunk (call mode)
         self.events = queue.Queue()                     # ('beat', t) and ('music', True/False)
         self.level, self.music, self.error = 0.0, False, ""
         self._hold_until = 0.0
@@ -114,6 +115,12 @@ class HearLoop:
         if now < self._hold_until:
             return
         self.ring.add(pcm)
+        tap = self.tap
+        if tap is not None:
+            try:
+                tap(pcm)
+            except Exception:
+                pass
         self.level = listen.rms(pcm)
         if self.beats.feed(self.level):
             self.events.put(("beat", now))

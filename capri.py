@@ -23,11 +23,13 @@ import tkinter as tk
 from tkinter import font as tkfont
 
 import agent
+import audioout
 import autostart
 import awareness
 import boot
 import breach
 import brief
+import call as calls
 import clip
 import daylog
 import fun
@@ -300,6 +302,12 @@ def gemini_reply(key, messages, persona, max_tokens=800, model=None):
             GEMINI_MODELS.insert(0, model)
         return text or "(Gemini sent an empty reply, try again)"
     raise RuntimeError(last)
+
+
+CABLE_HELP = ("To talk in a call I need a virtual audio cable so your friends can hear me. 1) Install the free "
+              "VB-Audio Virtual Cable (vb-audio.com/Cable) and restart. 2) In Discord > Settings > Voice & Video, set "
+              "Input Device to 'CABLE Output'. 3) So they still hear YOU: Windows Sound settings > Recording > your "
+              "microphone > Properties > Listen > tick 'Listen to this device' and pick 'CABLE Input'. Then /call on.")
 
 
 LOCAL_AI = localai.LocalAI()
@@ -1157,7 +1165,7 @@ class ChatWindow:
             lbl = self.add_bubble("assistant", text, animate=True)
             self.typewrite(lbl, text, 0)
             self.pet.react("happy")
-            self.pet.speak(text, priority=True)
+            self.pet.speak(text, priority=True, call=self.pet.take_route())
             try:
                 if self.win.state() != "normal":                  # a voice command: show it above her instead
                     self.pet.say(text[:200], 9, speak=None)
@@ -1202,7 +1210,7 @@ class ChatWindow:
                              "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
                              "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /tp  /dance  "
                              "/sleep  /calm  /watch  /look  /ailines  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /remember  /facts  /feel  "
-                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /size  /neon  /boot  /hear  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
+                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /size  /neon  /boot  /hear  /call  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
@@ -1521,6 +1529,23 @@ class ChatWindow:
             p.do_control("desktop")
         elif cmd == "/brief":
             p.run_brief()
+        elif cmd == "/call":
+            arg = parts[1].lower() if len(parts) > 1 else ""
+            if arg in ("on", "join"):
+                if p.enable_call(self.win, join=arg == "join"):
+                    self.system_line("Call mode: starting. Say 'Capri ...' in the call.")
+            elif arg == "off":
+                if p.call_active():
+                    p.stop_call()
+                self.system_line("Call mode is off.")
+            elif arg == "setup":
+                self.system_line(CABLE_HELP)
+            else:
+                ok, why = p.call_ready()
+                self.system_line("Call mode: " + ("ON, in the call" if p.call_active() else "off")
+                                 + ("" if ok else "\nNot ready: " + why)
+                                 + "\n/call on (listen where you already are)   /call join (she joins Discord, needs tasks)"
+                                   "   /call off   /call setup")
         elif cmd == "/hear":
             arg = parts[1].lower() if len(parts) > 1 else ""
             if arg == "on":
@@ -1983,6 +2008,13 @@ class SettingsWindow:
                        anchor="w", justify="left", font=(self.fam, 9), highlightthickness=0, bd=0,
                        wraplength=335).pack(fill="x", padx=8, pady=1)
         self.check(box, "Dance to music when she hears it", "hear_dance", True)
+        tk.Label(box, text="Call mode: she listens to your Discord call through the PC audio and answers your friends "
+                           "out loud when they say 'Capri'. Needs a virtual audio cable (type /call setup).",
+                 bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=345, justify="left").pack(
+            anchor="w", padx=10, pady=(4, 2))
+        flat_button(box, "START / STOP CALL MODE",
+                    lambda: pet.stop_call() if pet.call_active() else pet.enable_call(self.win), C_PANEL2, C_GREEN,
+                    "#26263a", (self.fam, 8), 8, 4).pack(anchor="w", padx=10, pady=(0, 6))
         self.check(box, "Allow the microphone (push-to-talk: hotkey, MIC button, /talk)", "mic", True)
         self.check(box, "Hotkey Ctrl+Alt+C to talk to her (Windows, restart to apply)", "talk_hotkey", True)
         self.wake_var = tk.BooleanVar(value=self.pet.wake is not None and self.pet.wake.running)
@@ -2452,6 +2484,8 @@ class Capri:
         self.wake = None
         self.apps, self.apps_at = {}, 0.0
         self.hear, self.hear_ok, self.hear_ok_at = None, True, 0.0
+        self.callloop, self.call_events, self.audio_out = None, queue.Queue(), None
+        self.call_after_agent = self.route_reply = self.call_started_hear = self.call_err_shown = False
         self.pc_events, self.hear_install_events = queue.Queue(), queue.Queue()
         self.music_talk_at, self.pending_hear, self.hear_installing = 0.0, False, False
         self.boot = None
@@ -2744,7 +2778,14 @@ class Capri:
         if speak:
             self.speak(text, priority=(speak == "priority"))
 
-    def speak(self, text, priority=False):
+    def take_route(self):
+        r, self.route_reply = self.route_reply, False
+        return r
+
+    def speak(self, text, priority=False, call=False):
+        if call:                                             # speaking into a voice call ignores the quiet setting
+            self.speaker.speak(text, True, True)
+            return
         level = self.settings.get("voice", "chatty")
         if level == "off" or (level == "replies" and not priority) or (self.calm and not priority):
             return
@@ -3552,6 +3593,7 @@ class Capri:
             self.hear = None
 
     def watch_hear(self, now):
+        self.drain_call()
         while True:
             try:
                 kind, text = self.hear_install_events.get_nowait()
@@ -3643,6 +3685,126 @@ class Capri:
                 if self.chat and self.chat.alive():
                     self.chat.add_bubble("assistant", reply, animate=False)
                 self.say(reply[:220], 14, speak="priority")
+
+    # ---- being in a voice call with friends (she hears them through the PC audio and answers into the call)
+    def call_active(self):
+        return self.callloop is not None and self.callloop.running
+
+    def call_ready(self):
+        if sys.platform == "darwin":
+            return False, "Call mode can't hear a Mac's audio without a helper. It works on Windows and Linux."
+        if not hearing.installed():
+            return False, "I need the PC-audio helper first: /gethear"
+        if not listen.installed():
+            return False, "I need voice input to understand your friends: /getears"
+        if self.speaker.engine not in ("fish", "edge"):
+            return False, "To talk in a call I need my neural voice: /getvoice (the robot voice can't go into a call)."
+        if not ai_available():
+            return False, "I need an AI to answer with (a key, or /getbrain)."
+        if self.audio_out is None:
+            self.audio_out = audioout.Player(log=log)
+        if self.audio_out.cable() is None:
+            return False, CABLE_HELP
+        return True, ""
+
+    def enable_call(self, parent=None, ask=True, join=False):
+        ok, why = self.call_ready()
+        if not ok:
+            self.notify(why, err=True, secs=14)
+            return False
+        if self.call_active():
+            return True
+        local = BRAIN["mode"] == "local" or (BRAIN["mode"] == "auto" and not read_api_key())
+        if ask:
+            from tkinter import messagebox
+            if not messagebox.askyesno(
+                    "Let Capri talk in your call?",
+                    "Capri will listen to your voice call through your PC's audio and answer your friends OUT LOUD in "
+                    "the call.\n\n* Your friends' voices are turned into text on your PC and never saved.\n* "
+                    + ("The local AI writes her answers, so nothing leaves your PC.\n" if local else
+                       "The recent TEXT of the conversation is sent to your AI provider to write her answers.\n")
+                    + "* She answers only when someone says her name, a few times a minute at most.\n* She "
+                    "announces herself to the call when she starts: tell your friends first.\n* Stop her any time "
+                    "with /call off or by saying 'leave the call'.\n\nStart call mode?",
+                    parent=parent, default="no", icon="warning"):
+                return False
+        if join:
+            okj, whyj = self.agent_ready()
+            if okj:
+                self.call_after_agent = True
+                started, msg = self.start_agent("Open Discord and join the voice channel where my friends are. "
+                                                "Do not change any settings and do not type anything.")
+                if started:
+                    return True
+                self.call_after_agent = False
+                self.notify(msg, err=True)
+            else:
+                self.notify("I can't join Discord myself (" + whyj + "). Join the call yourself and I'll listen.",
+                            secs=9)
+        return self.start_call()
+
+    def start_call(self):
+        ok, why = self.call_ready()
+        if not ok:
+            self.notify(why, err=True, secs=14)
+            return False
+        if self.call_active():
+            return True
+        started_hear = self.hear is None or not self.hear.running
+        if not self.start_hear():
+            self.notify("I couldn't start hearing your PC.", err=True)
+            return False
+        self.call_started_hear = started_hear
+        if self.whisper is None:
+            self.whisper = listen.Whisper(self.settings.get("ears_model", listen.MODEL))
+        self.speaker.call_player = audioout.call_player(self.audio_out, self.audio_out.cable())
+        conv = calls.Conversation()
+        self.call_err_shown = False
+        self.callloop = calls.CallLoop(self.whisper, conv, self.call_answer,
+                                       lambda kind, text: self.call_events.put((kind, text)),
+                                       lambda text: self.speaker.speak(text, True, True))
+        self.callloop.start()
+        self.hear.tap = self.callloop.feed
+        self.speaker.speak(calls.ANNOUNCE, True, True)
+        self.notify("I'm in the call. Say my name and I'll answer. /call off to leave.", secs=8)
+        return True
+
+    def stop_call(self, announce=True):
+        if self.callloop is None:
+            return
+        if self.hear is not None:
+            self.hear.tap = None
+        self.callloop.stop()
+        self.callloop = None
+        if announce:
+            self.speaker.speak(calls.GOODBYE, True, True)
+        if self.call_started_hear:
+            self.call_started_hear = False
+            self.root.after(8000, self.stop_hear if not self.settings.get("hear") else (lambda: None))
+        self.root.after(8000, lambda: setattr(self.speaker, "call_player", None) if self.callloop is None else None)
+        self.notify("Left the call.")
+
+    def call_answer(self, conv):
+        """Worker thread: ask the AI what Capri says next ('' = nothing)."""
+        if not self.ai_budget.allow():
+            return ""
+        return llm_reply(conv.messages(), self.ai_system() + " " + calls.RULES, max_tokens=70)
+
+    def drain_call(self):
+        while True:
+            try:
+                kind, text = self.call_events.get_nowait()
+            except queue.Empty:
+                return
+            if kind == "error":
+                if not self.call_err_shown:
+                    self.call_err_shown = True
+                    self.notify("Call hiccup: " + text[:120], err=True, secs=7)
+                continue
+            if self.chat and self.chat.alive():
+                self.chat.system_line(("Friend: " if kind == "heard" else "Me: ") + text[:300])
+            if kind == "reply":
+                self.say(text, 6, speak=None)
 
     # ---- instant voice/typed controls, opening apps and sites, the briefing
     def do_control(self, action):
@@ -3913,6 +4075,12 @@ class Capri:
             if kind == "hear":
                 self.hear_now(body)
                 continue
+            if kind == "call":
+                if body == "off":
+                    self.stop_call()
+                else:
+                    self.enable_call(join=True)
+                continue
             if kind == "launch":
                 self.open_thing(body)
                 continue
@@ -3952,6 +4120,7 @@ class Capri:
             else:
                 self.open_chat(hidden=from_wake)
                 if self.chat and self.chat.alive():
+                    self.route_reply = self.call_active()           # in a call, her answer goes to the friends too
                     self.chat.submit(body)
 
     # ---- doing tasks for the user (the agent)
@@ -4052,6 +4221,12 @@ class Capri:
             elif item[0] == "end":
                 _kind, status, summary, task = item
                 self.agent = None
+                if self.call_after_agent:
+                    self.call_after_agent = False
+                    if status == "done":
+                        self.root.after(1500, self.start_call)
+                    else:
+                        self.notify("I couldn't join the call: " + summary, err=True, secs=9)
                 if self.chat and self.chat.alive():
                     self.chat.win.deiconify()
                     self.chat.system_line(("Done: " if status == "done" else "Stopped: ") + summary, err=status != "done")

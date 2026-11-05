@@ -111,6 +111,31 @@ TALKING TO HER (voice input)
     shows you the task and asks for your OK. Saying "stop" stops a running task.
   * Needs a working microphone and Windows' microphone privacy setting on for desktop apps.
 
+TALKING TO YOUR FRIENDS IN A DISCORD CALL (call mode)
+  She listens to the call through your PC's audio, understands what your friends say, and answers OUT LOUD
+  in the call when someone says "Capri". Start: /call on (you're already in the call) or /call join (she opens
+  Discord and joins the voice channel herself, needs Full control + a Claude key), or say "join Discord and
+  talk to my friends". Stop: /call off or "leave the call". /call status shows what's missing.
+  One-time setup (Windows), because a call only hears your microphone:
+    1. Install the free VB-Audio Virtual Cable (vb-audio.com/Cable) and restart. (Mac: BlackHole, but call mode
+       can't hear a Mac's audio yet.)
+    2. Discord -> Settings -> Voice & Video -> Input Device: "CABLE Output".
+    3. So your friends still hear YOU: Windows Sound settings -> Recording -> your microphone -> Properties ->
+       Listen -> tick "Listen to this device", play through "CABLE Input".
+    4. Type /getears, /gethear and /getvoice once (voice input, PC-audio helper, her neural voice). The robot
+       system voice can't be used in a call.
+  How it works / honest limits:
+    * She answers only when her name is said (or a quick follow-up question right after she spoke), at most 8
+      times a minute, in one short sentence. Chatter that isn't for her is ignored.
+    * Delay is about 3-8 seconds (hear -> understand -> think -> speak). She can't tell your friends apart: they
+      are all "Friend".
+    * When she starts she announces herself to the call ("Hey everyone, it's Capri, the AI on the desktop...").
+      Tell your friends first, and check your server's rules about bots/AI voices.
+    * Privacy: friends' voices become text on your PC and aren't saved. The recent TEXT of the conversation is
+      sent to your AI to write her answers (nothing leaves your PC if she's using the local AI, /brain local).
+    * Her normal chatter never goes into the call; only call answers, plus replies when YOU talk to her with
+      "Hey Capri" while call mode is on. She plays on your speakers too so you hear her.
+
 HEARING YOUR PC (music, videos, calls)
   Turn on with /hear on, the checkbox in Settings -> Local AI & Voice Input, or the FULL preset (it installs
   the small `soundcard` helper if needed, /gethear does it by hand). Windows and Linux only: macOS can't share

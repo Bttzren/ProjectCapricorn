@@ -166,6 +166,11 @@ def intent(text):
         return ("hear", "last")
     if re.fullmatch(r"(summari[sz]e|recap|tldr)( this| that| it)?( call| video| meeting| stream| conversation| lecture| clip)?", low):
         return ("hear", "summarize")
+    if re.search(r"\b(leave|exit|end|quit)\b.*\b(call|vc|voice chat)\b|stop talking to (my )?friends|\bcall mode off\b", low):
+        return ("call", "off")
+    if re.search(r"\bcall mode( on)?\b|talk (to|with) my friends|(join|jump in|hop in|get in).*\b(call|vc|voice (chat|channel))"
+                 r"\b.*\b(talk|chat|hang)\b|(talk|chat|hang out)( to| with)? (my )?friends (in|on) (the )?(discord|call|vc)", low):
+        return ("call", "join")
     if launcher.parse_open(t):
         return ("launch", t)
     words = re.findall(r"[a-z']+", low)

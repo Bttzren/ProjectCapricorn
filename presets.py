@@ -8,16 +8,16 @@ are NOT part of any preset: they act by themselves while you're gone, so they st
 # setting -> value. 'hands' is the control level (visual | media | full).
 PRESETS = {
     "none": {"hands": "visual", "wake": False, "mic": False, "ai_vision": False, "agent": False,
-             "aware": False, "ledges": False},
+             "aware": False, "ledges": False, "hear": False},
     "some": {"hands": "media", "wake": False, "mic": True, "ai_vision": False, "agent": False,
-             "aware": True, "ledges": True},
+             "aware": True, "ledges": True, "hear": False},
     "full": {"hands": "full", "wake": True, "mic": True, "ai_vision": True, "agent": True,
-             "aware": True, "ledges": True},
+             "aware": True, "ledges": True, "hear": True},
 }
 ORDER = ("none", "some", "full")
 LABELS = {"none": "NONE", "some": "SOME", "full": "FULL", "custom": "CUSTOM"}
 DEFAULTS = {"hands": "visual", "wake": False, "mic": True, "ai_vision": False, "agent": False,
-            "aware": True, "ledges": False}      # what the app does with a brand-new settings file
+            "aware": True, "ledges": False, "hear": False}      # what the app does with a brand-new settings file
 
 SUMMARY = {
     "none": "Pure desktop pet. Can't press keys, click, listen, or look at your screen. Everything off.",
@@ -37,6 +37,7 @@ EFFECTS = {
     "agent": "/do tasks: she looks at your screen and clicks/types to do things you ask",
     "aware": "Knows what kind of app you're using (games, browser, editor...), never saves titles",
     "ledges": "Looks at your screen (on your PC only) to find boxes she can sit on",
+    "hear": "Hears your PC's audio (music, videos, calls) on your PC only: dances to music, can transcribe or summarize what just played",
 }
 
 
@@ -77,7 +78,7 @@ def table(settings):
     cur = current(settings)
     names = {"hands": "Control", "wake": "Always-listen (Hey Capri)", "mic": "Push-to-talk microphone",
              "ai_vision": "AI sees your screen", "agent": "Tasks (/do)", "aware": "Awareness",
-             "ledges": "Screen ledges"}
+             "ledges": "Screen ledges", "hear": "Hears your PC audio"}
     out = [f"Preset: {LABELS[detect(settings)]}"]
     for k, label in names.items():
         v = cur[k]

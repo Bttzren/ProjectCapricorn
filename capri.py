@@ -34,6 +34,7 @@ import fun
 import gamemode
 import habits
 import hands
+import hearing
 import journal
 import launcher
 import ledges
@@ -1201,7 +1202,7 @@ class ChatWindow:
                              "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
                              "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /tp  /dance  "
                              "/sleep  /calm  /watch  /look  /ailines  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /remember  /facts  /feel  "
-                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /size  /neon  /boot  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
+                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /size  /neon  /boot  /hear  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
@@ -1520,6 +1521,24 @@ class ChatWindow:
             p.do_control("desktop")
         elif cmd == "/brief":
             p.run_brief()
+        elif cmd == "/hear":
+            arg = parts[1].lower() if len(parts) > 1 else ""
+            if arg == "on":
+                self.system_line("I can hear your PC." if p.enable_hear(self.win) else "Okay, not listening to the PC.")
+            elif arg == "off":
+                p.disable_hear()
+            elif arg in ("last", "summarize", "summary", "recap"):
+                p.hear_now("last" if arg == "last" else "summarize")
+            else:
+                on = p.hear is not None and p.hear.running
+                self.system_line("Hearing the PC: " + ("ON" if on else "off")
+                                 + (f"  (holding {p.hear.ring.seconds_held():.0f}s of audio in memory)" if on else "")
+                                 + "\n/hear on | off | last (what they just said) | summarize")
+        elif cmd == "/gethear":
+            if hearing.installed():
+                self.system_line("The PC-audio helper is already installed. /hear on")
+            else:
+                p.install_hear()
         elif cmd == "/boot":
             arg = parts[1].lower() if len(parts) > 1 else ""
             if arg in ("on", "off"):
@@ -1950,6 +1969,20 @@ class SettingsWindow:
             anchor="w", padx=10, pady=(6, 2))
         flat_button(box, "INSTALL VOICE INPUT", pet.install_ears, C_PANEL2, C_GREEN, "#26263a", (self.fam, 8), 8, 4).pack(
             anchor="w", padx=10, pady=(0, 6))
+        self.hear_var = tk.BooleanVar(value=pet.hear is not None and pet.hear.running)
+
+        def toggle_hear():
+            if self.hear_var.get():
+                if not pet.enable_hear(self.win):
+                    self.hear_var.set(False)
+            else:
+                pet.disable_hear()
+        tk.Checkbutton(box, text="Let her hear my PC's audio (music, videos, calls: she dances to the beat and can "
+                                 "tell you what was just said)", variable=self.hear_var, command=toggle_hear,
+                       bg=C_PANEL, fg=C_TEXT, selectcolor=C_PANEL2, activebackground=C_PANEL, activeforeground=C_TEXT,
+                       anchor="w", justify="left", font=(self.fam, 9), highlightthickness=0, bd=0,
+                       wraplength=335).pack(fill="x", padx=8, pady=1)
+        self.check(box, "Dance to music when she hears it", "hear_dance", True)
         self.check(box, "Allow the microphone (push-to-talk: hotkey, MIC button, /talk)", "mic", True)
         self.check(box, "Hotkey Ctrl+Alt+C to talk to her (Windows, restart to apply)", "talk_hotkey", True)
         self.wake_var = tk.BooleanVar(value=self.pet.wake is not None and self.pet.wake.running)
@@ -2418,6 +2451,9 @@ class Capri:
         self.whisper = None
         self.wake = None
         self.apps, self.apps_at = {}, 0.0
+        self.hear, self.hear_ok, self.hear_ok_at = None, True, 0.0
+        self.pc_events, self.hear_install_events = queue.Queue(), queue.Queue()
+        self.music_talk_at, self.pending_hear, self.hear_installing = 0.0, False, False
         self.boot = None
         self.mono = pick_font(self.root, "Consolas", "Menlo", "DejaVu Sans Mono", "Courier New")
         self.trail = collections.deque(maxlen=40)
@@ -2474,6 +2510,8 @@ class Capri:
         self.start_hotkey()
         if self.settings.get("wake"):
             self.start_wake()
+        if self.settings.get("hear"):
+            self.start_hear()
         self.tick()
 
     # ---- environment
@@ -3450,6 +3488,162 @@ class Capri:
         if not self.hotkey_on:
             log("talk hotkey could not be registered (another app may use it)")
 
+    # ---- hearing the PC's own audio
+    def enable_hear(self, parent=None, ask=True):
+        from tkinter import messagebox
+        if sys.platform == "darwin":
+            self.notify("macOS can't share its audio without a helper (like BlackHole), so I can't hear your Mac.",
+                        err=True)
+            return False
+        if ask and not messagebox.askyesno(
+                "Let Capri hear your PC?",
+                "While this is on, Capri listens to whatever your PC is PLAYING (music, videos, game sound, voice "
+                "calls).\n\n* The audio is kept only in memory (the last minute), never saved to disk.\n* It's "
+                "turned into text on your computer, only when you ask (\"what did they just say\", \"summarize "
+                "this\"). Nothing is sent anywhere unless you ask for a summary, which sends the TEXT to your AI.\n"
+                "* A call can include other people's voices: tell them if that matters.\n* She uses the beat to dance "
+                "to music. She pauses on banking/password windows and while she's talking.\n\nTurn on hearing your PC?",
+                parent=parent, default="no", icon="warning"):
+            return False
+        self.settings["hear"] = True
+        self.save_settings()
+        if not self.start_hear():
+            self.install_hear()
+        return True
+
+    def disable_hear(self):
+        self.settings["hear"] = False
+        self.save_settings()
+        self.stop_hear()
+        self.notify("Okay, I'm not listening to your PC any more.")
+
+    def install_hear(self):
+        if self.hear_installing:
+            return
+        self.hear_installing = True
+        self.notify("Installing the PC-audio helper (soundcard). A few seconds...", secs=6)
+
+        def work():
+            import subprocess
+            try:
+                r = subprocess.run([sys.executable, "-m", "pip", "install", "--user", *hearing.PACKAGES],
+                                   capture_output=True, text=True, timeout=600,
+                                   creationflags=0x08000000 if sys.platform.startswith("win") else 0)
+                tail = (r.stderr or r.stdout or "").strip().splitlines()[-1:] or [""]
+                self.hear_install_events.put(("ok" if r.returncode == 0 else "err", tail[0]))
+            except (OSError, subprocess.SubprocessError) as exc:
+                self.hear_install_events.put(("err", str(exc)))
+        threading.Thread(target=work, daemon=True).start()
+
+    def start_hear(self):
+        if self.hear is not None and self.hear.running:
+            return True
+        if not hearing.installed() or sys.platform == "darwin":
+            return False
+        loop = hearing.HearLoop(muted=lambda: self.speaker.speaking or not self.hear_ok)
+        loop.start(lambda: hearing.loopback_chunks(lambda: loop._stop.is_set()))
+        self.hear = loop
+        self.notify("I can hear your PC now. Ask 'what did they just say' or 'summarize this'.", secs=6)
+        return True
+
+    def stop_hear(self):
+        if self.hear is not None:
+            self.hear.stop()
+            self.hear = None
+
+    def watch_hear(self, now):
+        while True:
+            try:
+                kind, text = self.hear_install_events.get_nowait()
+            except queue.Empty:
+                break
+            self.hear_installing = False
+            refresh_imports()
+            if kind == "ok" and hearing.installed():
+                if self.settings.get("hear"):
+                    self.start_hear()
+            else:
+                self.notify("Couldn't install the PC-audio helper: " + text[:120] + ". Try: py -m pip install soundcard",
+                            err=True, secs=10)
+        self.drain_pc()
+        h = self.hear
+        if h is None:
+            return
+        if now - self.hear_ok_at > 2.0:                       # pause on private-looking windows
+            self.hear_ok_at = now
+            title = self.win32.foreground_title() if self.win32.ok else ""
+            self.hear_ok = ledges.should_scan(title)
+        for kind, val in h.take():
+            if kind == "error":
+                self.stop_hear()
+                self.notify("I can't hear your PC: " + str(val)[:140], err=True, secs=9)
+                return
+            if kind == "beat":
+                self.bop(now)
+            elif kind == "music" and val and now - self.music_talk_at > 300 and not self.game and not self.boot:
+                self.music_talk_at = now
+                self.say_moment("music just started playing on the user's PC and you feel like bopping to the beat",
+                                "Ooh, this one slaps.", 5, wait=3)
+                if self.state in ("idle", "perch") and self.settings.get("hear_dance", True) and not self.calm:
+                    self.go("dance", 6)
+
+    def bop(self, now):
+        if (not self.settings.get("hear_dance", True) or self.game or self.boot or self.calm or not self.hear
+                or not self.hear.music):
+            return
+        if self.state in ("idle", "perch", "walk") and self.fy >= self.ground() - 3:
+            self.hop(4.5)
+            if now > self.icon_free_at(now):
+                self.set_icon("note", 0.9)
+
+    def icon_free_at(self, now):
+        return self.icon[2] if self.icon else 0.0
+
+    def hear_now(self, mode="last"):
+        if self.hear is None or not self.hear.running:
+            return self.notify("I'm not listening to your PC. Turn it on: /hear on", err=True)
+        if not listen.installed():
+            return self.notify("I need voice input to turn speech into text: /getears", err=True)
+        pcm = self.hear.ring.last(20 if mode == "last" else 60)
+        if len(pcm) < hearing.RATE * 2 * 2:
+            return self.notify("I haven't heard anything from your PC lately.", err=True)
+        if self.whisper is None:
+            self.whisper = listen.Whisper(self.settings.get("ears_model", listen.MODEL))
+        whisper = self.whisper
+        self.notify("Listening back to the last bit...", secs=4)
+
+        def work():
+            try:
+                text = whisper.transcribe(pcm)
+                if mode == "summarize" and text:
+                    reply = llm_reply([{"role": "user", "content": hearing.summary_prompt(text)}],
+                                      "You are Capri, a helpful desktop companion.", max_tokens=250)
+                    self.pc_events.put(("sum", text, reply))
+                else:
+                    self.pc_events.put(("last", text, ""))
+            except Exception as exc:
+                self.pc_events.put(("err", str(exc) or type(exc).__name__, ""))
+        threading.Thread(target=work, daemon=True).start()
+
+    def drain_pc(self):
+        while True:
+            try:
+                kind, text, reply = self.pc_events.get_nowait()
+            except queue.Empty:
+                return
+            if kind == "err":
+                self.notify("Couldn't make that out: " + text[:140], err=True, secs=8)
+            elif not text:
+                self.notify("I didn't catch any speech in that.", err=True)
+            elif kind == "last":
+                if self.chat and self.chat.alive():
+                    self.chat.system_line("They said: " + text[:700])
+                self.say(text[-220:], 12, speak=None)
+            else:
+                if self.chat and self.chat.alive():
+                    self.chat.add_bubble("assistant", reply, animate=False)
+                self.say(reply[:220], 14, speak="priority")
+
     # ---- instant voice/typed controls, opening apps and sites, the briefing
     def do_control(self, action):
         ok, msg = self.hands.do("press", "win+d") if action == "desktop" else self.hands.do(action)
@@ -3541,8 +3735,15 @@ class Capri:
         elif not cfg["ledges"] and self.settings.get("ledges"):
             self.disable_ledges()
         self.settings["wake"] = cfg["wake"]
+        self.settings["hear"] = cfg["hear"]
         self.save_settings()
         notes = []
+        if cfg["hear"] and sys.platform != "darwin":
+            if not self.start_hear():
+                self.install_hear()
+                notes.append("installing the PC-audio helper")
+        elif not cfg["hear"]:
+            self.stop_hear()
         if cfg["wake"]:
             if listen.installed():
                 self.start_wake()
@@ -3708,6 +3909,9 @@ class Capri:
                 continue
             if kind == "control":
                 self.do_control(body)
+                continue
+            if kind == "hear":
+                self.hear_now(body)
                 continue
             if kind == "launch":
                 self.open_thing(body)
@@ -4361,6 +4565,7 @@ class Capri:
         self.drain_reactor()
         self.drain_ai(now)
         self.watch_size(now)
+        self.watch_hear(now)
         self.drain_agent()
         self.drain_brain()
         self.drain_clip()

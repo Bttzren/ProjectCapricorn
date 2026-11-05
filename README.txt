@@ -111,6 +111,21 @@ TALKING TO HER (voice input)
     shows you the task and asks for your OK. Saying "stop" stops a running task.
   * Needs a working microphone and Windows' microphone privacy setting on for desktop apps.
 
+HEARING YOUR PC (music, videos, calls)
+  Turn on with /hear on, the checkbox in Settings -> Local AI & Voice Input, or the FULL preset (it installs
+  the small `soundcard` helper if needed, /gethear does it by hand). Windows and Linux only: macOS can't share
+  its audio without a helper like BlackHole.
+  * She dances to music: a steady beat makes her bop (and start dancing when a song starts). Speech, game
+    explosions and other irregular noise don't count. Turn that off with the "Dance to music" setting.
+  * "Hey Capri, what did they just say?" (or /hear last) turns the last ~20 seconds of your PC's audio into
+    text ON YOUR PC and shows it. "Summarize this call/video" (or /hear summarize) transcribes the last minute
+    and has your AI summarize the TEXT in a few sentences.
+  * Privacy: the audio lives only in memory (the last minute), is never saved, and is wiped when you turn
+    this off. It is only turned into text when you ask. Only a summary request sends anything out, and that is
+    the transcript text, to your AI. A call can include other people's voices, so tell them if that matters.
+    She ignores the PC audio while she's talking (so she never hears herself) and on banking/password
+    windows. Needs voice input installed (/getears) for the transcribing part.
+
 INSTANT COMMANDS (typed, or by voice after "Hey Capri" / "Choom"; no AI, no waiting)
   Media/system:  "pause", "next song", "previous", "volume up/down", "mute", "take a screenshot", "lock my
                  screen", "show desktop"  (/desktop). Need Media keys or higher (the SOME preset); show desktop

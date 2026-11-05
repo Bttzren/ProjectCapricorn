@@ -161,6 +161,11 @@ def intent(text):
         return ("size", low)
     if re.search(r"\b(copied|clipboard)\b", low) and re.search(r"\b(explain|summari[sz]e|translate|fix|reply|what)\b", low):
         return ("clip", low)
+    if re.search(r"what (did|was)( he| she| they| that| the)?( that| they)?( guy| person| man| woman)? (just )?(say|said)|"
+                 r"what are (they|he|she) saying|say that again|transcribe (that|this)|what did i miss", low):
+        return ("hear", "last")
+    if re.fullmatch(r"(summari[sz]e|recap|tldr)( this| that| it)?( call| video| meeting| stream| conversation| lecture| clip)?", low):
+        return ("hear", "summarize")
     if launcher.parse_open(t):
         return ("launch", t)
     words = re.findall(r"[a-z']+", low)

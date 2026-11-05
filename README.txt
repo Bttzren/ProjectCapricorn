@@ -171,6 +171,11 @@ LAUNCH ANIMATION
   longer "first boot" version with its own lines. Click her to skip it. Replay it with /boot (or /boot first),
   switch it off with /boot off or in Settings -> Behaviour. It uses your neon colour (/neon).
 
+CYBERPUNK LOOK (chat window and settings)
+  Both windows are drawn sharp: no rounded corners, 1px neon borders, notched dividers, monospace type,
+  terminal-style tags ("CAPRI 15:12" / "YOU"), [SYS] and [ERR] lines, [x] / (*) neon toggles and outlined
+  buttons that light up on hover. They use your neon colour (/neon magenta and reopen them to see it).
+
 NEON LOOK (Settings -> SIZE & LOOK, or /neon cyan | magenta | yellow | green | red | white | off)
   On by default (cyan): a solid glowing outline around her, neon speed ghosts behind her when she flies
   fast, and speech bubbles in the same colour. /neon off goes back to the plain look.

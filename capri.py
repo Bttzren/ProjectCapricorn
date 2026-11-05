@@ -51,6 +51,7 @@ import sfx
 import simon
 import sizing
 import speech
+import ui
 import vision
 import voice
 import world
@@ -85,7 +86,7 @@ GEMINI_MODELS = [m for m in (os.environ.get("CAPRI_GEMINI_MODEL"),) if m] or [
     "gemini-flash-latest", "gemini-3.8-flash", "gemini-2.5-flash"]
 KEY = "#ff00ff"               # Windows transparency key
 
-C_BG, C_PANEL, C_PANEL2 = "#0b0b14", "#14141f", "#1d1d2d"
+C_BG, C_PANEL, C_PANEL2 = ui.BG, ui.PANEL, ui.PANEL2
 C_GREEN, C_RED, C_BLUE = "#05f56f", "#fb0948", "#1969eb"
 C_TEXT, C_DIM, C_BLACK = "#eaeaf5", "#8a8aa3", "#0c0a16"
 
@@ -837,11 +838,12 @@ def round_rect(c, x1, y1, x2, y2, r, **kw):
 
 
 def flat_button(parent, text, command, bg, fg, hover, font, padx=12, pady=5):
-    b = tk.Label(parent, text=text, bg=bg, fg=fg, font=font, padx=padx, pady=pady, cursor="hand2")
-    b.bind("<Button-1>", lambda e: command())
-    b.bind("<Enter>", lambda e: b.config(bg=hover))
-    b.bind("<Leave>", lambda e: b.config(bg=bg))
-    return b
+    """The app's button, drawn sharp and neon: solid when `bg` is the accent green, outlined otherwise."""
+    filled = bg in (C_GREEN, C_RED)
+    color = C_RED if (bg == C_RED or (not filled and fg == C_RED)) else ui.acc()
+    if isinstance(font, tuple) and len(font) >= 2:
+        font = (ui.mono_font(parent), font[1], "bold")
+    return ui.button(parent, text, command, font, filled=filled, color=color, padx=padx, pady=pady)
 
 
 # ------------------------------------------------------------------ chat window
@@ -853,8 +855,10 @@ class ChatWindow:
         self.pet = pet
         root = pet.root
         self.fam = pet.font_family
+        self.fam = ui.mono_font(root)
+        self.acc, self.acc2 = ui.acc(), ui.THEME["acc2"]
         self.win = tk.Toplevel(root)
-        self.win.title("Capri")
+        self.win.title("CAPRI//LINK")
         self.win.configure(bg=C_BG)
         self.win.minsize(340, 460)
         self.win.geometry(pet.settings.get("chat_geom", "400x600"))
@@ -893,22 +897,25 @@ class ChatWindow:
 
     def build(self):
         w = self.win
+        acc = self.acc
+        ui.rule(w, 12, acc, C_BG).pack(fill="x")
         head = tk.Frame(w, bg=C_PANEL)
         head.pack(fill="x")
-        tk.Frame(w, bg=C_GREEN, height=2).pack(fill="x")
-        self.portrait = tk.Label(head, image=self.photo("idle"), bg=C_PANEL)
-        self.portrait.pack(side="left", padx=(14, 10), pady=8)
+        self.portrait = tk.Label(head, image=self.photo("idle"), bg=C_PANEL, bd=0, highlightthickness=2,
+                                 highlightbackground=acc)
+        self.portrait.pack(side="left", padx=(12, 10), pady=8)
         col = tk.Frame(head, bg=C_PANEL)
         col.pack(side="left")
-        tk.Label(col, text="CAPRI", bg=C_PANEL, fg=C_GREEN, font=(self.fam, 14, "bold")).pack(anchor="w")
-        self.status = tk.Label(col, text="● online", bg=C_PANEL, fg=C_DIM, font=self.f_small)
+        tk.Label(col, text="CAPRI//LINK", bg=C_PANEL, fg=acc, font=(self.fam, 14, "bold")).pack(anchor="w")
+        tk.Label(col, text="ENCRYPTED CHANNEL  v2.0", bg=C_PANEL, fg=ui.DIM, font=(self.fam, 7)).pack(anchor="w")
+        self.status = tk.Label(col, text="● ONLINE", bg=C_PANEL, fg=C_GREEN, font=(self.fam, 8, "bold"))
         self.status.pack(anchor="w")
         right = tk.Frame(head, bg=C_PANEL)
         right.pack(side="right", padx=10)
-        self.pin_btn = flat_button(right, "PINNED" if self.topmost else "PIN", self.toggle_pin, C_PANEL2, C_TEXT,
-                                   "#2a2a40", self.f_small, 8, 3)
+        self.pin_btn = ui.button(right, "[PINNED]" if self.topmost else "[PIN]", self.toggle_pin, self.f_small, pady=2)
         self.pin_btn.pack(side="left", padx=3)
-        flat_button(right, "CLEAR", self.clear, C_PANEL2, C_TEXT, "#2a2a40", self.f_small, 8, 3).pack(side="left", padx=3)
+        ui.button(right, "[CLEAR]", self.clear, self.f_small, pady=2).pack(side="left", padx=3)
+        ui.rule(w, 8, ui.blend(acc, C_BG, 0.5), C_BG, notch=False).pack(fill="x")
 
         self.keybar = None
         if not ai_available():
@@ -917,23 +924,26 @@ class ChatWindow:
         # input area (packed first so it stays at the bottom)
         bottom = tk.Frame(w, bg=C_PANEL)
         bottom.pack(side="bottom", fill="x")
+        ui.rule(bottom, 8, acc, C_PANEL, notch=False).pack(fill="x")
         chips = tk.Frame(bottom, bg=C_PANEL)
-        chips.pack(fill="x", padx=10, pady=(8, 2))
+        chips.pack(fill="x", padx=10, pady=(6, 2))
         for label, payload in self.CHIPS:
-            flat_button(chips, label, lambda p=payload: self.chip(p), C_PANEL2, C_GREEN, "#26263a",
-                        self.f_small, 9, 3).pack(side="left", padx=(0, 6))
+            ui.button(chips, "[" + label.upper() + "]", lambda p=payload: self.chip(p), (self.fam, 7, "bold"),
+                      padx=6, pady=2).pack(side="left", padx=(0, 5))
         row = tk.Frame(bottom, bg=C_PANEL)
         row.pack(fill="x", padx=10, pady=(4, 10))
-        box = tk.Frame(row, bg=C_PANEL2, highlightthickness=1, highlightbackground="#2a2a40", highlightcolor=C_GREEN)
+        box = tk.Frame(row, bg=C_PANEL2, highlightthickness=1, highlightbackground=ui.LINE, highlightcolor=acc)
         box.pack(side="left", fill="x", expand=True)
-        self.entry = tk.Text(box, height=1, wrap="word", bg=C_PANEL2, fg=C_TEXT, insertbackground=C_GREEN,
-                             relief="flat", bd=0, padx=10, pady=8, font=(self.fam, 10), undo=True, width=1)
-        self.entry.pack(fill="x", expand=True)
+        tk.Label(box, text="›", bg=C_PANEL2, fg=acc, font=(self.fam, 12, "bold")).pack(side="left", padx=(8, 0))
+        self.entry = tk.Text(box, height=1, wrap="word", bg=C_PANEL2, fg=ui.TEXT, insertbackground=acc,
+                             relief="flat", bd=0, padx=6, pady=8, font=(self.fam, 10), undo=True, width=1,
+                             highlightthickness=0, selectbackground=ui.blend(acc, C_BG, 0.55), selectforeground="#ffffff")
+        self.entry.pack(side="left", fill="x", expand=True)
         self.entry.bind("<Return>", self.on_enter)
         self.entry.bind("<KeyRelease>", self.autogrow)
-        flat_button(row, "MIC", lambda: self.pet.start_listening(), C_PANEL2, C_GREEN, "#26263a",
-                    (self.fam, 9, "bold"), 10, 9).pack(side="left", padx=(8, 0), fill="y")
-        flat_button(row, "SEND", self.send, C_GREEN, C_BLACK, "#3dffa0", (self.fam, 9, "bold"), 14, 9).pack(
+        ui.button(row, "MIC", lambda: self.pet.start_listening(), (self.fam, 9, "bold"), padx=10, pady=9).pack(
+            side="left", padx=(8, 0), fill="y")
+        ui.button(row, "SEND ▸", self.send, (self.fam, 9, "bold"), filled=True, padx=12, pady=9).pack(
             side="left", padx=(6, 0), fill="y")
 
         # messages
@@ -950,21 +960,36 @@ class ChatWindow:
             wd.bind("<Button-4>", lambda e: self.canvas.yview_scroll(-3, "units"))
             wd.bind("<Button-5>", lambda e: self.canvas.yview_scroll(3, "units"))
         self.bubbles = []
+        self.win.after(700, self.blink)
+
+    def blink(self):
+        """The little status dot pulses while she's online."""
+        if not self.alive():
+            return
+        try:
+            txt = self.status.cget("text")
+            if txt.startswith("●") and self.status.cget("fg") in (C_GREEN, ui.blend(C_GREEN, C_PANEL, 0.6)):
+                self.status.config(fg=ui.blend(C_GREEN, C_PANEL, 0.6) if self.status.cget("fg") == C_GREEN else C_GREEN)
+        except tk.TclError:
+            return
+        self.win.after(700, self.blink)
 
     def build_keybar(self):
-        bar = self.keybar = tk.Frame(self.win, bg=C_PANEL2)
+        bar = self.keybar = tk.Frame(self.win, bg=C_PANEL2, highlightthickness=1,
+                                     highlightbackground=ui.blend(ui.THEME["warn"], C_BG, 0.5))
         bar.pack(fill="x")
-        tk.Label(bar, text="Paste a Claude (sk-ant...) or Gemini key to unlock real chat. "
-                           "Until then I answer in offline mode.", bg=C_PANEL2, fg=C_DIM, font=self.f_small,
-                 wraplength=360, justify="left").pack(anchor="w", padx=10, pady=(6, 2))
+        tk.Label(bar, text="[!] NO AI KEY. Paste a Claude (sk-ant...) or Gemini key to unlock real chat, or type "
+                           "/getbrain for a free local AI. Until then I answer in offline mode.", bg=C_PANEL2,
+                 fg=ui.THEME["warn"], font=self.f_small, wraplength=360, justify="left").pack(anchor="w", padx=10,
+                                                                                               pady=(6, 2))
         row = tk.Frame(bar, bg=C_PANEL2)
         row.pack(fill="x", padx=10, pady=(0, 8))
-        self.key_entry = tk.Entry(row, bg=C_PANEL, fg=C_TEXT, insertbackground=C_GREEN, relief="flat", show="*",
-                                  font=(self.fam, 9), highlightthickness=1, highlightbackground="#2a2a40",
-                                  highlightcolor=C_GREEN)
+        self.key_entry = tk.Entry(row, bg=C_PANEL, fg=C_TEXT, insertbackground=self.acc, relief="flat", show="*",
+                                  font=(self.fam, 9), highlightthickness=1, highlightbackground=ui.LINE,
+                                  highlightcolor=self.acc)
         self.key_entry.pack(side="left", fill="x", expand=True, ipady=4)
         self.key_entry.bind("<Return>", lambda e: self.save_key())
-        flat_button(row, "SAVE KEY", self.save_key, C_GREEN, C_BLACK, "#3dffa0", self.f_small, 10, 4).pack(
+        ui.button(row, "SAVE KEY", self.save_key, self.f_small, filled=True, padx=10, pady=4).pack(
             side="left", padx=(6, 0))
 
     def drop_keybar(self):
@@ -1007,30 +1032,32 @@ class ChatWindow:
     def add_bubble(self, role, text, ts="", animate=False):
         mine = role == "user"
         row = tk.Frame(self.inner, bg=C_BG)
-        row.pack(fill="x", padx=12, pady=(8, 0))
+        row.pack(fill="x", padx=12, pady=(10, 0))
         side = "right" if mine else "left"
         holder = tk.Frame(row, bg=C_BG)
         holder.pack(side=side)
-        accent = C_RED if mine else C_GREEN
-        bg = "#2a0f1b" if mine else "#0f2219"
-        fg = "#ffe3ea" if mine else "#dcffea"
-        line = tk.Frame(holder, bg=bg)
+        col = self.acc2 if mine else self.acc
+        bg = ui.blend(col, C_BG, 0.88)
+        fg = "#ffe9fb" if mine else "#e6fcff"
+        stamp = ts or time.strftime("%H:%M")
+        tag = tk.Label(holder, text=("YOU" if mine else "CAPRI") + f"  {stamp}", bg=C_BG, fg=col,
+                       font=(self.fam, 7, "bold"))
+        tag.pack(anchor="e" if mine else "w")
+        line = tk.Frame(holder, bg=bg, highlightthickness=1, highlightbackground=ui.blend(col, C_BG, 0.62))
         line.pack()
+        wrap = int(max(160, self.canvas.winfo_width() * 0.70))
         if mine:
             lbl = tk.Label(line, text=text, bg=bg, fg=fg, font=self.f_body, justify="left", anchor="w",
-                           padx=12, pady=8, wraplength=int(max(160, self.canvas.winfo_width() * 0.70)))
+                           padx=12, pady=7, wraplength=wrap)
             lbl.pack(side="left")
-            tk.Frame(line, bg=accent, width=3).pack(side="left", fill="y")
+            tk.Frame(line, bg=col, width=4).pack(side="left", fill="y")
         else:
-            tk.Frame(line, bg=accent, width=3).pack(side="left", fill="y")
+            tk.Frame(line, bg=col, width=4).pack(side="left", fill="y")
             lbl = tk.Label(line, text="" if animate else text, bg=bg, fg=fg, font=self.f_body, justify="left",
-                           anchor="w", padx=12, pady=8,
-                           wraplength=int(max(160, self.canvas.winfo_width() * 0.70)))
+                           anchor="w", padx=12, pady=7, wraplength=wrap)
             lbl.pack(side="left")
-        stamp = ts or time.strftime("%H:%M")
-        tk.Label(holder, text=stamp, bg=C_BG, fg=C_DIM, font=(self.fam, 7)).pack(anchor="e" if mine else "w")
         self.bubbles.append(lbl)
-        for wd in (row, holder, line, lbl):
+        for wd in (row, holder, line, lbl, tag):
             wd.bind("<MouseWheel>", self.on_wheel)
         lbl.bind("<Button-1>", lambda e, t=text: self.copy(t))
         self.win.after(30, self.scroll_end)
@@ -1038,20 +1065,21 @@ class ChatWindow:
 
     def system_line(self, text, err=False):
         row = tk.Frame(self.inner, bg=C_BG)
-        row.pack(fill="x", padx=12, pady=(10, 0))
-        lbl = tk.Label(row, text=text, bg=C_BG, fg=C_RED if err else C_DIM, font=(self.fam, 8, "italic"),
-                       wraplength=int(max(160, self.canvas.winfo_width() * 0.85)), justify="center")
-        lbl.pack()
+        row.pack(fill="x", padx=12, pady=(8, 0))
+        color = ui.THEME["err"] if err else ui.DIM
+        lbl = tk.Label(row, text=("[ERR] " if err else "[SYS] ") + text, bg=C_BG, fg=color, font=(self.fam, 8),
+                       wraplength=int(max(160, self.canvas.winfo_width() * 0.92)), justify="left", anchor="w")
+        lbl.pack(fill="x")
         self.bubbles.append(lbl)
         self.win.after(30, self.scroll_end)
 
     def copy(self, text):
         self.win.clipboard_clear()
         self.win.clipboard_append(text)
-        self.set_status("copied to clipboard", C_GREEN)
-        self.win.after(1200, lambda: self.set_status("● online"))
+        self.set_status("● COPIED", self.acc)
+        self.win.after(1200, lambda: self.set_status("● ONLINE", C_GREEN))
 
-    def set_status(self, text, color=C_DIM):
+    def set_status(self, text, color=C_GREEN):
         self.status.config(text=text, fg=color)
 
     def set_face(self, key):
@@ -1099,7 +1127,7 @@ class ChatWindow:
         self.add_bubble("user", text)
         self.history.append({"role": "user", "content": text, "ts": time.strftime("%H:%M")})
         self.busy = True
-        self.set_status("typing…", C_GREEN)
+        self.set_status("▌TYPING…", self.acc)
         self.set_face("talk")
         self.show_typing()
         self.pet.react("think")
@@ -1175,7 +1203,7 @@ class ChatWindow:
             if self.history and self.history[-1]["role"] == "user":
                 self.history.pop()
             self.system_line("Couldn't reach the AI: " + text, err=True)
-            self.set_status("● error", C_RED)
+            self.set_status("● ERROR", C_RED)
             self.set_face("angry")
             self.pet.react("error")
             self.win.after(2500, self.reset_face)
@@ -1183,7 +1211,7 @@ class ChatWindow:
     def reset_face(self):
         if self.alive():
             self.set_face("idle")
-            self.set_status("● online")
+            self.set_status("● ONLINE", C_GREEN)
 
     def typewrite(self, lbl, text, i):
         if not self.alive():
@@ -1677,7 +1705,7 @@ class ChatWindow:
     def toggle_pin(self):
         self.topmost = not self.topmost
         self.win.attributes("-topmost", self.topmost)
-        self.pin_btn.config(text="PINNED" if self.topmost else "PIN")
+        self.pin_btn.config(text="[PINNED]" if self.topmost else "[PIN]")
         self.pet.settings["chat_topmost"] = self.topmost
         self.pet.save_settings()
 
@@ -1715,21 +1743,30 @@ class SettingsWindow:
 
     def __init__(self, pet):
         self.pet = pet
-        self.fam = f = pet.font_family
+        self.fam = f = ui.mono_font(pet.root)
+        self.acc = ui.acc()
         w = self.win = tk.Toplevel(pet.root)
-        w.title("Capri settings")
+        w.title("CAPRI//CONFIG")
         w.configure(bg=C_BG)
         w.attributes("-topmost", True)
         w.protocol("WM_DELETE_WINDOW", self.close)
+        ui.rule(w, 12, self.acc, C_BG).pack(fill="x")
         head = tk.Frame(w, bg=C_PANEL)
         head.pack(fill="x")
-        tk.Label(head, text="CAPRI SETTINGS", bg=C_PANEL, fg=C_GREEN, font=(f, 13, "bold")).pack(side="left", padx=14, pady=10)
-        tk.Frame(w, bg=C_GREEN, height=2).pack(fill="x")
-        flat_button(w, "DONE", self.close, C_GREEN, C_BLACK, "#3dffa0", (f, 9, "bold"), 18, 7).pack(side="bottom", pady=10)
+        col = tk.Frame(head, bg=C_PANEL)
+        col.pack(side="left", padx=14, pady=8)
+        tk.Label(col, text="CAPRI//CONFIG", bg=C_PANEL, fg=self.acc, font=(f, 14, "bold")).pack(anchor="w")
+        tk.Label(col, text="SYSTEM PERMISSIONS  ·  VOICE  ·  AI", bg=C_PANEL, fg=ui.DIM, font=(f, 7)).pack(anchor="w")
+        ui.rule(w, 8, ui.blend(self.acc, C_BG, 0.5), C_BG, notch=False).pack(fill="x")
+        foot = tk.Frame(w, bg=C_PANEL)
+        foot.pack(side="bottom", fill="x")
+        ui.rule(foot, 8, self.acc, C_PANEL, notch=False).pack(fill="x")
+        ui.button(foot, "[ DONE ]", self.close, (f, 9, "bold"), filled=True, padx=22, pady=6).pack(pady=8)
         mid = tk.Frame(w, bg=C_BG)
         mid.pack(fill="both", expand=True)
         canvas = tk.Canvas(mid, bg=C_BG, highlightthickness=0, bd=0, width=430)
-        bar = tk.Scrollbar(mid, orient="vertical", command=canvas.yview)
+        bar = tk.Scrollbar(mid, orient="vertical", command=canvas.yview, bg=C_PANEL2, troughcolor=C_BG,
+                           activebackground=self.acc, bd=0, relief="flat", width=10, highlightthickness=0)
         canvas.configure(yscrollcommand=bar.set)
         bar.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
@@ -1758,12 +1795,24 @@ class SettingsWindow:
 
     # ---- small widgets
     def section(self, parent, title, note=""):
-        box = tk.Frame(parent, bg=C_PANEL)
-        box.pack(fill="x", pady=(8, 0))
-        tk.Label(box, text=title, bg=C_PANEL, fg=C_GREEN, font=(self.fam, 10, "bold")).pack(anchor="w", padx=10, pady=(8, 2))
+        head, _, sub = title.partition(":")
+        outer = tk.Frame(parent, bg=ui.blend(self.acc, C_BG, 0.78))
+        outer.pack(fill="x", pady=(10, 0))
+        box = tk.Frame(outer, bg=C_PANEL)
+        box.pack(fill="x", padx=1, pady=1)
+        bar = tk.Frame(box, bg=C_PANEL)
+        bar.pack(fill="x", padx=0, pady=(8, 2))
+        tk.Frame(bar, bg=self.acc, width=4, height=16).pack(side="left", padx=(0, 8))
+        tk.Label(bar, text=">> " + head.strip().upper(), bg=C_PANEL, fg=self.acc, font=(self.fam, 10, "bold")).pack(
+            side="left")
+        tk.Frame(bar, bg=ui.blend(self.acc, C_PANEL, 0.7), height=1).pack(side="left", fill="x", expand=True,
+                                                                            padx=(8, 10))
+        if sub.strip():
+            sub = sub.strip()
+            note = sub[0].upper() + sub[1:] + (". " if note else "") + note
         if note:
-            tk.Label(box, text=note, bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=345, justify="left").pack(
-                anchor="w", padx=10, pady=(0, 4))
+            tk.Label(box, text=note, bg=C_PANEL, fg=ui.DIM, font=(self.fam, 8), wraplength=345, justify="left").pack(
+                anchor="w", padx=12, pady=(0, 4))
         return box
 
     def check(self, parent, text, key, default, command=None, state="normal"):
@@ -1774,32 +1823,28 @@ class SettingsWindow:
             self.pet.save_settings()
             if command:
                 command(var.get())
-        cb = tk.Checkbutton(parent, text=text, variable=var, command=changed, bg=C_PANEL, fg=C_TEXT,
-                            selectcolor=C_PANEL2, activebackground=C_PANEL, activeforeground=C_TEXT, anchor="w",
-                            justify="left", font=(self.fam, 9), state=state, highlightthickness=0, bd=0,
-                            disabledforeground=C_DIM, wraplength=335)
-        cb.pack(fill="x", padx=8, pady=1)
+        cb = ui.NeonCheck(parent, text=text, variable=var, command=changed, font=(self.fam, 9), state=state,
+                          wraplength=335)
+        cb.pack(fill="x", padx=12, pady=2)
         return cb
 
     def radio(self, parent, text, var, value, command, note=""):
-        rb = tk.Radiobutton(parent, text=text, variable=var, value=value, command=command, bg=C_PANEL, fg=C_TEXT,
-                            selectcolor=C_PANEL2, activebackground=C_PANEL, activeforeground=C_TEXT, anchor="w",
-                            font=(self.fam, 9, "bold"), highlightthickness=0, bd=0)
-        rb.pack(fill="x", padx=8, pady=(2, 0))
+        rb = ui.NeonRadio(parent, text=text, variable=var, value=value, command=command, font=(self.fam, 9, "bold"))
+        rb.pack(fill="x", padx=12, pady=(3, 0))
         if note:
-            tk.Label(parent, text=note, bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=320,
-                     justify="left", anchor="w").pack(fill="x", padx=(34, 10))
+            tk.Label(parent, text=note, bg=C_PANEL, fg=ui.DIM, font=(self.fam, 8), wraplength=320,
+                     justify="left", anchor="w").pack(fill="x", padx=(40, 10))
         return rb
 
     def entry_row(self, parent, label, command, button="SAVE"):
-        tk.Label(parent, text=label, bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=345,
-                 justify="left").pack(anchor="w", padx=10, pady=(6, 0))
+        tk.Label(parent, text=label, bg=C_PANEL, fg=ui.DIM, font=(self.fam, 8), wraplength=345,
+                 justify="left").pack(anchor="w", padx=12, pady=(6, 0))
         row = tk.Frame(parent, bg=C_PANEL)
-        row.pack(fill="x", padx=10, pady=(2, 8))
-        e = tk.Entry(row, bg=C_PANEL2, fg=C_TEXT, insertbackground=C_GREEN, relief="flat", show="*",
-                     font=(self.fam, 9), highlightthickness=1, highlightbackground="#2a2a40", highlightcolor=C_GREEN)
+        row.pack(fill="x", padx=12, pady=(2, 10))
+        e = tk.Entry(row, bg=C_PANEL2, fg=ui.TEXT, insertbackground=self.acc, relief="flat", show="*",
+                     font=(self.fam, 9), highlightthickness=1, highlightbackground=ui.LINE, highlightcolor=self.acc)
         e.pack(side="left", fill="x", expand=True, ipady=4)
-        flat_button(row, button, lambda: command(e), C_GREEN, C_BLACK, "#3dffa0", (self.fam, 8, "bold"), 10, 4).pack(
+        ui.button(row, button, lambda: command(e), (self.fam, 8, "bold"), filled=True, padx=10, pady=4).pack(
             side="left", padx=(6, 0))
         return e
 
@@ -1900,11 +1945,11 @@ class SettingsWindow:
                            "are only used with no key, no internet, or when the daily limit is hit.")
         self.check(box, "AI-written lines (pokes, chatter, check-ins, game comments)", "ai_lines", True)
         self.vision_var = tk.BooleanVar(value=bool(self.pet.settings.get("ai_vision", False)))
-        tk.Checkbutton(box, text="AI Spotter: let her watch my screen and comment (sends screenshots to the AI)",
+        ui.NeonCheck(box, text="AI Spotter: let her watch my screen and comment (sends screenshots to the AI)",
                        variable=self.vision_var, command=self.toggle_vision, bg=C_PANEL, fg=C_TEXT,
                        selectcolor=C_PANEL2, activebackground=C_PANEL, activeforeground=C_TEXT, anchor="w",
                        font=(self.fam, 9), highlightthickness=0, bd=0, wraplength=335, justify="left").pack(
-            fill="x", padx=8, pady=1)
+            fill="x", padx=12, pady=2)
         tk.Label(box, text="While watching, a small shrunken screenshot is SENT to your AI provider every few seconds "
                            "(only when the screen changed). It uses your API credits (roughly $1-3 an hour with "
                            "Claude), is never saved by Capri, and pauses on banking, password and private windows. "
@@ -1916,7 +1961,7 @@ class SettingsWindow:
         row = tk.Frame(box, bg=C_PANEL)
         row.pack(anchor="w", padx=10, pady=(0, 8))
         for secs in (4, 6, 10):
-            tk.Radiobutton(row, text=f"{secs}s", variable=self.interval_var, value=secs, command=self.pick_interval,
+            ui.NeonRadio(row, text=f"{secs}s", variable=self.interval_var, value=secs, command=self.pick_interval,
                            bg=C_PANEL, fg=C_TEXT, selectcolor=C_PANEL2, activebackground=C_PANEL,
                            activeforeground=C_TEXT, font=(self.fam, 9), highlightthickness=0, bd=0).pack(side="left",
                                                                                                          padx=(0, 10))
@@ -1948,26 +1993,28 @@ class SettingsWindow:
         sizes = (("tiny", 0.5), ("small", 0.8), ("normal", 1.0), ("large", 1.5), ("huge", 2.0))
         near = min(sizes, key=lambda kv: abs(kv[1] - pet.size_base))[0]
         self.size_var = tk.StringVar(value=near)
-        row = tk.Frame(box, bg=C_PANEL)
-        row.pack(anchor="w", padx=8)
-        for name, val in sizes:
-            tk.Radiobutton(row, text=name.title(), variable=self.size_var, value=name, bg=C_PANEL, fg=C_TEXT,
-                           selectcolor=C_PANEL2, activebackground=C_PANEL, activeforeground=C_TEXT,
-                           font=(self.fam, 9), highlightthickness=0, bd=0,
-                           command=lambda v=val: pet.set_size(v, announce=False)).pack(side="left", padx=(0, 8))
+        for chunk in (sizes[:3], sizes[3:]):
+            row = tk.Frame(box, bg=C_PANEL)
+            row.pack(anchor="w", padx=12, pady=(2, 0))
+            for name, val in chunk:
+                ui.NeonRadio(row, text=f"{name.title()} {int(val * 100)}%", variable=self.size_var, value=name,
+                             font=(self.fam, 8), command=lambda v=val: pet.set_size(v, announce=False)).pack(
+                    side="left", padx=(0, 12))
         self.check(box, "Let her resize herself (smaller while you game or focus, bigger when she's excited)",
                    "auto_size", True, pet.set_auto_size)
         tk.Label(box, text="Neon look: a glowing outline, speed ghosts when she flies, and coloured speech bubbles.",
-                 bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=345, justify="left").pack(
-            anchor="w", padx=10, pady=(6, 0))
+                 bg=C_PANEL, fg=ui.DIM, font=(self.fam, 8), wraplength=345, justify="left").pack(
+            anchor="w", padx=12, pady=(6, 0))
         self.neon_var = tk.StringVar(value=pet.neon_name)
-        nrow = tk.Frame(box, bg=C_PANEL)
-        nrow.pack(anchor="w", padx=8, pady=(0, 6))
-        for name in ("off",) + tuple(neon.COLORS):
-            tk.Radiobutton(nrow, text=name.title(), variable=self.neon_var, value=name, bg=C_PANEL,
-                           fg=C_TEXT if name == "off" else neon.hex_of(neon.COLORS[name]), selectcolor=C_PANEL2,
-                           activebackground=C_PANEL, activeforeground=C_TEXT, font=(self.fam, 9),
-                           highlightthickness=0, bd=0, command=lambda n=name: pet.set_neon(n)).pack(side="left", padx=(0, 6))
+        names = ("off",) + tuple(neon.COLORS)
+        for chunk in (names[:4], names[4:]):                         # two rows so nothing is cut off
+            nrow = tk.Frame(box, bg=C_PANEL)
+            nrow.pack(anchor="w", padx=12, pady=(2, 4))
+            for name in chunk:
+                ui.NeonRadio(nrow, text=name.title(), variable=self.neon_var, value=name, font=(self.fam, 8),
+                             swatch=None if name == "off" else neon.hex_of(neon.COLORS[name]),
+                             command=lambda n=name: pet.set_neon(n)).pack(side="left", padx=(0, 10))
+        tk.Frame(box, bg=C_PANEL, height=4).pack()
 
     def build_local(self, parent):
         pet = self.pet
@@ -2002,11 +2049,11 @@ class SettingsWindow:
                     self.hear_var.set(False)
             else:
                 pet.disable_hear()
-        tk.Checkbutton(box, text="Let her hear my PC's audio (music, videos, calls: she dances to the beat and can "
+        ui.NeonCheck(box, text="Let her hear my PC's audio (music, videos, calls: she dances to the beat and can "
                                  "tell you what was just said)", variable=self.hear_var, command=toggle_hear,
                        bg=C_PANEL, fg=C_TEXT, selectcolor=C_PANEL2, activebackground=C_PANEL, activeforeground=C_TEXT,
                        anchor="w", justify="left", font=(self.fam, 9), highlightthickness=0, bd=0,
-                       wraplength=335).pack(fill="x", padx=8, pady=1)
+                       wraplength=335).pack(fill="x", padx=12, pady=2)
         self.check(box, "Dance to music when she hears it", "hear_dance", True)
         tk.Label(box, text="Call mode: she listens to your Discord call through the PC audio and answers your friends "
                            "out loud when they say 'Capri'. Needs a virtual audio cable (type /call setup).",
@@ -2025,11 +2072,11 @@ class SettingsWindow:
                     self.wake_var.set(False)
             else:
                 pet.disable_wake()
-        tk.Checkbutton(box, text='Always listen for "Hey Capri" / "Choom" (mic stays open, speech stays on this '
+        ui.NeonCheck(box, text='Always listen for "Hey Capri" / "Choom" (mic stays open, speech stays on this '
                                  'computer)', variable=self.wake_var, command=toggle_wake, bg=C_PANEL, fg=C_TEXT,
                        selectcolor=C_PANEL2, activebackground=C_PANEL, activeforeground=C_TEXT, anchor="w",
                        justify="left", font=(self.fam, 9), highlightthickness=0, bd=0, wraplength=335).pack(
-            fill="x", padx=8, pady=1)
+            fill="x", padx=12, pady=2)
         tk.Frame(box, bg=C_PANEL, height=4).pack()
 
     def toggle_vision(self):
@@ -2055,17 +2102,17 @@ class SettingsWindow:
         self.check(box, "Track time per kind of app for the daily /day recap (minutes only, no titles)",
                    "track_time", True, state="normal" if self.pet.win32.ok else "disabled")
         self.auto_var = tk.BooleanVar(value=autostart.is_enabled())
-        tk.Checkbutton(box, text="Start Capri when I log in (Windows)", variable=self.auto_var,
+        ui.NeonCheck(box, text="Start Capri when I log in (Windows)", variable=self.auto_var,
                        command=self.toggle_autostart, bg=C_PANEL, fg=C_TEXT, selectcolor=C_PANEL2,
                        activebackground=C_PANEL, activeforeground=C_TEXT, anchor="w", font=(self.fam, 9),
                        highlightthickness=0, bd=0, disabledforeground=C_DIM,
-                       state="normal" if IS_WIN else "disabled").pack(fill="x", padx=8, pady=1)
+                       state="normal" if IS_WIN else "disabled").pack(fill="x", padx=12, pady=2)
         self.ledge_var = tk.BooleanVar(value=bool(self.pet.settings.get("ledges", False)))
-        tk.Checkbutton(box, text="Screen ledges: let her look at my screen for boxes to sit on",
+        ui.NeonCheck(box, text="Screen ledges: let her look at my screen for boxes to sit on",
                        variable=self.ledge_var, command=self.toggle_ledges, bg=C_PANEL, fg=C_TEXT,
                        selectcolor=C_PANEL2, activebackground=C_PANEL, activeforeground=C_TEXT, anchor="w",
                        font=(self.fam, 9), highlightthickness=0, bd=0, wraplength=335, justify="left").pack(
-            fill="x", padx=8, pady=1)
+            fill="x", padx=12, pady=2)
         tk.Label(box, text="She takes a screenshot every few seconds, looks for box edges on your computer, then "
                            "throws it away. Nothing is saved or sent. Pauses on banking, password and private pages.",
                  bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=345, justify="left").pack(
@@ -2494,6 +2541,7 @@ class Capri:
         self.pil_cache, self.ghost_cache, self._last_ck = {}, {}, None
         nn = self.settings.get("neon", "cyan")
         self.neon_name = nn if nn in neon.COLORS else "off"
+        ui.THEME["acc"] = neon.hex_of(neon.COLORS[self.neon_name]) if self.neon_name != "off" else "#05f56f"
         self.pending_wake = False
         self.clip_events = queue.Queue()
         BRAIN["mode"] = self.settings.get("brain", "auto") if self.settings.get("brain") in ("auto", "cloud", "local") else "auto"
@@ -5175,6 +5223,7 @@ class Capri:
 
     def set_neon(self, name):
         self.neon_name = name if name in neon.COLORS else "off"
+        ui.THEME["acc"] = neon.hex_of(neon.COLORS[self.neon_name]) if self.neon_name != "off" else "#05f56f"
         self.settings["neon"] = self.neon_name
         self.save_settings()
         self.clear_sprite_caches()

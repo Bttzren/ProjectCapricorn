@@ -13,6 +13,8 @@ import re
 import threading
 import time
 
+import sizing
+
 RATE = 16000
 CHUNK = 1600                    # 0.1 s of audio per chunk
 MODEL = "base.en"               # ~150 MB download the first time; "tiny.en" is smaller and a bit worse
@@ -131,12 +133,60 @@ def intent(text):
         return ("stop", "")
     if not t:
         return ("none", "")
+    if re.search(r"\bprivacy mode\b|\bturn everything off\b|\bturn off everything\b", low):
+        return ("privacy", "")
+    if re.match(r"(remind me|set (a|an) (timer|alarm)|start (a|an) timer|timer\b)", low) and parse_reminder(t):
+        return ("remind", t)
+    if sizing.spoken_size(low):
+        return ("size", low)
+    if re.search(r"\b(copied|clipboard)\b", low) and re.search(r"\b(explain|summari[sz]e|translate|fix|reply|what)\b", low):
+        return ("clip", low)
     words = re.findall(r"[a-z']+", low)
     first = words[0] if words else ""
     second = words[1] if len(words) > 1 else ""
     is_task = first in TASK_WORDS and not (first == "tell" and second in ("me", "us", "you")) \
         and not (first == "go" and second != "to") and not (first == "start" and second in ("to", "feeling"))
     return ("task", t[0].upper() + t[1:]) if is_task else ("chat", t)
+
+
+NUMBER_WORDS = {"a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+                "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "fifteen": 15, "twenty": 20,
+                "thirty": 30, "forty": 40, "forty five": 45, "fifty": 50, "sixty": 60, "ninety": 90}
+_UNIT = r"(second|sec|minute|min|hour|hr)s?"
+_NUM = r"(\d+(?:\.\d+)?|" + "|".join(sorted(NUMBER_WORDS, key=len, reverse=True)) + r"|half an|half a)"
+
+
+def parse_duration(text):
+    """Minutes from '20 minutes', 'an hour', 'half an hour', 'five min', '1.5 hours'. None if there isn't one."""
+    t = (text or "").lower()
+    if re.search(r"\bhalf an? hour\b", t):
+        return 30.0
+    m = re.search(_NUM + r"\s*" + _UNIT + r"\b", t)
+    if not m:
+        return None
+    n = m.group(1)
+    val = float(n) if n[0].isdigit() else NUMBER_WORDS.get(n, 0.5)
+    unit = m.group(2)
+    mins = val * (60 if unit.startswith(("hour", "hr")) else (1 / 60.0 if unit.startswith("sec") else 1))
+    return round(mins, 2) if 0.1 <= mins <= 24 * 60 else None
+
+
+def parse_reminder(text):
+    """(minutes, what) for 'remind me in 20 minutes to call mom' / 'remind me to call mom in an hour' /
+    'set a timer for 10 minutes'. what is 'Timer is up!' for timers. None if it isn't a reminder."""
+    t = " ".join((text or "").split()).strip(" .!?")
+    low = t.lower()
+    mins = parse_duration(low)
+    if mins is None:
+        return None
+    if re.match(r"(set (a|an) |start (a|an) )?(timer|alarm)\b", low) or re.search(r"\btimer for\b", low):
+        return mins, "Timer is up!"
+    m = re.match(r"remind me\s+(?:in\s+(.+?)\s+)?(?:to|about|that)\s+(.+)$", t, re.I)
+    if m:
+        what = m.group(2)
+        what = re.sub(r"\s+in\s+" + _NUM + r"\s*" + _UNIT + r"$", "", what, flags=re.I).strip()
+        return (mins, what[:120]) if what else None
+    return None
 
 
 class Whisper:

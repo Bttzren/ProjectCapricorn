@@ -12,6 +12,7 @@ import math
 import os
 import queue
 import random
+import re
 import sys
 import threading
 import time
@@ -25,6 +26,7 @@ import agent
 import autostart
 import awareness
 import breach
+import clip
 import daylog
 import fun
 import gamemode
@@ -36,9 +38,11 @@ import listen
 import localai
 import memory
 import personality
+import presets
 import reactor
 import sfx
 import simon
+import sizing
 import speech
 import vision
 import voice
@@ -1193,7 +1197,7 @@ class ChatWindow:
                              "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
                              "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /tp  /dance  "
                              "/sleep  /calm  /watch  /look  /ailines  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /remember  /facts  /feel  "
-                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /talk  /wake  /getears  /getbrain  /brain  /clear")
+                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /size  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
@@ -1501,6 +1505,39 @@ class ChatWindow:
                                  + "  (/agent on | off).  Needs Full control and a Claude key.  Then: /do <task>")
         elif cmd == "/talk":
             p.start_listening()
+        elif cmd == "/preset":
+            arg = parts[1].lower() if len(parts) > 1 else ""
+            if arg in presets.PRESETS:
+                if p.apply_preset(arg, self.win):
+                    self.system_line(f"Preset {presets.LABELS[arg]}: " + presets.SUMMARY[arg])
+                else:
+                    self.system_line("Okay, nothing changed.")
+            else:
+                for name in presets.ORDER:
+                    self.system_line(f"/preset {name}  ({presets.LABELS[name]}): {presets.SUMMARY[name]}")
+                self.system_line("Right now: " + presets.LABELS[presets.detect(p.settings)])
+        elif cmd == "/powers":
+            for line in presets.table(p.settings):
+                self.system_line(line)
+        elif cmd == "/size":
+            arg = " ".join(parts[1:]).lower() if len(parts) > 1 else ""
+            if arg in ("auto on", "auto off", "auto"):
+                p.set_auto_size(arg != "auto off")
+                self.system_line("Auto size: " + ("on" if p.auto_size else "off"))
+            elif arg in ("bigger", "larger", "smaller"):
+                p.set_size(sizing.step(p.size_base, -1 if arg == "smaller" else 1))
+            elif sizing.parse(arg):
+                p.set_size(sizing.parse(arg))
+            else:
+                self.system_line(f"Size: {int(p.size_base * 100)}%  (now showing {int(p.size_now * 100)}%)   "
+                                 "/size tiny | small | normal | large | huge | 70% | bigger | smaller | auto on | auto off")
+        elif cmd == "/clip":
+            pm = clip.parse_mode(" ".join(parts[1:]))
+            if pm:
+                p.run_clip(*pm)
+            else:
+                self.system_line("/clip  (explain)   /clip summarize   /clip translate french   /clip fix   /clip reply",
+                                 err=True)
         elif cmd == "/wake":
             arg = parts[1].lower() if len(parts) > 1 else ""
             if arg == "on":
@@ -1632,6 +1669,8 @@ class SettingsWindow:
             wd.bind("<Button-5>", lambda e: canvas.yview_scroll(2, "units"))
         pad = tk.Frame(body, bg=C_BG)
         pad.pack(fill="x", padx=8, pady=(0, 8))
+        self.build_presets(pad)
+        self.build_size(pad)
         self.build_hands(pad)
         self.build_voice(pad)
         self.build_gaming(pad)
@@ -1808,6 +1847,43 @@ class SettingsWindow:
                            activeforeground=C_TEXT, font=(self.fam, 9), highlightthickness=0, bd=0).pack(side="left",
                                                                                                          padx=(0, 10))
 
+    def build_presets(self, parent):
+        pet = self.pet
+        cur = presets.detect(pet.settings)
+        box = self.section(parent, "QUICK SETUP",
+                           "One button for how much she's allowed to do (control, microphone, screen). You can still "
+                           "switch every single thing on or off below.")
+        row = tk.Frame(box, bg=C_PANEL)
+        row.pack(anchor="w", padx=10, pady=(2, 4))
+        for name in presets.ORDER:
+            on = cur == name
+            flat_button(row, presets.LABELS[name], lambda n=name: pet.apply_preset(n, self.win),
+                        C_GREEN if on else C_PANEL2, C_BLACK if on else C_TEXT, "#3dffa0",
+                        (self.fam, 10, "bold"), 20, 8).pack(side="left", padx=(0, 6))
+        what = presets.SUMMARY.get(cur, "You've set the switches yourself. Pick a preset to set them all at once.")
+        tk.Label(box, text=f"Now: {presets.LABELS[cur]}. {what}", bg=C_PANEL, fg=C_DIM, font=(self.fam, 8),
+                 wraplength=345, justify="left").pack(anchor="w", padx=10, pady=(2, 2))
+        tk.Label(box, text="Auto-lock / auto-pause when you walk away (Reflexes) are never part of a preset.",
+                 bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=345, justify="left").pack(
+            anchor="w", padx=10, pady=(0, 6))
+
+    def build_size(self, parent):
+        pet = self.pet
+        box = self.section(parent, "SIZE", "How big she is. You can also say 'Capri, get bigger / smaller / tiny' "
+                                           "or type /size.")
+        sizes = (("tiny", 0.5), ("small", 0.8), ("normal", 1.0), ("large", 1.5), ("huge", 2.0))
+        near = min(sizes, key=lambda kv: abs(kv[1] - pet.size_base))[0]
+        self.size_var = tk.StringVar(value=near)
+        row = tk.Frame(box, bg=C_PANEL)
+        row.pack(anchor="w", padx=8)
+        for name, val in sizes:
+            tk.Radiobutton(row, text=name.title(), variable=self.size_var, value=name, bg=C_PANEL, fg=C_TEXT,
+                           selectcolor=C_PANEL2, activebackground=C_PANEL, activeforeground=C_TEXT,
+                           font=(self.fam, 9), highlightthickness=0, bd=0,
+                           command=lambda v=val: pet.set_size(v, announce=False)).pack(side="left", padx=(0, 8))
+        self.check(box, "Let her resize herself (smaller while you game or focus, bigger when she's excited)",
+                   "auto_size", True, pet.set_auto_size)
+
     def build_local(self, parent):
         pet = self.pet
         box = self.section(parent, "LOCAL AI & VOICE INPUT",
@@ -1824,15 +1900,16 @@ class SettingsWindow:
         row = tk.Frame(box, bg=C_PANEL)
         row.pack(anchor="w", padx=10, pady=(2, 4))
         flat_button(row, "INSTALL LOCAL AI (1.1 GB)", lambda: pet.install_brain("small"), C_PANEL2, C_GREEN,
-                    "#26263a", self.f_small, 8, 4).pack(side="left", padx=(0, 6))
+                    "#26263a", (self.fam, 8), 8, 4).pack(side="left", padx=(0, 6))
         flat_button(row, "BIGGER (2.1 GB)", lambda: pet.install_brain("big"), C_PANEL2, C_TEXT, "#26263a",
-                    self.f_small, 8, 4).pack(side="left")
+                    (self.fam, 8), 8, 4).pack(side="left")
         tk.Label(box, text="Voice input: " + ("installed. Ctrl+Alt+C, the MIC button or /talk."
                                               if listen.installed() else "not installed yet."),
                  bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=340, justify="left").pack(
             anchor="w", padx=10, pady=(6, 2))
-        flat_button(box, "INSTALL VOICE INPUT", pet.install_ears, C_PANEL2, C_GREEN, "#26263a", self.f_small, 8, 4).pack(
+        flat_button(box, "INSTALL VOICE INPUT", pet.install_ears, C_PANEL2, C_GREEN, "#26263a", (self.fam, 8), 8, 4).pack(
             anchor="w", padx=10, pady=(0, 6))
+        self.check(box, "Allow the microphone (push-to-talk: hotkey, MIC button, /talk)", "mic", True)
         self.check(box, "Hotkey Ctrl+Alt+C to talk to her (Windows, restart to apply)", "talk_hotkey", True)
         self.wake_var = tk.BooleanVar(value=self.pet.wake is not None and self.pet.wake.running)
 
@@ -2225,7 +2302,13 @@ class Capri:
         self.hands = hands.Hands(level=self.settings.get("hands", "visual"), log=log)
         self.sfx = sfx.Sfx(os.path.join(data_dir(), "sfx"), voice.play_file, enabled=bool(self.settings.get("sfx", True)),
                            busy=lambda: self.speaker.speaking, log=log)
-        self.art = load_art(self.dpi)
+        self.art_cache = {}
+        size = self.settings.get("size", 1.0)
+        self.size_base = sizing.clamp(size) if isinstance(size, (int, float)) else 1.0
+        self.auto_size = bool(self.settings.get("auto_size", True))
+        self.size_now = sizing.quantize(sizing.cap_for_screen(self.size_base, self.root.winfo_screenheight()))
+        self.excited_until, self.next_size = 0.0, 0.0
+        self.art = self.art_for(self.size_now)
         self.fw, self.fh = self.art.w, self.art.h
         self.Wd = max(280, int(self.fh * 1.25) + 30)
         self.Hd = self.fh + 150
@@ -2292,6 +2375,8 @@ class Capri:
         self.brain_busy = self.ears_busy = self.listening = self.listen_stop = self.hotkey_on = False
         self.whisper = None
         self.wake = None
+        self.pending_wake = False
+        self.clip_events = queue.Queue()
         BRAIN["mode"] = self.settings.get("brain", "auto") if self.settings.get("brain") in ("auto", "cloud", "local") else "auto"
         LOCAL_AI.which = self.settings.get("brain_model", "small") if self.settings.get("brain_model") in localai.MODELS else "small"
         self.agent_budget = speech.Budget(per_min=40, per_day=250, store=self.settings.setdefault("agent_budget", {}))
@@ -2433,6 +2518,56 @@ class Capri:
         except (OSError, subprocess.SubprocessError) as exc:
             ok, err = False, [str(exc)]
         self.voice_install = (ok, err[0])
+
+    # ---- her size
+    def art_for(self, scale):
+        if scale not in self.art_cache:
+            if len(self.art_cache) >= 5:
+                self.art_cache.pop(next(iter(self.art_cache)))
+            self.art_cache[scale] = load_art(self.dpi * scale)
+        return self.art_cache[scale]
+
+    def size_factor(self, now):
+        if not self.auto_size:
+            return 1.0
+        return sizing.auto_factor(gaming=bool(self.game), focusing=self.timer_mode == "focus" and bool(self.timer_end),
+                                  sleeping=self.state == "sleep", excited=now < self.excited_until)
+
+    def apply_size(self, force=False):
+        target = sizing.quantize(sizing.cap_for_screen(self.size_base * self.size_factor(time.time()), self.sh))
+        if not force and abs(target - self.size_now) < 0.04:
+            return False
+        self.size_now = target
+        self.art = self.art_for(target)
+        self.fw, self.fh = self.art.w, self.art.h
+        self.Wd = max(280, int(self.fh * 1.25) + 30)
+        self.Hd = self.fh + 150
+        self.canvas.config(width=self.Wd, height=self.Hd)
+        self.pcache.clear()
+        self.parts = []
+        self._geo = None
+        self.place()
+        return True
+
+    def set_size(self, scale, announce=True):
+        self.size_base = sizing.clamp(scale)
+        self.settings["size"] = round(self.size_base, 2)
+        self.save_settings()
+        self.apply_size(force=True)
+        if announce:
+            self.say_moment(f"you just changed your own size to {int(self.size_base * 100)} percent of normal at the "
+                            "user's request", f"Size {int(self.size_base * 100)}%.", 4, wait=3)
+
+    def set_auto_size(self, on):
+        self.auto_size = bool(on)
+        self.settings["auto_size"] = self.auto_size
+        self.save_settings()
+        self.apply_size()
+
+    def watch_size(self, now):
+        if now >= self.next_size:
+            self.next_size = now + 3.0
+            self.apply_size()
 
     def poke_awake(self):
         self.last_active = time.time()
@@ -2636,6 +2771,7 @@ class Capri:
         del self.parts[:-160]
 
     def party(self):
+        self.excited_until = time.time() + 6
         self.sfx.play("success")
         self.spawn_confetti()
         self.start_fly("fly")
@@ -3221,6 +3357,9 @@ class Capri:
                 self.notify("Voice input installed. Press Ctrl+Alt+C, click MIC or type /talk and speak. "
                             "The first time she downloads a speech model (about 150 MB).", secs=10)
                 self.start_hotkey()
+                if self.pending_wake and self.settings.get("wake"):
+                    self.pending_wake = False
+                    self.start_wake()
             else:
                 self.notify("Couldn't install voice input: " + item[1][:140]
                             + ". Try: py -m pip install faster-whisper sounddevice", err=True, secs=10)
@@ -3258,6 +3397,104 @@ class Capri:
                                            lambda: self.talk_requests.put(1))
         if not self.hotkey_on:
             log("talk hotkey could not be registered (another app may use it)")
+
+    # ---- presets: one switch for the whole set of powers
+    def apply_preset(self, name, parent=None, ask=True):
+        if name not in presets.PRESETS:
+            return False
+        lines = presets.risky(name, self.settings)
+        if ask and lines:
+            from tkinter import messagebox
+            if not messagebox.askyesno(
+                    f"Switch to {presets.LABELS[name]}?",
+                    "This turns ON:\n\n* " + "\n* ".join(lines) + "\n\nThings she hears or sees can be misread by "
+                    "the AI, so don't hand her anything you can't undo. Tasks still ask before she types, she "
+                    "stops when you move the mouse, and you can flip any single switch afterwards in Settings.\n\n"
+                    f"Switch to {presets.LABELS[name]}?", parent=parent, default="no", icon="warning"):
+                return False
+        cfg = presets.PRESETS[name]
+        self.hands.set_level(cfg["hands"])
+        self.settings["hands"] = self.hands.level
+        if self.hands.level != "full":
+            self.pending = None
+        self.settings["mic"] = cfg["mic"]
+        self.settings["agent"] = cfg["agent"]
+        if not cfg["agent"]:
+            self.stop_agent()
+        self.settings["ai_vision"] = cfg["ai_vision"]
+        if not cfg["ai_vision"]:
+            self.stop_spotter()
+        self.aware = bool(cfg["aware"])
+        self.settings["aware"] = self.aware
+        if not self.aware:
+            self.ctx = None
+        if cfg["ledges"] and not self.settings.get("ledges"):
+            self.enable_ledges(ask=False)
+        elif not cfg["ledges"] and self.settings.get("ledges"):
+            self.disable_ledges()
+        self.settings["wake"] = cfg["wake"]
+        self.save_settings()
+        notes = []
+        if cfg["wake"]:
+            if listen.installed():
+                self.start_wake()
+            else:
+                self.pending_wake = True
+                self.install_ears()
+                notes.append("installing voice input so I can hear you")
+        else:
+            self.stop_wake()
+        if (cfg["agent"] or cfg["ai_vision"]) and not (read_api_key() and detect_provider(read_api_key()) == "anthropic"):
+            notes.append("tasks and AI screen-watching need a Claude key (Settings)")
+        self.notify(f"Preset: {presets.LABELS[name]}." + (" " + "; ".join(notes).capitalize() + "." if notes else ""),
+                    secs=8)
+        win = self.settings_win
+        try:
+            if win and win.win.winfo_exists():                       # redraw Settings so every switch shows the truth
+                win.win.destroy()
+                self.settings_win = None
+                self.root.after(150, self.open_settings)
+        except tk.TclError:
+            pass
+        return True
+
+    # ---- clipboard helper
+    def run_clip(self, mode="explain", lang=""):
+        try:
+            text = self.root.clipboard_get()
+        except tk.TclError:
+            text = ""
+        if not text.strip():
+            return self.notify("Your clipboard is empty (or isn't text). Copy something first.", err=True)
+        if not ai_available():
+            return self.notify("I need an AI for that (a key, or /getbrain for the local one).", err=True)
+        local = BRAIN["mode"] == "local" or (BRAIN["mode"] == "auto" and not read_api_key())
+        self.notify(f"Reading your clipboard ({min(len(text), clip.MAX_CHARS)} characters) with "
+                    + ("the local AI..." if local else "your AI provider..."), secs=4)
+        extra, user = clip.build(mode, text, lang)
+
+        def work():
+            try:
+                self.clip_events.put(("ok", llm_reply([{"role": "user", "content": user}],
+                                                      "You are Capri, a helpful desktop companion. " + extra,
+                                                      max_tokens=350)))
+            except Exception as exc:
+                self.clip_events.put(("err", str(exc) or type(exc).__name__))
+        threading.Thread(target=work, daemon=True).start()
+
+    def drain_clip(self):
+        while True:
+            try:
+                kind, text = self.clip_events.get_nowait()
+            except queue.Empty:
+                return
+            if kind == "err":
+                self.notify("Couldn't read that: " + text[:140], err=True, secs=8)
+                continue
+            text = text.strip() or "(nothing came back)"
+            if self.chat and self.chat.alive():
+                self.chat.add_bubble("assistant", text, animate=False)
+            self.say(text[:220], 14, speak="priority")
 
     def enable_wake(self, parent=None):
         from tkinter import messagebox
@@ -3313,6 +3550,8 @@ class Capri:
         if self.listening:
             self.listen_stop = True                     # pressing it again means 'I'm done talking'
             return
+        if not self.settings.get("mic", True):
+            return self.notify("My microphone is switched off. Turn it on in Settings (or /preset some).", err=True)
         if not listen.installed():
             return self.notify("I need ears first. Type /getears in my chat and I'll install voice input.", err=True)
         self.listening, self.listen_stop = True, False
@@ -3356,6 +3595,24 @@ class Capri:
             kind, body = listen.intent(item[1])
             if self.agent is not None and kind != "stop":
                 continue                                            # busy doing a task: only 'stop' is accepted
+            if kind == "privacy":
+                self.apply_preset("none", ask=False)
+                continue
+            if kind == "remind":
+                mins, what = listen.parse_reminder(body) or (None, "")
+                if mins:
+                    self.add_reminder(mins, what)
+                continue
+            if kind == "size":
+                sz = sizing.spoken_size(body)
+                if sz:
+                    self.set_size(sz[1] if sz[0] == "abs" else sizing.step(self.size_base, sz[1]))
+                continue
+            if kind == "clip":
+                pm = clip.parse_mode(re.sub(r".*?\b(explain|summari[sz]e|translate|fix|reply)\b", r"\1", body, count=1)) \
+                    if re.search(r"\b(explain|summari[sz]e|translate|fix|reply)\b", body) else ("explain", "")
+                self.run_clip(*(pm or ("explain", "")))
+                continue
             if kind == "none":
                 self.say("Didn't catch that.", 3, speak=None)
             elif kind == "stop":
@@ -3983,8 +4240,10 @@ class Capri:
         self.watch_ledges(now)
         self.drain_reactor()
         self.drain_ai(now)
+        self.watch_size(now)
         self.drain_agent()
         self.drain_brain()
+        self.drain_clip()
         self.drain_heard()
         self.check_voice_install()
         self.update_spotter(now)

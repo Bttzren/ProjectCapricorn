@@ -111,6 +111,34 @@ TALKING TO HER (voice input)
     shows you the task and asks for your OK. Saying "stop" stops a running task.
   * Needs a working microphone and Windows' microphone privacy setting on for desktop apps.
 
+ONE-CLICK PRESETS (Settings -> QUICK SETUP, or /preset none | some | full, /powers shows the state)
+  NONE  pure desktop pet: no key pressing or clicking, no microphone, no screen looking, awareness off.
+  SOME  media keys on request, awareness, screen ledges, push-to-talk mic. No always-on mic, no screen
+        sending to AI, no clicking for you.
+  FULL  Full control (keys, typing, clicking, /do tasks), 'Hey Capri' always-listen, AI sees your screen.
+        If voice input isn't installed yet, FULL installs it for you. Tasks and AI screen-watching still
+        need a Claude key (Settings), and everything she types for you still asks first.
+  Choosing a preset sets all the switches at once; one confirmation dialog lists everything that turns ON.
+  Every switch can still be flipped on its own afterwards (the label then says CUSTOM). Reflexes (auto-lock,
+  auto-pause when you walk away) are never part of a preset. Saying "Capri, privacy mode" (or "turn
+  everything off") switches to NONE by voice. Nothing can switch you UP to FULL by voice or by AI: only
+  you, in Settings or by typing /preset full.
+
+HER SIZE
+  Settings -> SIZE, or /size tiny | small | normal | large | huge | 70% | bigger | smaller, or by voice
+  ("Capri, get bigger / smaller / tiny / back to normal size"). Auto size (on by default, /size auto off)
+  lets her resize herself: smaller while you game (65%) or focus (80%), bigger when she's excited (party).
+  She never grows taller than about 45% of your screen.
+
+CLIPBOARD HELPER
+  Copy some text, then /clip (explain), /clip summarize, /clip translate french, /clip fix, /clip reply.
+  Or say "Capri, explain what I copied". The text is only read when you ask, and goes to your AI (cloud
+  provider, or the local AI if that's what she's using). Instructions inside copied text are ignored.
+
+SPOKEN REMINDERS AND TIMERS
+  "Hey Capri, remind me in 20 minutes to call mom", "remind me to stretch in an hour", "set a timer for
+  10 minutes". She repeats the reminder exactly as you said it when it's time.
+
 HEY CAPRI / CHOOM (hands-free)
   Turn it on with /wake on, the right-click menu ("Listen for Hey Capri / Choom"), or the checkbox in
   Settings -> Local AI & Voice Input. Needs voice input installed (/getears). Then just say:

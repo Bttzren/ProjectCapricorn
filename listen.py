@@ -13,6 +13,7 @@ import re
 import threading
 import time
 
+import launcher
 import sizing
 
 RATE = 16000
@@ -111,6 +112,17 @@ def clean_transcript(text):
 
 TASK_WORDS = {"open", "join", "tell", "send", "play", "launch", "start", "search", "close", "message", "mute",
               "unmute", "load", "go"}
+CONTROLS = [
+    ("playpause", r"(pause|resume|unpause|continue)( the)?( music| song| track| video| playback| it)?|play( the| some)? music"),
+    ("next", r"(next|skip)( the)?( song| track| video)?|skip this( song| track)?|next one"),
+    ("prev", r"(previous|last|go back)( a)?( song| track)?|play the previous( song| track)?|previous one"),
+    ("volup", r"volume up|louder|turn (it|the volume|the music|this) up|(raise|increase|up)( the)? volume"),
+    ("voldown", r"volume down|quieter|turn (it|the volume|the music|this) down|(lower|decrease|down)( the)? volume"),
+    ("mute", r"(mute|unmute)( the)?( sound| volume| audio| it| computer| pc)?"),
+    ("screenshot", r"(take a |grab a )?screenshot( this| please)?"),
+    ("lock", r"lock( the| my)?( screen| computer| pc| it)?"),
+    ("desktop", r"show( the)? desktop|minimi[sz]e (everything|all|all windows)"),
+]
 FILLER = re.compile(r"^(can you|could you|please|would you|go ahead and|just|for me)\s+", re.I)
 
 
@@ -135,12 +147,22 @@ def intent(text):
         return ("none", "")
     if re.search(r"\bprivacy mode\b|\bturn everything off\b|\bturn off everything\b", low):
         return ("privacy", "")
+    if re.search(r"what'?s on my plate|my briefing|daily briefing|brief me|what do i have (to do|today)|what'?s my day|"
+                 r"what is on my plate", low):
+        return ("brief", "")
+    if re.match(r"(start|begin|do)( a| an)? (focus|pomodoro)( timer| session| mode)?$", low):
+        return ("focus", "")
+    for action, pat in CONTROLS:
+        if re.fullmatch(pat, low):
+            return ("control", action)
     if re.match(r"(remind me|set (a|an) (timer|alarm)|start (a|an) timer|timer\b)", low) and parse_reminder(t):
         return ("remind", t)
     if sizing.spoken_size(low):
         return ("size", low)
     if re.search(r"\b(copied|clipboard)\b", low) and re.search(r"\b(explain|summari[sz]e|translate|fix|reply|what)\b", low):
         return ("clip", low)
+    if launcher.parse_open(t):
+        return ("launch", t)
     words = re.findall(r"[a-z']+", low)
     first = words[0] if words else ""
     second = words[1] if len(words) > 1 else ""

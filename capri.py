@@ -26,6 +26,7 @@ import agent
 import autostart
 import awareness
 import breach
+import brief
 import clip
 import daylog
 import fun
@@ -33,10 +34,12 @@ import gamemode
 import habits
 import hands
 import journal
+import launcher
 import ledges
 import listen
 import localai
 import memory
+import neon
 import personality
 import presets
 import reactor
@@ -1197,7 +1200,7 @@ class ChatWindow:
                              "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
                              "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /tp  /dance  "
                              "/sleep  /calm  /watch  /look  /ailines  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /remember  /facts  /feel  "
-                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /size  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
+                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /size  /neon  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
@@ -1505,6 +1508,24 @@ class ChatWindow:
                                  + "  (/agent on | off).  Needs Full control and a Claude key.  Then: /do <task>")
         elif cmd == "/talk":
             p.start_listening()
+        elif cmd == "/open" or cmd == "/search":
+            what = " ".join(parts[1:])
+            if not what:
+                self.system_line("/open discord   /open youtube   /search best crosshair for valorant   "
+                                 "(opens apps and sites directly, no AI)", err=True)
+            else:
+                p.open_thing(("search " if cmd == "/search" else "open ") + what)
+        elif cmd == "/desktop":
+            p.do_control("desktop")
+        elif cmd == "/brief":
+            p.run_brief()
+        elif cmd == "/neon":
+            arg = parts[1].lower() if len(parts) > 1 else ""
+            if arg in neon.COLORS or arg == "off":
+                p.set_neon(arg)
+                self.system_line("Neon: " + arg)
+            else:
+                self.system_line("/neon cyan | magenta | yellow | green | red | white | off   (now: " + p.neon_name + ")")
         elif cmd == "/preset":
             arg = parts[1].lower() if len(parts) > 1 else ""
             if arg in presets.PRESETS:
@@ -1869,7 +1890,7 @@ class SettingsWindow:
 
     def build_size(self, parent):
         pet = self.pet
-        box = self.section(parent, "SIZE", "How big she is. You can also say 'Capri, get bigger / smaller / tiny' "
+        box = self.section(parent, "SIZE & LOOK", "How big she is. You can also say 'Capri, get bigger / smaller / tiny' "
                                            "or type /size.")
         sizes = (("tiny", 0.5), ("small", 0.8), ("normal", 1.0), ("large", 1.5), ("huge", 2.0))
         near = min(sizes, key=lambda kv: abs(kv[1] - pet.size_base))[0]
@@ -1883,6 +1904,17 @@ class SettingsWindow:
                            command=lambda v=val: pet.set_size(v, announce=False)).pack(side="left", padx=(0, 8))
         self.check(box, "Let her resize herself (smaller while you game or focus, bigger when she's excited)",
                    "auto_size", True, pet.set_auto_size)
+        tk.Label(box, text="Neon look: a glowing outline, speed ghosts when she flies, and coloured speech bubbles.",
+                 bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=345, justify="left").pack(
+            anchor="w", padx=10, pady=(6, 0))
+        self.neon_var = tk.StringVar(value=pet.neon_name)
+        nrow = tk.Frame(box, bg=C_PANEL)
+        nrow.pack(anchor="w", padx=8, pady=(0, 6))
+        for name in ("off",) + tuple(neon.COLORS):
+            tk.Radiobutton(nrow, text=name.title(), variable=self.neon_var, value=name, bg=C_PANEL,
+                           fg=C_TEXT if name == "off" else neon.hex_of(neon.COLORS[name]), selectcolor=C_PANEL2,
+                           activebackground=C_PANEL, activeforeground=C_TEXT, font=(self.fam, 9),
+                           highlightthickness=0, bd=0, command=lambda n=name: pet.set_neon(n)).pack(side="left", padx=(0, 6))
 
     def build_local(self, parent):
         pet = self.pet
@@ -2375,6 +2407,11 @@ class Capri:
         self.brain_busy = self.ears_busy = self.listening = self.listen_stop = self.hotkey_on = False
         self.whisper = None
         self.wake = None
+        self.apps, self.apps_at = {}, 0.0
+        self.trail = collections.deque(maxlen=40)
+        self.pil_cache, self.ghost_cache, self._last_ck = {}, {}, None
+        nn = self.settings.get("neon", "cyan")
+        self.neon_name = nn if nn in neon.COLORS else "off"
         self.pending_wake = False
         self.clip_events = queue.Queue()
         BRAIN["mode"] = self.settings.get("brain", "auto") if self.settings.get("brain") in ("auto", "cloud", "local") else "auto"
@@ -2543,7 +2580,7 @@ class Capri:
         self.Wd = max(280, int(self.fh * 1.25) + 30)
         self.Hd = self.fh + 150
         self.canvas.config(width=self.Wd, height=self.Hd)
-        self.pcache.clear()
+        self.clear_sprite_caches()
         self.parts = []
         self._geo = None
         self.place()
@@ -3398,6 +3435,62 @@ class Capri:
         if not self.hotkey_on:
             log("talk hotkey could not be registered (another app may use it)")
 
+    # ---- instant voice/typed controls, opening apps and sites, the briefing
+    def do_control(self, action):
+        ok, msg = self.hands.do("press", "win+d") if action == "desktop" else self.hands.do(action)
+        self.notify("Desktop." if ok and action == "desktop" else msg, err=not ok, secs=3)
+        return ok
+
+    def app_index(self):
+        if time.time() - self.apps_at > 600 or not self.apps:
+            try:
+                self.apps = launcher.index_apps()
+            except Exception as exc:
+                log("app index failed: " + type(exc).__name__)
+                self.apps = {}
+            self.apps_at = time.time()
+        return self.apps
+
+    def open_thing(self, text):
+        """'open discord', 'go to youtube', 'search for ...'. True if she handled it."""
+        parsed = launcher.parse_open(text)
+        if not parsed:
+            return False
+        if parsed[0] == "search":
+            kind, target, label = "site", launcher.search_url(parsed[1], parsed[2]), f"a {parsed[2]} search"
+        else:
+            m = launcher.match(parsed[1], self.app_index())
+            if not m:
+                if text.lower().startswith(("open", "launch", "start", "run")) and self.agent_ready()[0]:
+                    ok, why = self.start_agent(f"Open {parsed[1]}")
+                    if not ok:
+                        self.notify(why, err=True)
+                else:
+                    self.notify(f"I couldn't find '{parsed[1]}' on this computer.", err=True)
+                return True
+            kind, _name, target = m
+            label = _name.title()
+        try:
+            op = launcher.opener(kind, target)
+        except ValueError as exc:
+            self.notify(str(exc).capitalize() + ".", err=True)
+            return True
+        ok, msg = self.hands.do("launch", op)
+        self.notify(f"Opening {label}." if ok else msg, err=not ok, secs=3)
+        return True
+
+    def run_brief(self):
+        now = time.time()
+        today = time.strftime("%Y-%m-%d")
+        timer = (self.timer_mode, self.timer_end - now) if self.timer_end else None
+        lines, facts = brief.build([i["t"] for i in self.todos.open_items()], self.habits.pending(today),
+                                   self.reminders, now, timer)
+        if self.chat and self.chat.alive():
+            for ln in lines:
+                self.chat.system_line(ln)
+        self.say_moment("the user asked for their daily briefing. What is pending: " + facts
+                        + ". Say the gist in one short sentence", brief.fallback(lines), 12, speak="priority", wait=6)
+
     # ---- presets: one switch for the whole set of powers
     def apply_preset(self, name, parent=None, ask=True):
         if name not in presets.PRESETS:
@@ -3597,6 +3690,18 @@ class Capri:
                 continue                                            # busy doing a task: only 'stop' is accepted
             if kind == "privacy":
                 self.apply_preset("none", ask=False)
+                continue
+            if kind == "control":
+                self.do_control(body)
+                continue
+            if kind == "launch":
+                self.open_thing(body)
+                continue
+            if kind == "brief":
+                self.run_brief()
+                continue
+            if kind == "focus":
+                self.start_focus()
                 continue
             if kind == "remind":
                 mins, what = listen.parse_reminder(body) or (None, "")
@@ -4544,16 +4649,57 @@ class Capri:
         dim = self.state == "sleep"
         if self.glitch > 0.02:
             img, ax, ay = pose(frame, self.angle, self.sx, self.sy, flip, dim, self.glitch, self.rng)
+            if self.neon_name != "off":
+                img = neon.outline(img, neon.COLORS[self.neon_name], self.neon_px())
+            self._last_ck = None
             return ImageTk.PhotoImage(img), ax, ay, img.width, img.height
         ck = (key, round(self.angle / 3), round(self.sx * 25), round(self.sy * 25), flip, dim)
+        self._last_ck = ck
         hit = self.pcache.get(ck)
         if hit is None:
             if len(self.pcache) > 500:
-                self.pcache.clear()
+                self.clear_sprite_caches()
             img, ax, ay = pose(frame, self.angle, self.sx, self.sy, flip, dim)
+            if self.neon_name != "off":
+                img = neon.outline(img, neon.COLORS[self.neon_name], self.neon_px())
             hit = (ImageTk.PhotoImage(img), ax, ay, img.width, img.height)
             self.pcache[ck] = hit
+            self.pil_cache[ck] = img
         return hit
+
+    def neon_px(self):
+        return max(1, round(1.5 * self.dpi * self.size_now))
+
+    def clear_sprite_caches(self):
+        self.pcache.clear()
+        self.pil_cache.clear()
+        self.ghost_cache.clear()
+
+    def set_neon(self, name):
+        self.neon_name = name if name in neon.COLORS else "off"
+        self.settings["neon"] = self.neon_name
+        self.save_settings()
+        self.clear_sprite_caches()
+
+    def accent(self):
+        return neon.hex_of(neon.COLORS[self.neon_name]) if self.neon_name != "off" else C_GREEN
+
+    def draw_ghosts(self, c, now, x0, y0):
+        """Neon afterimages behind her while she flies fast."""
+        if math.hypot(self.fvx, self.fvy) < 250:
+            return
+        pil = self.pil_cache.get(self._last_ck)
+        if pil is None:
+            return
+        for level, lag in ((1, 0.06), (2, 0.13), (2, 0.21)):
+            old = next((t for t in reversed(self.trail) if t[0] <= now - lag), None)
+            if old is None:
+                continue
+            key = (self._last_ck, level, self.neon_name)
+            gp = self.ghost_cache.get(key)
+            if gp is None:
+                gp = self.ghost_cache[key] = ImageTk.PhotoImage(neon.ghost(pil, neon.COLORS[self.neon_name], level))
+            c.create_image(x0 + (old[1] - self.fx), y0 + (old[2] - self.fy), image=gp, anchor="nw")
 
     def draw(self, now):
         c = self.canvas
@@ -4564,6 +4710,9 @@ class Capri:
         wgt = max(0.0, min(1.0, (abs(self.angle) - 20) / 50.0))
         x0 = lfx - (ax * (1 - wgt) + (w / 2.0) * wgt)
         y0 = lfy - h
+        self.trail.append((now, self.fx, self.fy))
+        if self.neon_name != "off" and self.state in ("fly", "orbit") and self._last_ck is not None:
+            self.draw_ghosts(c, now, x0, y0)
         c.create_image(x0, y0, image=photo, anchor="nw")
         top = y0
         if self.typing_along:
@@ -4617,8 +4766,9 @@ class Capri:
             c.delete(full)
             hx = (fx2 - fx1) / 2 - (x2 - x1) / 2
             bx1, bx2, by1 = lfx - (fx2 - fx1) / 2 - 10, lfx + (fx2 - fx1) / 2 + 10, y2 - (fy2 - fy1) - 6
-            bg = round_rect(c, bx1, by1, bx2, y2 + 6, 8, fill=C_PANEL, outline=C_GREEN, width=2)
-            tail = c.create_polygon(lfx - 6, y2 + 6, lfx + 6, y2 + 6, lfx, y2 + 14, fill=C_PANEL, outline=C_GREEN, width=2)
+            acc = self.accent()
+            bg = round_rect(c, bx1, by1, bx2, y2 + 6, 8, fill=C_PANEL, outline=acc, width=2)
+            tail = c.create_polygon(lfx - 6, y2 + 6, lfx + 6, y2 + 6, lfx, y2 + 14, fill=C_PANEL, outline=acc, width=2)
             cover = c.create_line(lfx - 5, y2 + 6, lfx + 5, y2 + 6, fill=C_PANEL, width=3)
             c.tag_lower(cover)
             c.tag_lower(tail)

@@ -127,7 +127,7 @@ class SpokenReminderTests(unittest.TestCase):
         self.assertEqual(i("Capri privacy mode")[0], "privacy")
         self.assertEqual(i("how are you")[0], "chat")
         self.assertEqual(i("what is the biggest planet")[0], "chat")
-        self.assertEqual(i("open spotify")[0], "task")
+        self.assertEqual(i("open spotify")[0], "launch")
 
 
 if __name__ == "__main__":

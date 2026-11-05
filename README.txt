@@ -111,6 +111,23 @@ TALKING TO HER (voice input)
     shows you the task and asks for your OK. Saying "stop" stops a running task.
   * Needs a working microphone and Windows' microphone privacy setting on for desktop apps.
 
+INSTANT COMMANDS (typed, or by voice after "Hey Capri" / "Choom"; no AI, no waiting)
+  Media/system:  "pause", "next song", "previous", "volume up/down", "mute", "take a screenshot", "lock my
+                 screen", "show desktop"  (/desktop). Need Media keys or higher (the SOME preset); show desktop
+                 needs Full control.
+  Open things:   "open Discord", "launch Spotify", "go to YouTube", "search for best valorant crosshair",
+                 "search YouTube for lofi beats"  (or /open ..., /search ...). She reads your Start Menu
+                 (Mac: Applications) and opens the matching app; websites come from a fixed list (YouTube,
+                 Gmail, GitHub, Twitch, Reddit...); searches use Google with your words safely encoded.
+                 If she can't find an app, she offers to do it as a /do task when tasks are enabled.
+  Briefing:      /brief or "what's on my plate": your open to-dos, habits left today and the next reminder,
+                 in chat, and she says the gist out loud (AI-written).
+  Focus:         "start a focus session".
+
+NEON LOOK (Settings -> SIZE & LOOK, or /neon cyan | magenta | yellow | green | red | white | off)
+  On by default (cyan): a solid glowing outline around her, neon speed ghosts behind her when she flies
+  fast, and speech bubbles in the same colour. /neon off goes back to the plain look.
+
 ONE-CLICK PRESETS (Settings -> QUICK SETUP, or /preset none | some | full, /powers shows the state)
   NONE  pure desktop pet: no key pressing or clicking, no microphone, no screen looking, awareness off.
   SOME  media keys on request, awareness, screen ledges, push-to-talk mic. No always-on mic, no screen

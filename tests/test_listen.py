@@ -104,8 +104,8 @@ class TextTests(unittest.TestCase):
         self.assertEqual(i("Hey Capri, stop."), ("stop", ""))
         self.assertEqual(i("never mind"), ("stop", ""))
         self.assertEqual(i("Hey Capri, join the discord and tell them I'll be in in 15")[0], "task")
-        self.assertEqual(i("hey capri open spotify"), ("task", "Open spotify"))
-        self.assertEqual(i("can you please play some music")[0], "task")
+        self.assertEqual(i("hey capri open spotify"), ("launch", "open spotify"))
+        self.assertEqual(i("can you please play some music")[0], "control")
         self.assertEqual(i("how was your day")[0], "chat")
         self.assertEqual(i("Thank you.")[0], "none")
         self.assertEqual(i("Hey Capri")[0], "none")
@@ -135,8 +135,8 @@ class CloseTests(unittest.TestCase):
     def test_more_intents(self):
         self.assertEqual(L.intent("tell me a joke")[0], "chat")
         self.assertEqual(L.intent("go away")[0], "chat")
-        self.assertEqual(L.intent("go to youtube")[0], "task")
-        self.assertEqual(L.intent("can you please play some music")[0], "task")
+        self.assertEqual(L.intent("go to youtube")[0], "launch")
+        self.assertEqual(L.intent("can you please play some music")[0], "control")
 
 
 class WakeWordTests(unittest.TestCase):

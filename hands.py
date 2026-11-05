@@ -20,12 +20,12 @@ LEVELS = ("visual", "media", "full")
 LEVEL_NAMES = {"visual": "Visual only", "media": "Media keys", "full": "Full control"}
 
 ACTION_LEVEL = {"playpause": "media", "next": "media", "prev": "media", "volup": "media", "voldown": "media",
-                "mute": "media", "screenshot": "media", "lock": "media",
+                "mute": "media", "screenshot": "media", "lock": "media", "launch": "media",
                 "press": "full", "type": "full", "click": "full", "move": "full", "click_at": "full", "scroll": "full"}
 ACTION_LABEL = {"playpause": "Play/pause", "next": "Next track", "prev": "Previous track", "volup": "Volume up",
                 "voldown": "Volume down", "mute": "Mute", "screenshot": "Screenshot", "lock": "Locking the screen",
                 "press": "Pressing keys", "type": "Typing", "click": "Clicking", "move": "Moving the mouse",
-                "click_at": "Clicking", "scroll": "Scrolling"}
+                "click_at": "Clicking", "scroll": "Scrolling", "launch": "Opening"}
 
 MODIFIERS = ("ctrl", "shift", "alt", "win")
 VK = {"ctrl": 0x11, "shift": 0x10, "alt": 0x12, "win": 0x5B, "enter": 0x0D, "esc": 0x1B, "tab": 0x09,
@@ -333,6 +333,10 @@ class Hands:
                 raise ValueError("click can be left, right or double")
             return ((lambda: b.click("right" if kind == "right" else "left", kind == "double")),
                     f"Clicked ({kind}).")
+        if action == "launch":
+            if not callable(arg):
+                raise ValueError("there's nothing to open")
+            return arg, "Opening it."
         if action in ("move", "click_at"):
             try:
                 x, y = int(arg[0]), int(arg[1])

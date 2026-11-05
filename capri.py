@@ -25,6 +25,7 @@ from tkinter import font as tkfont
 import agent
 import autostart
 import awareness
+import boot
 import breach
 import brief
 import clip
@@ -1200,7 +1201,7 @@ class ChatWindow:
                              "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
                              "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /tp  /dance  "
                              "/sleep  /calm  /watch  /look  /ailines  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /remember  /facts  /feel  "
-                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /size  /neon  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
+                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /size  /neon  /boot  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
@@ -1519,6 +1520,14 @@ class ChatWindow:
             p.do_control("desktop")
         elif cmd == "/brief":
             p.run_brief()
+        elif cmd == "/boot":
+            arg = parts[1].lower() if len(parts) > 1 else ""
+            if arg in ("on", "off"):
+                p.settings["boot_anim"] = arg == "on"
+                p.save_settings()
+                self.system_line("Launch animation: " + arg)
+            else:
+                p.start_boot(first=arg == "first", greet=False)
         elif cmd == "/neon":
             arg = parts[1].lower() if len(parts) > 1 else ""
             if arg in neon.COLORS or arg == "off":
@@ -1974,6 +1983,7 @@ class SettingsWindow:
         self.check(box, "Calm mode (she stays put and stops chatting)", "calm", False, self.pet.set_calm)
         self.check(box, "Check-ins (water, stretch, eat reminders)", "checkins", True, self.pet.set_checkins)
         self.check(box, "Fly around the screen", "fly_enabled", True)
+        self.check(box, "Launch animation when I start (click her to skip it)", "boot_anim", True)
         self.check(box, "Sound effects (blips and jingles)", "sfx", True,
                    lambda v: setattr(self.pet.sfx, "enabled", bool(v)))
         self.check(box, "Night City Radio chatter (a DJ drop every few minutes)", "radio", False)
@@ -2408,6 +2418,8 @@ class Capri:
         self.whisper = None
         self.wake = None
         self.apps, self.apps_at = {}, 0.0
+        self.boot = None
+        self.mono = pick_font(self.root, "Consolas", "Menlo", "DejaVu Sans Mono", "Courier New")
         self.trail = collections.deque(maxlen=40)
         self.pil_cache, self.ghost_cache, self._last_ck = {}, {}, None
         nn = self.settings.get("neon", "cyan")
@@ -2454,8 +2466,10 @@ class Capri:
         for seq in ("<Button-3>", "<Button-2>", "<Control-Button-1>"):
             c.bind(seq, self.show_menu)
         self.place()
-        self.say_ai("greeting", {"away": f"They were away about {self.mind.away_hours:.0f} hours." if self.mind.away_hours >= 3 else ""},
-                    self.mind.greeting(now), 7)
+        if self.settings.get("boot_anim", True):
+            self.start_boot()                          # she greets you when the animation ends
+        else:
+            self.greet()
         self.warm_brain()
         self.start_hotkey()
         if self.settings.get("wake"):
@@ -3070,6 +3084,7 @@ class Capri:
             self.sy = 1.0 + 0.12 * self.glitch
         self.update_busy(now)
         self.update_twitch(now)
+        self.update_boot(now)
         self.update_particles(dt)
         self.scheduled(now)
         self.place()
@@ -4477,6 +4492,9 @@ class Capri:
             return
         if self.pending:
             return self.cancel_pending("Okay, cancelled.")
+        if self.boot:
+            self.finish_boot(skipped=True)
+            return
         if self.agent is not None:
             self.stop_agent()
             return
@@ -4667,6 +4685,106 @@ class Capri:
             self.pil_cache[ck] = img
         return hit
 
+    # ---- launch animation
+    def greet(self):
+        now = time.time()
+        self.say_ai("greeting", {"away": f"They were away about {self.mind.away_hours:.0f} hours." if self.mind.away_hours >= 3 else ""},
+                    self.mind.greeting(now), 7)
+
+    def start_boot(self, first=None, greet=True):
+        if self.boot:
+            return
+        first = (not self.settings.get("booted")) if first is None else first
+        D = boot.duration(first)
+        self.boot = {"t0": time.time(), "dur": D, "first": first, "lines": boot.lines(first), "greet": greet}
+        self.bubble = ""
+        self.surf = None
+        self.go("idle", D + 10)
+
+    def update_boot(self, now):
+        b = self.boot
+        if not b:
+            return
+        t = now - b["t0"]
+        pr = boot.progress(t, b["dur"])
+        self.glitch = max(self.glitch, pr["flash"] * 0.6)
+        if not b.get("s1") and t > 0.05:
+            b["s1"] = True
+            self.sfx.play("blip")
+        if not b.get("s2") and pr["flash"] > 0.5:
+            b["s2"] = True
+            self.sfx.play("success")
+            self.spawn_confetti(30)
+        if pr["done"]:
+            self.finish_boot()
+
+    def finish_boot(self, skipped=False):
+        b, self.boot = self.boot, None
+        if not b:
+            return
+        self.glitch = 0.0
+        self.settings["booted"] = True
+        self.save_settings()
+        self.go("idle", 2.0)
+        if not skipped:
+            self.react("happy")
+        if b.get("greet", True):
+            self.greet()
+
+    def draw_boot_under(self, c, pr, lfx, lfy):
+        col = self.accent()
+        if pr["beam"] > 0.02:
+            bw = 2 + 12 * pr["beam"] ** 0.5
+            c.create_rectangle(lfx - bw, 0, lfx + bw, lfy, fill=col, outline="")
+            c.create_rectangle(lfx - bw / 3, 0, lfx + bw / 3, lfy, fill="#ffffff", outline="")
+        if 0.0 < pr["ring"] < 1.0:
+            rx = 16 + 100 * pr["ring"]
+            c.create_oval(lfx - rx, lfy - rx * 0.22, lfx + rx, lfy + rx * 0.22, outline=col,
+                          width=max(1, int(4 * (1 - pr["ring"]))))
+        if pr["flash"] > 0.02:
+            rx = 30 + 150 * (1 - pr["flash"])
+            c.create_oval(lfx - rx, lfy - rx * 0.3, lfx + rx, lfy + rx * 0.3, outline="#ffffff", width=3)
+            for i in range(10):
+                a = i * 0.628 + 0.3
+                r0, r1 = 24 + 40 * (1 - pr["flash"]), 44 + 90 * (1 - pr["flash"])
+                cy = lfy - self.fh * 0.5
+                c.create_line(lfx + math.cos(a) * r0, cy + math.sin(a) * r0 * 0.8, lfx + math.cos(a) * r1,
+                              cy + math.sin(a) * r1 * 0.8, fill=col if i % 2 else "#ffffff", width=2)
+
+    def draw_boot_sprite(self, c, reveal, x0, y0, w, h):
+        """Her sprite scanned in from the top down. Returns the y of the scan line (or None)."""
+        pil = self.pil_cache.get(self._last_ck)
+        vis = int(h * reveal) // 4 * 4
+        if pil is None or vis < 4:
+            return None
+        key = ("boot", self._last_ck, vis, self.neon_name)
+        ph = self.ghost_cache.get(key)
+        if ph is None:
+            if len(self.ghost_cache) > 400:
+                self.ghost_cache.clear()
+            ph = self.ghost_cache[key] = ImageTk.PhotoImage(pil.crop((0, 0, pil.width, min(pil.height, vis))))
+        dx = self.rng.randint(-3, 3) if reveal < 0.85 else 0
+        c.create_image(x0 + dx, y0, image=ph, anchor="nw")
+        return y0 + vis
+
+    def draw_boot_over(self, c, pr, bt, lfx, y0, w, scan_y):
+        col = self.accent()
+        if scan_y is not None and pr["reveal"] < 1.0:
+            c.create_line(lfx - w / 2 - 14, scan_y, lfx + w / 2 + 14, scan_y, fill=col, width=3)
+            c.create_line(lfx - w / 2 - 14, scan_y, lfx + w / 2 + 14, scan_y, fill="#ffffff", width=1)
+        shown = boot.typed(self.boot["lines"], bt, self.boot["dur"])
+        if shown:
+            lh, n = 13, len(self.boot["lines"])
+            pw = min(self.Wd - 16, 236)
+            y2 = max(14 + lh * n, y0 - 10)
+            y1 = y2 - (lh * n + 10)
+            round_rect(c, lfx - pw / 2, y1, lfx + pw / 2, y2, 6, fill=C_BLACK, outline=col, width=2)
+            for i, line in enumerate(shown):
+                last = i == len(shown) - 1 and line.endswith("_")
+                ok = "ONLINE" in line
+                c.create_text(lfx - pw / 2 + 8, y1 + 6 + i * lh, text=line, anchor="nw", font=(self.mono, 8, "bold"),
+                              fill="#ffffff" if (last or ok) else col)
+
     def neon_px(self):
         return max(1, round(1.5 * self.dpi * self.size_now))
 
@@ -4711,9 +4829,17 @@ class Capri:
         x0 = lfx - (ax * (1 - wgt) + (w / 2.0) * wgt)
         y0 = lfy - h
         self.trail.append((now, self.fx, self.fy))
-        if self.neon_name != "off" and self.state in ("fly", "orbit") and self._last_ck is not None:
+        bt = pr = scan_y = None
+        if self.boot:
+            bt = now - self.boot["t0"]
+            pr = boot.progress(bt, self.boot["dur"])
+            self.draw_boot_under(c, pr, lfx, lfy)
+        elif self.neon_name != "off" and self.state in ("fly", "orbit") and self._last_ck is not None:
             self.draw_ghosts(c, now, x0, y0)
-        c.create_image(x0, y0, image=photo, anchor="nw")
+        if pr is not None and pr["reveal"] < 1.0:
+            scan_y = self.draw_boot_sprite(c, pr["reveal"], x0, y0, w, h)
+        else:
+            c.create_image(x0, y0, image=photo, anchor="nw")
         top = y0
         if self.typing_along:
             self.draw_keyboard(c, lfx, lfy)
@@ -4755,7 +4881,9 @@ class Capri:
             pill = round_rect(c, x1 - 8, y1 - 3, x2 + 8, y2 + 3, 6, fill=C_BLACK, outline=C_RED, width=2)
             c.tag_lower(pill, tid)
             base_y = y1 - 10
-        if self.bubble and now < self.bubble_until:
+        if pr is not None:
+            self.draw_boot_over(c, pr, bt, lfx, y0, w, scan_y)
+        if self.bubble and now < self.bubble_until and not self.boot:
             shown = int((now - self.bubble_t0) * 80)
             txt = self.bubble[:max(1, shown)]
             tid = c.create_text(lfx, base_y, text=txt, width=min(210, self.Wd - 50), font=(self.font_family, 10),

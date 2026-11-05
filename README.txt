@@ -124,6 +124,13 @@ INSTANT COMMANDS (typed, or by voice after "Hey Capri" / "Choom"; no AI, no wait
                  in chat, and she says the gist out loud (AI-written).
   Focus:         "start a focus session".
 
+LAUNCH ANIMATION
+  Every time you start Capri she boots in: a neon light beam and ring power on, a scanner reveals her from
+  the top down, a little terminal types her boot lines ("neural link... OK", "choom detected... OK",
+  "ONLINE"), then a flash and confetti, and only then does she greet you. The very first launch ever is a
+  longer "first boot" version with its own lines. Click her to skip it. Replay it with /boot (or /boot first),
+  switch it off with /boot off or in Settings -> Behaviour. It uses your neon colour (/neon).
+
 NEON LOOK (Settings -> SIZE & LOOK, or /neon cyan | magenta | yellow | green | red | white | off)
   On by default (cyan): a solid glowing outline around her, neon speed ghosts behind her when she flies
   fast, and speech bubbles in the same colour. /neon off goes back to the plain look.

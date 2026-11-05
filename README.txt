@@ -176,9 +176,11 @@ CYBERPUNK LOOK (chat window and settings)
   terminal-style tags ("CAPRI 15:12" / "YOU"), [SYS] and [ERR] lines, [x] / (*) neon toggles and outlined
   buttons that light up on hover. They use your neon colour (/neon magenta and reopen them to see it).
 
-NEON LOOK (Settings -> SIZE & LOOK, or /neon cyan | magenta | yellow | green | red | white | off)
-  On by default (cyan): a solid glowing outline around her, neon speed ghosts behind her when she flies
-  fast, and speech bubbles in the same colour. /neon off goes back to the plain look.
+NEON LOOK (optional, OFF by default)
+  /neon cyan | magenta | yellow | green | red | white | off (or Settings -> SIZE & LOOK) recolours the speech
+  bubbles, the boot animation and the chat/settings windows, and adds speed ghosts when she flies fast.
+  The glowing outline around her is a separate switch, OFF by default: /neon outline on (needs a colour).
+  With neon off she is just her normal art and the windows use the original green.
 
 ONE-CLICK PRESETS (Settings -> QUICK SETUP, or /preset none | some | full, /powers shows the state)
   NONE  pure desktop pet: no key pressing or clicking, no microphone, no screen looking, awareness off.

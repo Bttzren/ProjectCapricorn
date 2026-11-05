@@ -5,7 +5,7 @@ Only tkinter. THEME['acc'] is the accent colour (the neon colour she uses); wind
 import tkinter as tk
 from tkinter import font as tkfont
 
-THEME = {"acc": "#00f0ff", "acc2": "#ff2bd6", "warn": "#fcee0a", "err": "#fb0948"}
+THEME = {"acc": "#05f56f", "acc2": "#ff2bd6", "warn": "#fcee0a", "err": "#fb0948"}
 BG, PANEL, PANEL2, LINE = "#07060f", "#0d0b1a", "#14112b", "#2a2547"
 TEXT, DIM, BLACK = "#eaf6ff", "#7f7ca0", "#05040a"
 

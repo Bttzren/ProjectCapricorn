@@ -837,6 +837,12 @@ def round_rect(c, x1, y1, x2, y2, r, **kw):
     return c.create_polygon(pts, smooth=True, **kw)
 
 
+def chamfer_rect(c, x1, y1, x2, y2, cut, **kw):
+    """A sharp rectangle with two cut corners (top-left and bottom-right)."""
+    pts = [x1 + cut, y1, x2, y1, x2, y2 - cut, x2 - cut, y2, x1, y2, x1, y1 + cut]
+    return c.create_polygon(pts, **kw)
+
+
 def flat_button(parent, text, command, bg, fg, hover, font, padx=12, pady=5):
     """The app's button, drawn sharp and neon: solid when `bg` is the accent green, outlined otherwise."""
     filled = bg in (C_GREEN, C_RED)
@@ -1602,11 +1608,18 @@ class ChatWindow:
                 p.start_boot(first=arg == "first", greet=False)
         elif cmd == "/neon":
             arg = parts[1].lower() if len(parts) > 1 else ""
-            if arg in neon.COLORS or arg == "off":
+            if arg == "outline":
+                on = (parts[2].lower() if len(parts) > 2 else "") == "on"
+                p.settings["outline"] = on
+                p.save_settings()
+                p.clear_sprite_caches()
+                self.system_line("Glowing outline: " + ("on (needs a neon colour)" if on else "off"))
+            elif arg in neon.COLORS or arg == "off":
                 p.set_neon(arg)
                 self.system_line("Neon: " + arg)
             else:
-                self.system_line("/neon cyan | magenta | yellow | green | red | white | off   (now: " + p.neon_name + ")")
+                self.system_line("/neon cyan | magenta | yellow | green | red | white | off   /neon outline on | off   (now: "
+                                 + p.neon_name + ", outline " + ("on" if p.outline_on() else "off") + ")")
         elif cmd == "/preset":
             arg = parts[1].lower() if len(parts) > 1 else ""
             if arg in presets.PRESETS:
@@ -2014,6 +2027,8 @@ class SettingsWindow:
                 ui.NeonRadio(nrow, text=name.title(), variable=self.neon_var, value=name, font=(self.fam, 8),
                              swatch=None if name == "off" else neon.hex_of(neon.COLORS[name]),
                              command=lambda n=name: pet.set_neon(n)).pack(side="left", padx=(0, 10))
+        self.check(box, "Glowing outline around her (off by default; needs a neon colour above)", "outline", False,
+                   lambda v: pet.clear_sprite_caches())
         tk.Frame(box, bg=C_PANEL, height=4).pack()
 
     def build_local(self, parent):
@@ -2539,7 +2554,7 @@ class Capri:
         self.mono = pick_font(self.root, "Consolas", "Menlo", "DejaVu Sans Mono", "Courier New")
         self.trail = collections.deque(maxlen=40)
         self.pil_cache, self.ghost_cache, self._last_ck = {}, {}, None
-        nn = self.settings.get("neon", "cyan")
+        nn = self.settings.get("neon", "off")
         self.neon_name = nn if nn in neon.COLORS else "off"
         ui.THEME["acc"] = neon.hex_of(neon.COLORS[self.neon_name]) if self.neon_name != "off" else "#05f56f"
         self.pending_wake = False
@@ -5095,7 +5110,7 @@ class Capri:
         dim = self.state == "sleep"
         if self.glitch > 0.02:
             img, ax, ay = pose(frame, self.angle, self.sx, self.sy, flip, dim, self.glitch, self.rng)
-            if self.neon_name != "off":
+            if self.outline_on():
                 img = neon.outline(img, neon.COLORS[self.neon_name], self.neon_px())
             self._last_ck = None
             return ImageTk.PhotoImage(img), ax, ay, img.width, img.height
@@ -5106,7 +5121,7 @@ class Capri:
             if len(self.pcache) > 500:
                 self.clear_sprite_caches()
             img, ax, ay = pose(frame, self.angle, self.sx, self.sy, flip, dim)
-            if self.neon_name != "off":
+            if self.outline_on():
                 img = neon.outline(img, neon.COLORS[self.neon_name], self.neon_px())
             hit = (ImageTk.PhotoImage(img), ax, ay, img.width, img.height)
             self.pcache[ck] = hit
@@ -5206,12 +5221,16 @@ class Capri:
             pw = min(self.Wd - 16, 236)
             y2 = max(14 + lh * n, y0 - 10)
             y1 = y2 - (lh * n + 10)
-            round_rect(c, lfx - pw / 2, y1, lfx + pw / 2, y2, 6, fill=C_BLACK, outline=col, width=2)
+            chamfer_rect(c, lfx - pw / 2, y1, lfx + pw / 2, y2, 7, fill=C_BLACK, outline=col, width=2)
             for i, line in enumerate(shown):
                 last = i == len(shown) - 1 and line.endswith("_")
                 ok = "ONLINE" in line
                 c.create_text(lfx - pw / 2 + 8, y1 + 6 + i * lh, text=line, anchor="nw", font=(self.mono, 8, "bold"),
                               fill="#ffffff" if (last or ok) else col)
+
+    def outline_on(self):
+        """The glowing outline around her is OFF unless you switch it on (/neon outline on) and pick a colour."""
+        return bool(self.settings.get("outline", False)) and self.neon_name != "off"
 
     def neon_px(self):
         return max(1, round(1.5 * self.dpi * self.size_now))
@@ -5307,7 +5326,7 @@ class Capri:
             label = f"{self.timer_mode.upper()} {left // 60}:{left % 60:02d}"
             tid = c.create_text(lfx, base_y, text=label, font=(self.font_family, 9, "bold"), fill=C_GREEN, anchor="s")
             x1, y1, x2, y2 = c.bbox(tid)
-            pill = round_rect(c, x1 - 8, y1 - 3, x2 + 8, y2 + 3, 6, fill=C_BLACK, outline=C_RED, width=2)
+            pill = chamfer_rect(c, x1 - 8, y1 - 3, x2 + 8, y2 + 3, 5, fill=C_BLACK, outline=C_RED, width=2)
             c.tag_lower(pill, tid)
             base_y = y1 - 10
         if pr is not None:
@@ -5315,16 +5334,16 @@ class Capri:
         if self.bubble and now < self.bubble_until and not self.boot:
             shown = int((now - self.bubble_t0) * 80)
             txt = self.bubble[:max(1, shown)]
-            tid = c.create_text(lfx, base_y, text=txt, width=min(210, self.Wd - 50), font=(self.font_family, 10),
+            tid = c.create_text(lfx, base_y, text=txt, width=min(210, self.Wd - 50), font=(self.mono, 9),
                                 fill=C_TEXT, anchor="s", justify="center")
             x1, y1, x2, y2 = c.bbox(tid)
-            full = c.create_text(-999, -999, text=self.bubble, width=min(210, self.Wd - 50), font=(self.font_family, 10))
+            full = c.create_text(-999, -999, text=self.bubble, width=min(210, self.Wd - 50), font=(self.mono, 9))
             fx1, fy1, fx2, fy2 = c.bbox(full)
             c.delete(full)
             hx = (fx2 - fx1) / 2 - (x2 - x1) / 2
             bx1, bx2, by1 = lfx - (fx2 - fx1) / 2 - 10, lfx + (fx2 - fx1) / 2 + 10, y2 - (fy2 - fy1) - 6
             acc = self.accent()
-            bg = round_rect(c, bx1, by1, bx2, y2 + 6, 8, fill=C_PANEL, outline=acc, width=2)
+            bg = chamfer_rect(c, bx1, by1, bx2, y2 + 6, 7, fill=C_PANEL, outline=acc, width=2)
             tail = c.create_polygon(lfx - 6, y2 + 6, lfx + 6, y2 + 6, lfx, y2 + 14, fill=C_PANEL, outline=acc, width=2)
             cover = c.create_line(lfx - 5, y2 + 6, lfx + 5, y2 + 6, fill=C_PANEL, width=3)
             c.tag_lower(cover)

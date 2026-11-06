@@ -988,7 +988,7 @@ class ChatWindow:
                                      highlightbackground=ui.blend(ui.THEME["warn"], C_BG, 0.5))
         bar.pack(fill="x")
         tk.Label(bar, text="[!] NO AI KEY. Paste a Claude (sk-ant...) or Gemini key to unlock real chat, or type "
-                           "/getbrain for a free local AI. Until then I answer in offline mode.", bg=C_PANEL2,
+                           "Settings > LOCAL AI for a free one. Until then I answer in offline mode.", bg=C_PANEL2,
                  fg=ui.THEME["warn"], font=self.f_small, wraplength=360, justify="left").pack(anchor="w", padx=10,
                                                                                                pady=(6, 2))
         row = tk.Frame(bar, bg=C_PANEL2)
@@ -1247,7 +1247,7 @@ class ChatWindow:
                              "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
                              "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /tp  /dance  "
                              "/calm  /watch  /look  /ailines  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /remember  /facts  /feel  "
-                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /size  /neon  /boot  /hear  /call  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
+                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /size  /neon  /boot  /hear  /call  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /clear")
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
@@ -1669,22 +1669,6 @@ class ChatWindow:
                                  + "   /wake on | off   (say 'Hey Capri ...' or 'Choom ...')")
         elif cmd == "/getears":
             p.install_ears()
-        elif cmd == "/getbrain":
-            arg = parts[1].lower() if len(parts) > 1 else "small"
-            if arg == "remove":
-                p.remove_brain()
-            elif arg in localai.MODELS:
-                p.install_brain(arg)
-            else:
-                self.system_line("/getbrain  (small, 1.1 GB)   /getbrain big  (3B, 2.1 GB, smarter)   /getbrain remove\n"
-                                 "Or install Ollama and she'll use it automatically.", err=True)
-        elif cmd == "/brain":
-            arg = parts[1].lower() if len(parts) > 1 else ""
-            if arg in ("auto", "cloud", "local"):
-                p.set_brain(arg)
-            self.system_line(f"AI brain: {BRAIN['mode']}  (/brain auto | cloud | local)\n"
-                             f"Cloud key: {'yes' if read_api_key() else 'no'}   Local AI: {LOCAL_AI.status()}\n"
-                             "auto = cloud when you have a key (local if you're offline), local if no key.")
         elif cmd == "/getvoice":
             if voice.edge_installed():
                 p.speaker = make_speaker()
@@ -2046,14 +2030,34 @@ class SettingsWindow:
                 ("cloud", "Cloud only", "Always your Claude/Gemini key."),
                 ("local", "Local only", "Always the AI on this computer. Nothing leaves it.")):
             self.radio(box, label, self.brain_var, value, lambda: pet.set_brain(self.brain_var.get()), note)
-        tk.Label(box, text="Local AI now: " + LOCAL_AI.status(), bg=C_PANEL, fg=C_DIM, font=(self.fam, 8),
-                 wraplength=340, justify="left").pack(anchor="w", padx=10, pady=(6, 2))
+        tk.Label(box, text="WHICH LOCAL MODEL", bg=C_PANEL, fg=C_DIM, font=(self.fam, 8, "bold")).pack(
+            anchor="w", padx=12, pady=(8, 0))
+        self.model_var = tk.StringVar(value=LOCAL_AI.which)
+        for value, label, note in (
+                ("small", "Small (1.1 GB)", "Fast, runs on any PC. Simple replies."),
+                ("big", "Big (2.1 GB)", "Smarter, slower. Wants about 4 GB of free RAM.")):
+            self.radio(box, label, self.model_var, value, lambda: pet.choose_brain_model(self.model_var.get()), note)
+        self.brain_status = tk.Label(box, text="", bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=340,
+                                     justify="left")
+        self.brain_status.pack(anchor="w", padx=10, pady=(6, 2))
         row = tk.Frame(box, bg=C_PANEL)
         row.pack(anchor="w", padx=10, pady=(2, 4))
-        flat_button(row, "INSTALL LOCAL AI (1.1 GB)", lambda: pet.install_brain("small"), C_PANEL2, C_GREEN,
+        flat_button(row, "DOWNLOAD THIS MODEL", lambda: pet.install_brain(self.model_var.get()), C_PANEL2, C_GREEN,
                     "#26263a", (self.fam, 8), 8, 4).pack(side="left", padx=(0, 6))
-        flat_button(row, "BIGGER (2.1 GB)", lambda: pet.install_brain("big"), C_PANEL2, C_TEXT, "#26263a",
+        flat_button(row, "REMOVE LOCAL AI", pet.remove_brain, C_PANEL2, C_TEXT, "#26263a",
                     (self.fam, 8), 8, 4).pack(side="left")
+
+        def refresh_status():
+            try:
+                if not self.brain_status.winfo_exists():
+                    return
+                have = ", ".join(f"{n}: " + ("downloaded" if LOCAL_AI.install.installed(n) else "not downloaded")
+                                 for n in localai.MODELS)
+                self.brain_status.config(text=f"{have}\nIn use: {LOCAL_AI.status()}")
+                self.brain_status.after(2000, refresh_status)
+            except tk.TclError:
+                pass
+        refresh_status()
         tk.Label(box, text="Voice input: " + ("installed. Ctrl+Alt+C, the MIC button or /talk."
                                               if listen.installed() else "not installed yet."),
                  bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=340, justify="left").pack(
@@ -3512,6 +3516,19 @@ class Capri:
         self.save_settings()
         self.warm_brain()
 
+    def choose_brain_model(self, which):
+        """Pick the small or big built-in model (from Settings). Downloading is a separate, explicit button."""
+        if which not in localai.MODELS:
+            return
+        LOCAL_AI.use(which)
+        self.settings["brain_model"] = which
+        self.save_settings()
+        if LOCAL_AI.install.installed(which):
+            self.notify(f"Using the {which} local model.", secs=4)
+            self.warm_brain()
+        else:
+            self.notify(f"The {which} model isn't downloaded yet. Press DOWNLOAD THIS MODEL in Settings.", secs=7)
+
     def warm_brain(self):
         """Start the local engine in the background when it will be used, so the first line isn't late."""
         if (BRAIN["mode"] == "local" or (BRAIN["mode"] == "auto" and not read_api_key())) and LOCAL_AI.available():
@@ -3559,7 +3576,7 @@ class Capri:
                 self.settings["brain_model"] = LOCAL_AI.which = item[1]
                 self.save_settings()
                 LOCAL_AI.refresh()
-                self.notify("Local AI installed. It runs on your computer, no key needed. /brain shows which AI I use.",
+                self.notify("Local AI installed. It runs on your computer, no key needed. Settings > LOCAL AI shows which AI I use.",
                             secs=9)
                 self.warm_brain()
             else:
@@ -3788,7 +3805,7 @@ class Capri:
         if self.speaker.engine not in ("fish", "edge"):
             return False, "To talk in a call I need my neural voice: /getvoice (the robot voice can't go into a call)."
         if not ai_available():
-            return False, "I need an AI to answer with (a key, or /getbrain)."
+            return False, "I need an AI to answer with (a key, or a local AI from Settings)."
         if self.audio_out is None:
             self.audio_out = audioout.Player(log=log)
         if self.audio_out.cable() is None:
@@ -4026,7 +4043,7 @@ class Capri:
         if not text.strip():
             return self.notify("Your clipboard is empty (or isn't text). Copy something first.", err=True)
         if not ai_available():
-            return self.notify("I need an AI for that (a key, or /getbrain for the local one).", err=True)
+            return self.notify("I need an AI for that (a key, or the local one from Settings).", err=True)
         local = BRAIN["mode"] == "local" or (BRAIN["mode"] == "auto" and not read_api_key())
         self.notify(f"Reading your clipboard ({min(len(text), clip.MAX_CHARS)} characters) with "
                     + ("the local AI..." if local else "your AI provider..."), secs=4)

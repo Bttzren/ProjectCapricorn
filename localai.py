@@ -274,6 +274,18 @@ class LocalAI:
     def refresh(self):
         self._seen = (0.0, "")
 
+    def use(self, which):
+        """Switch between the built-in models ('small' / 'big'). Stops the running engine so the next line starts
+        the chosen model. Returns True if it changed."""
+        if which not in MODELS:
+            raise ValueError(which)
+        if which == self.which:
+            return False
+        self.stop()
+        self.which = which
+        self.refresh()
+        return True
+
     # what's available without starting anything
     def where(self, max_age=30.0):
         """'url' (CAPRI_LOCAL_URL), 'ollama', 'builtin' or '' (nothing). Cached for a few seconds because
@@ -298,7 +310,7 @@ class LocalAI:
     def status(self):
         w = self.where()
         label = {"url": f"your server at {self.external}", "ollama": "Ollama", "builtin": "built-in " + self.which,
-                 "": "not installed (type /getbrain)"}[w]
+                 "": "not installed (open Settings > LOCAL AI)"}[w]
         return label + (" (running)" if self.base and alive(self.base, self.opener) else "")
 
     def start(self):
@@ -322,7 +334,7 @@ class LocalAI:
                     raise RuntimeError(f"couldn't start the local AI ({exc})")
                 self.base = f"http://127.0.0.1:{port}"
             else:
-                raise RuntimeError("No local AI yet. Type /getbrain to install one.")
+                raise RuntimeError("No local AI yet. Open Settings > LOCAL AI to install one.")
             end = time.time() + self.start_timeout
             while time.time() < end:
                 if self.proc is not None and self.proc.poll() is not None:

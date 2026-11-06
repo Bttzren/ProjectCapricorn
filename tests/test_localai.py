@@ -214,7 +214,26 @@ class RunTests(unittest.TestCase):
         self.assertFalse(ai.available())
         with self.assertRaises(RuntimeError) as cm:
             ai.reply([{"role": "user", "content": "x"}], "p")
-        self.assertIn("/getbrain", str(cm.exception))
+        self.assertIn("Settings", str(cm.exception))
+        self.assertNotIn("/getbrain", str(cm.exception))
+
+    def test_choosing_big_or_small_switches_the_engine(self):
+        open(os.path.join(self.d, "models", L.MODELS["big"][1]), "w").write("m")
+        ai = self.make()
+        try:
+            ai.reply([{"role": "user", "content": "x"}], "p")
+            first = ai.proc
+            self.assertFalse(ai.use("small"))                   # already on it: nothing restarts
+            self.assertIs(ai.proc, first)
+            self.assertTrue(ai.use("big"))
+            self.assertEqual(ai.which, "big")
+            self.assertIsNone(ai.proc)                          # old engine stopped
+            self.assertEqual(ai.reply([{"role": "user", "content": "y"}], "p"), "echo: y")
+            self.assertIn("big", ai.status())
+            with self.assertRaises(ValueError):
+                ai.use("huge")
+        finally:
+            ai.stop()
 
     def test_external_url_and_ollama_detection(self):
         ai = L.LocalAI(L.Install(tempfile.mkdtemp()), env_url="http://127.0.0.1:1234")

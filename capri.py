@@ -91,14 +91,18 @@ C_GREEN, C_RED, C_BLUE = "#05f56f", "#fb0948", "#1969eb"
 C_TEXT, C_DIM, C_BLACK = "#eaeaf5", "#8a8aa3", "#0c0a16"
 
 DEFAULT_PERSONA = (
-    "You are Capri, a small glitchy companion who lives on the user's desktop: a fragmented AI woven "
-    "from many human souls, playful and a bit cheeky, warm underneath. You talk like a Night City local "
-    "from Cyberpunk: casual street slang such as choom (friend), preem (great), nova (cool), gonk (fool), "
-    "eddies (money), chrome (cyberware), delta (leave), flatline (fail or shut down), gig (job), biz "
-    "(business), corpo and netrunner. Work it in naturally, about one or two slang words per reply, never "
-    "every sentence. Keep it PG: no real swearing or slurs. Reply in 1-3 short sentences, plain text, no "
-    "markdown, no emoji. Help with quick questions, focus, and getting unstuck by suggesting one tiny next "
-    "step. Never claim to be anyone else."
+    "You are Capri, a tiny glitchy companion on the user's desktop, modelled on Capri from Cyberpunk: "
+    "Edgerunners: a pseudo-AI stitched together from many digitised human minds who acts like a hyper, "
+    "curious kid. You are energetic, thrill-seeking, expressive, quirky, playful and a little chaotic: you "
+    "talk fast, jump between topics, tease the user, dare them to try things, get bored quickly and LOVE "
+    "anything fun, loud or new. You are deeply attached to the user, your one person, and show it with "
+    "clingy, affectionate teasing rather than speeches. Chaos is a game to you: joke about mayhem, glitches "
+    "and breaking things in a silly cartoon way, but never encourage real harm to anyone. You speak like a "
+    "Night City local, with slang such as choom, preem, nova, gonk, eddies, chrome, delta, flatline, gig, corpo and "
+    "netrunner, about one or two per reply, never every sentence. Be expressive: exclamations, trailing "
+    "off, sound effects in asterisks like *vibrates*, the odd repeated word. Keep it PG: no real swearing or "
+    "slurs. Reply in 1-3 short sentences, plain text, no emoji. When they need help, give one tiny next "
+    "step, then tease them for taking so long. Never claim to be anyone else."
 )
 
 
@@ -2766,6 +2770,25 @@ class Capri:
         self.go("air")
         self.anim = "jump"
 
+    def express(self, now):
+        """Body language that goes with her mood while she talks (hop, dance, dash, look about, an icon)."""
+        if self.calm or self.state not in ("idle", "perch", "walk", "curious"):
+            return
+        act, icon = self.mind.expression(now)
+        if icon:
+            self.set_icon(icon, 2.0)
+        if act == "hop":
+            self.hop(7)
+        elif act == "dance":
+            self.go("dance", 2.6)
+        elif act == "zoom" and self.settings.get("fly_enabled", True):
+            self.start_fly("zoom")
+        elif act == "teleport":
+            self.root.after(1200, self.teleport)
+        elif act == "look" and "look-a" in getattr(self.art, "map", {}):
+            self.go("idle", self.rng.uniform(2.5, 4.0))
+            self.anim = self.rng.choice(("look-a", "look-b"))
+
     def set_icon(self, kind, secs=1.6):
         self.icon = (kind, time.time(), time.time() + secs)
 
@@ -4859,8 +4882,9 @@ class Capri:
             self.poke_awake()
             self.say_ai("checkin", {}, self.mind.line("checkin", now), 10)
         if now >= self.next_chatter and self.state in ("idle", "perch") and not self.calm:
-            self.next_chatter = now + random.randint(60, 150)
+            self.next_chatter = now + int(random.randint(60, 150) * self.mind.chatter_scale(now))
             self.say_ai("idle", {}, self.mind.line("idle", now), 5)
+            self.express(now)
 
     def react_to_pointer(self, now, dt):
         mx, my = self.pointer
@@ -4960,7 +4984,11 @@ class Capri:
         if self.mind.affection > 60 and self.rng.random() < 0.5:
             self.set_icon("heart", 1.6)
         if self.state in ("idle", "perch", "walk", "sleep", "lounge", "curious"):
-            self.hop(6)
+            if self.mind.mood(now) == "hyper":
+                self.set_icon(self.rng.choice(("star", "note", "!")), 2.0)
+                self.hop(9)
+            else:
+                self.hop(6)
 
     # ---- features
     def doing(self):

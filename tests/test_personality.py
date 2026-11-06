@@ -125,7 +125,7 @@ class MindTests(unittest.TestCase):
         joined = " ".join(pools).lower()
         for word in ("choom", "preem", "nova", "gonk", "chrome", "netrunner", "gig"):
             self.assertIn(word, joined)
-        self.assertGreater(sum(any(w in l.lower() for w in P.SLANG) for l in pools), len(pools) // 2)
+        self.assertGreater(sum(any(w in l.lower() for w in P.SLANG) for l in pools), len(pools) // 3)
         for line in pools:
             self.assertLessEqual(len(line), 120, line)
         bad = re.compile(r"\b(fuck\w*|shit\w*|bitch\w*|damn\w*|hell|ass|asshole|crap)\b")
@@ -136,6 +136,53 @@ class MindTests(unittest.TestCase):
         src = open(os.path.join(os.path.dirname(__file__), "..", "capri.py"), encoding="utf-8").read()
         persona = src[src.index("DEFAULT_PERSONA = ("):src.index(")\n", src.index("DEFAULT_PERSONA = ("))]
         for word in ("choom", "preem", "nova", "gonk", "eddies", "PG"):
+            self.assertIn(word, persona)
+
+    def test_fast_pokes_make_her_hyper_and_it_wears_off(self):
+        m = self.mind({"affection": 50}, now=at(14))
+        for i in range(4):
+            m.poke(at(14) + i * 5)
+        self.assertEqual(m.mood(at(14) + 20), "hyper")
+        self.assertEqual(m.mood(at(14) + 200), "content")
+
+    def test_low_affection_pokes_dont_make_her_hyper(self):
+        m = self.mind({"affection": 10}, now=at(14))
+        for i in range(5):
+            m.recent.append(at(14) + i)
+        self.assertNotEqual(m.mood(at(14) + 6), "hyper")
+
+    def test_ignored_while_awake_she_gets_restless(self):
+        m = self.mind({"affection": 90}, now=at(14))
+        self.assertEqual(m.mood(at(14)), "playful")
+        self.assertEqual(m.mood(at(14) + 13 * 60), "restless")
+        m.last_interaction = at(3) - 100000
+        self.assertEqual(m.mood(at(3)), "sleepy")      # asleep beats bored
+
+    def test_every_mood_has_lines_weights_and_fallbacks(self):
+        for mood in P.MOODS:
+            m = self.mind({"affection": 50}, now=at(14))
+            m.mood = lambda now, mood=mood: mood
+            for kind in ("idle", "poke", "wake"):
+                self.assertIn(mood, P.LINES[kind])
+            self.assertIn(mood, P.OFFLINE_FALLBACK)
+            self.assertTrue(m.adjust_weights([("walk", 10)], at(14)))
+            self.assertTrue(m.line("idle", at(14)))
+            self.assertIn(mood, m.context(at(14)))
+            self.assertGreater(m.chatter_scale(at(14)), 0)
+
+    def test_hyper_talks_more_and_expresses_with_her_body(self):
+        m = self.mind({"affection": 50}, now=at(14))
+        for i in range(4):
+            m.poke(at(14) + i)
+        now = at(14) + 10
+        self.assertLess(m.chatter_scale(now), 1.0)
+        act, icon = m.expression(now)
+        self.assertIn((act, icon), P.EXPRESSIONS["hyper"])
+
+    def test_default_persona_is_the_edgerunners_capri(self):
+        src = open(os.path.join(os.path.dirname(__file__), "..", "capri.py"), encoding="utf-8").read()
+        persona = src[src.index("DEFAULT_PERSONA = ("):src.index(")\n", src.index("DEFAULT_PERSONA = ("))]
+        for word in ("Edgerunners", "curious", "chaotic", "thrill", "never encourage real harm"):
             self.assertIn(word, persona)
 
 

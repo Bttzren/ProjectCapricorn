@@ -44,6 +44,7 @@ import listen
 import localai
 import memory
 import neon
+import gfx
 import personality
 import presets
 import reactor
@@ -590,7 +591,7 @@ def scale_to(img, h, pixel=True):
     k = h / img.height
     if 0.92 <= k <= 1.08:
         return crisp(img)
-    return crisp(img.resize((max(1, round(img.width * k)), h), Image.LANCZOS))
+    return crisp(gfx.resize_sharp(img, (max(1, round(img.width * k)), h), k))
 
 
 def thumb(img, h):
@@ -806,7 +807,7 @@ def pose(img, angle=0.0, sx=1.0, sy=1.0, flip=False, dim=False, glitch=0.0, rng=
     if flip:
         img = img.transpose(Image.FLIP_LEFT_RIGHT)
     if abs(sx - 1) > 0.01 or abs(sy - 1) > 0.01:
-        img = img.resize((max(2, round(img.width * sx)), max(2, round(img.height * sy))), Image.NEAREST)
+        img = hard_alpha(img.resize((max(2, round(img.width * sx)), max(2, round(img.height * sy))), Image.BICUBIC))
     if dim:
         r, g, b, a = img.split()
         rgb = ImageEnhance.Brightness(Image.merge("RGB", (r, g, b))).enhance(0.62)
@@ -817,7 +818,7 @@ def pose(img, angle=0.0, sx=1.0, sy=1.0, flip=False, dim=False, glitch=0.0, rng=
         th = math.radians(angle)
         py = h / 2.0
         rx, ry = py * math.sin(th), py * math.cos(th)
-        rot = img.rotate(angle, expand=True, resample=Image.NEAREST)
+        rot = img.rotate(angle, expand=True, resample=Image.BICUBIC)
         ax, ay = rot.width / 2.0 + rx, rot.height / 2.0 + ry
         img = hard_alpha(rot)
     if glitch > 0.02:
@@ -1243,11 +1244,11 @@ class ChatWindow:
         cmd = parts[0].lower()
         p = self.pet
         if cmd == "/help":
-            self.system_line("/focus [min]  /remind <min> <text>  /name <you>  /mood  /key <api key>  "
-                             "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
+            self.system_line("/focus [min]  /remind <min> <text>  /name <you>  /mood  "
+                             "/settings  /fly  /party  /aware  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
                              "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /tp  /dance  "
-                             "/calm  /watch  /look  /ailines  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /remember  /facts  /feel  "
-                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /size  /neon  /boot  /hear  /call  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /clear")
+                             "/calm  /watch  /look  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /remember  /facts  /feel  "
+                             "/journal  /day  /horoscope  /lore  /do  /stop  /preset  /powers  /size  /neon  /boot  /hear  /call  /open  /search  /brief  /desktop  /clip  /talk  /clear")
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
@@ -1263,10 +1264,6 @@ class ChatWindow:
             self.system_line(f"Okay, I'll call you {p.mind.user_name}.")
         elif cmd == "/mood":
             self.system_line(f"Mood: {p.mind.mood(time.time())}. Affection: {p.mind.affection:.0f}/100.")
-        elif cmd == "/key" and len(parts) >= 2:
-            save_api_key(parts[1])
-            self.drop_keybar()
-            self.system_line("Key saved. Real chat unlocked.")
         elif cmd == "/watch":
             arg = parts[1].lower() if len(parts) > 1 else ""
             sp = p.spotter
@@ -1293,16 +1290,6 @@ class ChatWindow:
                 self.system_line("Looking...")
             else:
                 self.system_line("Okay, I won't look.")
-        elif cmd == "/ailines":
-            arg = parts[1].lower() if len(parts) > 1 else ""
-            if arg in ("on", "off"):
-                p.settings["ai_lines"] = arg == "on"
-                p.save_settings()
-                self.system_line("AI-written lines: " + arg + ("" if arg == "off" else ("" if ai_available()
-                                 else "  (needs an AI key; using presets until you add one)")))
-            else:
-                self.system_line("AI-written lines: " + ("on" if p.settings.get("ai_lines", True) else "off")
-                                 + f"   used today: {p.ai_budget.used_today()}   /ailines on | off")
         elif cmd in GAME_COMMANDS:
             kind, count = GAME_COMMANDS[cmd]
             if cmd == "/kill" and len(parts) > 1 and parts[1].isdigit():
@@ -1516,21 +1503,6 @@ class ChatWindow:
                 p.set_aware(arg == "on")
             else:
                 self.system_line("/aware on | off   (now: " + ("on" if p.aware else "off") + ")")
-        elif cmd == "/fishkey":
-            arg = parts[1] if len(parts) > 1 else ""
-            if arg.lower() in ("off", "clear", "remove"):
-                clear_fish_key()
-                msg = "Fish Audio key removed. Back to the system voice."
-            elif len(arg) >= 16:
-                save_fish_key(arg)
-                msg = "Fish Audio key saved. Using Capri's real voice (her lines get sent to Fish Audio)."
-            else:
-                return self.system_line("/fishkey <Fish Audio API key>   or   /fishkey off   (voice now: "
-                                        + p.speaker.engine + ")")
-            p.speaker.stop()
-            p.speaker = make_speaker()
-            self.system_line(msg)
-            p.say("Testing, one two. Is this the real me?", 5, speak="priority")
         elif cmd == "/do":
             ok, why = p.start_agent(text.split(None, 1)[1] if len(parts) > 1 else "")
             if not ok:
@@ -1541,19 +1513,6 @@ class ChatWindow:
                 self.system_line("Stopping...")
             else:
                 self.system_line("I'm not doing anything.")
-        elif cmd == "/agent":
-            sub = parts[1].lower() if len(parts) > 1 else ""
-            if sub == "on":
-                self.system_line("Tasks are on. Try /do ..." if p.enable_agent(self.win)
-                                 else "Okay, tasks stay off.")
-            elif sub == "off":
-                p.settings["agent"] = False
-                p.save_settings()
-                p.stop_agent()
-                self.system_line("Tasks are off.")
-            else:
-                self.system_line("Tasks: " + ("on" if p.settings.get("agent") else "off")
-                                 + "  (/agent on | off).  Needs Full control and a Claude key.  Then: /do <task>")
         elif cmd == "/talk":
             p.start_listening()
         elif cmd == "/open" or cmd == "/search":
@@ -1576,14 +1535,12 @@ class ChatWindow:
                 if p.call_active():
                     p.stop_call()
                 self.system_line("Call mode is off.")
-            elif arg == "setup":
-                self.system_line(CABLE_HELP)
             else:
                 ok, why = p.call_ready()
                 self.system_line("Call mode: " + ("ON, in the call" if p.call_active() else "off")
                                  + ("" if ok else "\nNot ready: " + why)
                                  + "\n/call on (listen where you already are)   /call join (she joins Discord, needs tasks)"
-                                   "   /call off   /call setup")
+                                   "   /call off   (setup help: Settings > LOCAL AI & VOICE INPUT)")
         elif cmd == "/hear":
             arg = parts[1].lower() if len(parts) > 1 else ""
             if arg == "on":
@@ -1597,11 +1554,6 @@ class ChatWindow:
                 self.system_line("Hearing the PC: " + ("ON" if on else "off")
                                  + (f"  (holding {p.hear.ring.seconds_held():.0f}s of audio in memory)" if on else "")
                                  + "\n/hear on | off | last (what they just said) | summarize")
-        elif cmd == "/gethear":
-            if hearing.installed():
-                self.system_line("The PC-audio helper is already installed. /hear on")
-            else:
-                p.install_hear()
         elif cmd == "/boot":
             arg = parts[1].lower() if len(parts) > 1 else ""
             if arg in ("on", "off"):
@@ -1657,32 +1609,6 @@ class ChatWindow:
             else:
                 self.system_line("/clip  (explain)   /clip summarize   /clip translate french   /clip fix   /clip reply",
                                  err=True)
-        elif cmd == "/wake":
-            arg = parts[1].lower() if len(parts) > 1 else ""
-            if arg == "on":
-                self.system_line("Listening for my name." if p.enable_wake(self.win) else "Okay, staying deaf.")
-            elif arg == "off":
-                p.disable_wake()
-                self.system_line("Wake word listening is off.")
-            else:
-                self.system_line("Wake word: " + ("ON" if p.wake is not None and p.wake.running else "off")
-                                 + "   /wake on | off   (say 'Hey Capri ...' or 'Choom ...')")
-        elif cmd == "/getears":
-            p.install_ears()
-        elif cmd == "/getvoice":
-            if voice.edge_installed():
-                p.speaker = make_speaker()
-                self.system_line(f"The free neural voice is already installed. Voice engine: {p.speaker.engine}.")
-                p.say("Testing, one two. Is this the real me?", 5, speak="priority")
-            else:
-                self.system_line("Installing the free neural voice (edge-tts)... this takes a few seconds.")
-                threading.Thread(target=p.install_voice, daemon=True).start()
-        elif cmd == "/voice":
-            lvl = parts[1].lower() if len(parts) > 1 else ""
-            if lvl in ("off", "replies", "chatty"):
-                p.set_voice(lvl)
-            else:
-                self.system_line("/voice off | replies | chatty   (now: " + p.settings.get("voice", "chatty") + ")")
         elif cmd == "/tp":
             p.teleport()
         elif cmd == "/dance":
@@ -1902,9 +1828,25 @@ class SettingsWindow:
                     C_PANEL2, C_GREEN, "#26263a", (self.fam, 8, "bold"), 10, 4).pack(side="left")
         self.engine_lbl = tk.Label(row, text="", bg=C_PANEL, fg=C_DIM, font=(self.fam, 8))
         self.engine_lbl.pack(side="left", padx=8)
+        self.voice_note = tk.Label(box, text="", bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=340,
+                                   justify="left")
+        flat_button(box, "INSTALL FREE NEURAL VOICE", self.install_neural_voice, C_PANEL2, C_GREEN, "#26263a",
+                    (self.fam, 8, "bold"), 10, 4).pack(anchor="w", padx=10, pady=(8, 0))
+        self.voice_note.pack(anchor="w", padx=10, pady=(2, 0))
         self.entry_row(box, "Fish Audio key for Capri's real voice (blank + SAVE removes it). Her lines are sent "
                             "to Fish Audio.", self.save_fish)
         self.show_engine()
+
+    def install_neural_voice(self):
+        pet = self.pet
+        if voice.edge_installed():
+            pet.speaker = make_speaker()
+            self.voice_note.config(text=f"Already installed. Voice engine: {pet.speaker.engine}.")
+            pet.say("Testing, one two. Is this the real me?", 5, speak="priority")
+            self.show_engine()
+        else:
+            self.voice_note.config(text="Installing (edge-tts)... this takes a few seconds. She'll say hi when it's done.")
+            threading.Thread(target=pet.install_voice, daemon=True).start()
 
     def show_engine(self):
         self.engine_lbl.config(text="Engine: " + {"fish": "Capri's voice (Fish Audio)", "system": "system voice"}.get(
@@ -1957,6 +1899,12 @@ class SettingsWindow:
                            "It starts by itself when a game is in front; /watch on works for anything else.",
                  bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=345, justify="left").pack(
             anchor="w", padx=10, pady=(2, 4))
+        self.agent_var = tk.BooleanVar(value=bool(self.pet.settings.get("agent", False)))
+        ui.NeonCheck(box, text="Let her do tasks for me (/do ...). Needs Full control and a Claude key; you confirm "
+                               "every task", variable=self.agent_var, command=self.toggle_agent, bg=C_PANEL,
+                     fg=C_TEXT, selectcolor=C_PANEL2, activebackground=C_PANEL, activeforeground=C_TEXT, anchor="w",
+                     font=(self.fam, 9), highlightthickness=0, bd=0, wraplength=335, justify="left").pack(
+            fill="x", padx=12, pady=2)
         tk.Label(box, text="Look every:", bg=C_PANEL, fg=C_DIM, font=(self.fam, 8)).pack(anchor="w", padx=10)
         self.interval_var = tk.IntVar(value=int(self.pet.settings.get("vision_interval", 6)))
         row = tk.Frame(box, bg=C_PANEL)
@@ -2077,11 +2025,19 @@ class SettingsWindow:
                        bg=C_PANEL, fg=C_TEXT, selectcolor=C_PANEL2, activebackground=C_PANEL, activeforeground=C_TEXT,
                        anchor="w", justify="left", font=(self.fam, 9), highlightthickness=0, bd=0,
                        wraplength=335).pack(fill="x", padx=12, pady=2)
+        tk.Label(box, text="PC-audio helper: " + ("installed." if hearing.installed() else "not installed yet."),
+                 bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=340, justify="left").pack(
+            anchor="w", padx=10, pady=(4, 0))
+        flat_button(box, "INSTALL PC-AUDIO HELPER", lambda: pet.install_hear() if not hearing.installed() else
+                    pet.say("The PC-audio helper is already installed.", 4, speak=None), C_PANEL2, C_GREEN,
+                    "#26263a", (self.fam, 8), 8, 4).pack(anchor="w", padx=10, pady=(2, 4))
         self.check(box, "Dance to music when she hears it", "hear_dance", True)
         tk.Label(box, text="Call mode: she listens to your Discord call through the PC audio and answers your friends "
-                           "out loud when they say 'Capri'. Needs a virtual audio cable (type /call setup).",
+                           "out loud when they say 'Capri'. Needs a virtual audio cable (press the setup button below).",
                  bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=345, justify="left").pack(
             anchor="w", padx=10, pady=(4, 2))
+        flat_button(box, "HOW TO SET UP CALL MODE", self.show_call_help, C_PANEL2, C_TEXT, "#26263a",
+                    (self.fam, 8), 8, 4).pack(anchor="w", padx=10, pady=(0, 4))
         flat_button(box, "START / STOP CALL MODE",
                     lambda: pet.stop_call() if pet.call_active() else pet.enable_call(self.win), C_PANEL2, C_GREEN,
                     "#26263a", (self.fam, 8), 8, 4).pack(anchor="w", padx=10, pady=(0, 6))
@@ -2101,6 +2057,19 @@ class SettingsWindow:
                        justify="left", font=(self.fam, 9), highlightthickness=0, bd=0, wraplength=335).pack(
             fill="x", padx=12, pady=2)
         tk.Frame(box, bg=C_PANEL, height=4).pack()
+
+    def show_call_help(self):
+        from tkinter import messagebox
+        messagebox.showinfo("Call mode setup", CABLE_HELP, parent=self.win)
+
+    def toggle_agent(self):
+        if self.agent_var.get():
+            if not self.pet.enable_agent(self.win):
+                self.agent_var.set(False)
+        else:
+            self.pet.settings["agent"] = False
+            self.pet.save_settings()
+            self.pet.stop_agent()
 
     def toggle_vision(self):
         if self.vision_var.get():
@@ -3750,7 +3719,7 @@ class Capri:
         if self.hear is None or not self.hear.running:
             return self.notify("I'm not listening to your PC. Turn it on: /hear on", err=True)
         if not listen.installed():
-            return self.notify("I need voice input to turn speech into text: /getears", err=True)
+            return self.notify("I need voice input to turn speech into text: Settings > LOCAL AI & VOICE INPUT", err=True)
         pcm = self.hear.ring.last(20 if mode == "last" else 60)
         if len(pcm) < hearing.RATE * 2 * 2:
             return self.notify("I haven't heard anything from your PC lately.", err=True)
@@ -3799,11 +3768,11 @@ class Capri:
         if sys.platform == "darwin":
             return False, "Call mode can't hear a Mac's audio without a helper. It works on Windows and Linux."
         if not hearing.installed():
-            return False, "I need the PC-audio helper first: /gethear"
+            return False, "I need the PC-audio helper first: Settings > LOCAL AI & VOICE INPUT"
         if not listen.installed():
-            return False, "I need voice input to understand your friends: /getears"
+            return False, "I need voice input to understand your friends: Settings > LOCAL AI & VOICE INPUT"
         if self.speaker.engine not in ("fish", "edge"):
-            return False, "To talk in a call I need my neural voice: /getvoice (the robot voice can't go into a call)."
+            return False, "To talk in a call I need my neural voice: Settings > VOICE (the robot voice can't go into a call)."
         if not ai_available():
             return False, "I need an AI to answer with (a key, or a local AI from Settings)."
         if self.audio_out is None:
@@ -4075,7 +4044,7 @@ class Capri:
     def enable_wake(self, parent=None):
         from tkinter import messagebox
         if not listen.installed():
-            self.notify("I need ears first. Type /getears and I'll install voice input.", err=True)
+            self.notify("I need ears first. Settings > LOCAL AI & VOICE INPUT installs voice input.", err=True)
             return False
         if not messagebox.askyesno(
                 "Let Capri listen for \"Hey Capri\" and \"Choom\"?",
@@ -4129,7 +4098,7 @@ class Capri:
         if not self.settings.get("mic", True):
             return self.notify("My microphone is switched off. Turn it on in Settings (or /preset some).", err=True)
         if not listen.installed():
-            return self.notify("I need ears first. Type /getears in my chat and I'll install voice input.", err=True)
+            return self.notify("I need ears first. Settings > LOCAL AI & VOICE INPUT installs voice input.", err=True)
         self.listening, self.listen_stop = True, False
         self.speaker.stop()                             # never listen to herself
         self.say("Listening... (click me to finish)", 10, speak=None)
@@ -4240,7 +4209,7 @@ class Capri:
         if self.hands.level != "full":
             return False, "That needs Full control in Settings."
         if not self.settings.get("agent"):
-            return False, "Turn it on first: /agent on"
+            return False, "Turn on tasks first: Settings > AI > Let her do tasks."
         return True, ""
 
     def enable_agent(self, parent=None):
@@ -5108,7 +5077,7 @@ class Capri:
                          bd=0, relief="flat", font=(self.font_family, 10))
             cur = self.settings.get("voice", "chatty")
             vm.add_command(label="Engine: " + {"fish": "Capri's real voice (Fish Audio)",
-                                                "system": "system voice (/fishkey for hers)"}.get(
+                                                "system": "system voice (Fish key in Settings for hers)"}.get(
                                                     self.speaker.engine, "none"), state="disabled")
             vm.add_separator()
             for key, label in (("off", "Off"), ("replies", "Replies & alerts only"), ("chatty", "Chatty")):

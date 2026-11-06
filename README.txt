@@ -104,7 +104,7 @@ GAME MODE (she hypes your kills and roasts your deaths)
    game_events.example.json. It never sends anything anywhere, but needs setting up per game.)
 
 TALKING TO HER (voice input)
-  Type /getears once (or Settings -> Local AI & Voice Input). She installs faster-whisper + sounddevice.
+  Press INSTALL VOICE INPUT once (Settings -> Local AI & Voice Input). She installs faster-whisper + sounddevice.
   Then talk with ANY of: the hotkey Ctrl+Alt+C (Windows), the MIC button in the chat, the right-click menu
   "Talk to Capri", or /talk. She says "Listening...", stops when you stop talking (or click her), turns
   your speech into text ON YOUR COMPUTER (no key, nothing uploaded; the first use downloads a ~150 MB
@@ -125,7 +125,7 @@ TALKING TO YOUR FRIENDS IN A DISCORD CALL (call mode)
     2. Discord -> Settings -> Voice & Video -> Input Device: "CABLE Output".
     3. So your friends still hear YOU: Windows Sound settings -> Recording -> your microphone -> Properties ->
        Listen -> tick "Listen to this device", play through "CABLE Input".
-    4. Type /getears, /gethear and /getvoice once (voice input, PC-audio helper, her neural voice). The robot
+    4. In Settings press INSTALL VOICE INPUT, INSTALL PC-AUDIO HELPER and (Voice) INSTALL FREE NEURAL VOICE once. The robot
        system voice can't be used in a call.
   How it works / honest limits:
     * She answers only when her name is said (or a quick follow-up question right after she spoke), at most 8
@@ -141,7 +141,7 @@ TALKING TO YOUR FRIENDS IN A DISCORD CALL (call mode)
 
 HEARING YOUR PC (music, videos, calls)
   Turn on with /hear on, the checkbox in Settings -> Local AI & Voice Input, or the FULL preset (it installs
-  the small `soundcard` helper if needed, /gethear does it by hand). Windows and Linux only: macOS can't share
+  the small `soundcard` helper if needed; INSTALL PC-AUDIO HELPER in Settings does it by hand). Windows and Linux only: macOS can't share
   its audio without a helper like BlackHole.
   * She dances to music: a steady beat makes her bop (and start dancing when a song starts). Speech, game
     explosions and other irregular noise don't count. Turn that off with the "Dance to music" setting.
@@ -152,7 +152,7 @@ HEARING YOUR PC (music, videos, calls)
     this off. It is only turned into text when you ask. Only a summary request sends anything out, and that is
     the transcript text, to your AI. A call can include other people's voices, so tell them if that matters.
     She ignores the PC audio while she's talking (so she never hears herself) and on banking/password
-    windows. Needs voice input installed (/getears) for the transcribing part.
+    windows. Needs voice input installed (Settings) for the transcribing part.
 
 INSTANT COMMANDS (typed, or by voice after "Hey Capri" / "Choom"; no AI, no waiting)
   Media/system:  "pause", "next song", "previous", "volume up/down", "mute", "take a screenshot", "lock my
@@ -214,8 +214,8 @@ SPOKEN REMINDERS AND TIMERS
   10 minutes". She repeats the reminder exactly as you said it when it's time.
 
 HEY CAPRI / CHOOM (hands-free)
-  Turn it on with /wake on, the right-click menu ("Listen for Hey Capri / Choom"), or the checkbox in
-  Settings -> Local AI & Voice Input. Needs voice input installed (/getears). Then just say:
+  Turn it on with the right-click menu ("Listen for Hey Capri / Choom"), or the checkbox in
+  Settings -> Local AI & Voice Input. Needs voice input installed (Settings). Then just say:
       "Hey Capri, join the Discord and tell them I'll be in in 15"      "Choom, what's the weather like?"
   Saying only "Hey Capri" makes her answer "Yeah?" and take your next sentence (within 8 seconds).
   * The mic stays open while this is ON (Windows shows its mic indicator). Everything is turned into text
@@ -246,7 +246,7 @@ DOING TASKS FOR YOU (/do)
   Tell her what you want done and she operates the computer: she looks at your screen, then clicks, types
   and presses keys, one step at a time, until it's finished. Example:
       /do open Discord, join the voice channel my friends are in and tell them I'll be on in 15 minutes
-  Set up once:  1) Settings -> Full control   2) a Claude key (sk-ant...)   3) type /agent on and agree.
+  Set up once:  1) Settings -> Full control   2) a Claude key (sk-ant...)   3) tick "Let her do tasks for me" in Settings -> AI and agree.
   How it stays safe:
     * only starts when you type /do and confirm that exact task
     * you must approve every piece of text she is about to type
@@ -268,7 +268,7 @@ AI-WRITTEN LINES (everything she says out loud)
   and settings messages.
   The preset lines are only a fallback: no key, no internet, AI error, a quick reaction where the AI is
   slower than ~2.5s (longer moments wait 4-5s), or the limit (14 a minute, 800 a day). After 3 failures in
-  a row she uses presets for 5 minutes and says why. /ailines on|off shows today's count.
+  a row she uses presets for 5 minutes and says why. Settings -> AI has the on/off switch for AI-written lines.
 
 SCREEN LEDGES (she sits on boxes on your screen)  - OFF by default, needs your OK
   She can look at your screen, find boxes (cards, text boxes, images, panels) and fly over to sit on
@@ -306,11 +306,9 @@ PERSONALITY
   away for hours, and remembers your name (/name <you>). Affection is kept between runs.
 
 VOICE
-  She talks out loud. Right-click her > Voice: Off / Replies & alerts only / Chatty, or type
-  /voice off|replies|chatty in the chat. Her mouth moves while she speaks. Calm mode mutes her
+  She talks out loud. Right-click her > Voice: Off / Replies & alerts only / Chatty, or use Settings -> VOICE. Her mouth moves while she speaks. Calm mode mutes her
   ambient chatter.
-  FREE NEURAL VOICE (no key, easiest): in the chat window type
-      /getvoice
+  FREE NEURAL VOICE (no key, easiest): Settings -> VOICE -> INSTALL FREE NEURAL VOICE.
   She installs the edge-tts package and switches to a natural female voice (Microsoft Edge read-aloud
   voices, needs internet; each line is sent to Microsoft's voice service). Pick another voice by
   setting CAPRI_EDGE_VOICE (for example en-US-AnaNeural, en-US-JennyNeural, en-GB-SoniaNeural). Order she
@@ -318,12 +316,11 @@ VOICE
   Set CAPRI_EDGE=off to turn the neural voice off. This is an unofficial use of Microsoft's service
   and could stop working someday; the built-in voice is the safety net.
 
-  Capri's real voice (Fish Audio): get an API key from fish.audio, then in the chat window type
-      /fishkey <your key>
+  Capri's real voice (Fish Audio): get an API key from fish.audio, then paste it into Settings -> VOICE (Fish Audio key box)
   (or set FISH_API_KEY, or put the key in fish_key.txt next to capri.py). She uses voice model
   ef387f44931d4ab6a3f959a083c9fbb1 (override with CAPRI_FISH_VOICE). Note: every line she speaks is
   sent to Fish Audio, which uses your credits. Lines are cached in ~/.capri/voice_cache so repeats
-  are free. /fishkey off goes back to the built-in voice. If Fish fails (no internet, bad key, no
+  are free. Saving a blank key in Settings -> VOICE goes back to the built-in voice. If Fish fails (no internet, bad key, no
   credits) she falls back to the built-in voice and tells you why.
   Without a Fish key she uses your computer's built-in speech (nothing to install on Windows or Mac;
   on Linux install espeak-ng). Set CAPRI_VOICE to pick a different installed voice.
@@ -331,10 +328,10 @@ VOICE
 CHAT
   Works right away in offline mode (canned, mood-based replies). For real AI chat, double-click her,
   paste a Claude key (sk-ant...) or a Gemini key into the box at the top of the chat window and press
-  SAVE KEY. It is stored in ~/.capri/api_key.txt. (You can also use /key <key>, an environment
+  SAVE KEY. It is stored in ~/.capri/api_key.txt. (You can also use Settings -> AI CHAT KEY, an environment
   variable, or copy api_key.example.txt to api_key.txt next to capri.py.)
   Enter sends, Shift+Enter = new line. Click a bubble to copy it. History is saved.
-  Slash commands: /help /focus [min] /remind <min> <text> /name <you> /mood /voice /key <key> /tp /dance /calm /clear
+  Slash commands: /help /focus [min] /remind <min> <text> /name <you> /mood /tp /dance /calm /clear
   Edit personality: create persona.txt next to capri.py with your own instructions.
 
 HER LOOK (pet/ folder)

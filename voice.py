@@ -4,7 +4,7 @@ Three engines, picked automatically:
   * Fish Audio (Capri's real character voice) when a Fish API key is set. Each line is sent to
     Fish Audio's text-to-speech API, cached on disk, and played with the OS audio player.
   * A free neural voice (Microsoft Edge "read aloud" voices through the `edge-tts` package) when that
-    package is installed. No key needed: type /getvoice in the chat and she installs it.
+    package is installed. No key needed: Settings > VOICE > INSTALL FREE NEURAL VOICE installs it.
   * The computer's built-in speech otherwise (no keys, nothing to install on Windows/Mac):
     Windows -> PowerShell + System.Speech, macOS -> `say`, Linux -> espeak-ng / espeak / spd-say.
 Text for the system engine goes on stdin (never the command line), so nothing a user types can run
@@ -332,7 +332,7 @@ class Speaker:
         if not self.available:
             return False
         if call and not ((self.fish or self.edge) and self.call_player):
-            self.last_error = "speaking into a call needs her neural voice (/getvoice) and a virtual cable"
+            self.last_error = "speaking into a call needs her neural voice (Settings > VOICE) and a virtual cable"
             return False
         line = clean(text)
         if not line:

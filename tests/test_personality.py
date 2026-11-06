@@ -124,12 +124,12 @@ class MindTests(unittest.TestCase):
         self.assertTrue(m.line("checkin", at(14)))
         self.assertIn(m.line("checkin", at(3)), P.LINES["late"])
 
-    def test_sleepy_weights_prefer_sleep_and_never_go_below_one(self):
+    def test_sleepy_weights_slow_her_down_and_never_go_below_one(self):
         m = self.mind(now=at(3))
         m.last_interaction = at(3) - 10000
         opts = [("walk", 30), ("lounge", 12), ("teleport", 14), ("dance", 4), ("idle", 14)]
         adj = dict(m.adjust_weights(opts, at(3)))
-        self.assertIn("sleep", adj)
+        self.assertNotIn("sleep", adj)               # she never naps
         self.assertLess(adj["walk"], 30)
         self.assertTrue(all(w >= 1 for w in adj.values()))
 

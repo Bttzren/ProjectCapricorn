@@ -275,7 +275,7 @@ class Mind:
     def adjust_weights(self, opts, now):
         """opts: list of (name, weight). Returns a new list biased by mood."""
         bias = {
-            "sleepy": {"sleep": 25, "lounge": 12, "walk": -15, "dance": -4, "teleport": -8, "fly": -6, "zoom": -3},
+            "sleepy": {"lounge": 12, "walk": -15, "dance": -4, "teleport": -8, "fly": -6, "zoom": -3},
             "lonely": {"curious": 14, "idle": 6, "teleport": -6, "orbit": 10},
             "sassy": {"teleport": 8, "dance": -3, "curious": -6, "zoom": 4},
             "playful": {"dance": 8, "teleport": 8, "walk": 10, "curious": 6, "lounge": -6, "fly": 8, "zoom": 5,
@@ -287,8 +287,6 @@ class Mind:
                          "idle": -8},
         }[self.mood(now)]
         out = [(n, max(1, w + bias.get(n, 0))) for n, w in opts]
-        if "sleep" in bias and "sleep" not in {n for n, _ in out}:
-            out.append(("sleep", bias["sleep"]))     # a sleepy Capri can nap even if she hasn't been idle long
         return out
 
     def chatter_scale(self, now):

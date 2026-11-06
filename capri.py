@@ -75,7 +75,6 @@ HAND_COMMANDS = {"/pause": ("playpause", None), "/next": ("next", None), "/prev"
 GAME_COMMANDS = {"/kill": ("kill", 1), "/death": ("death", 1), "/ace": ("ace", 1), "/clutch": ("clutch", 1),
                  "/rw": ("round_win", 1), "/rl": ("round_loss", 1)}
 SPRITE_HEIGHT = 170            # on-screen sprite height at 100% display scaling
-SLEEP_AFTER = 300              # seconds without poking her before she naps
 FOCUS_MIN, BREAK_MIN = 25, 5
 CHECKIN_EVERY = (40 * 60, 70 * 60)
 MODEL = os.environ.get("CAPRI_MODEL", "claude-sonnet-5-5")
@@ -1247,7 +1246,7 @@ class ChatWindow:
             self.system_line("/focus [min]  /remind <min> <text>  /name <you>  /mood  /key <api key>  "
                              "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
                              "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /tp  /dance  "
-                             "/sleep  /calm  /watch  /look  /ailines  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /remember  /facts  /feel  "
+                             "/calm  /watch  /look  /ailines  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /remember  /facts  /feel  "
                              "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /size  /neon  /boot  /hear  /call  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
         elif cmd == "/clear":
             self.clear()
@@ -1703,8 +1702,6 @@ class ChatWindow:
             p.teleport()
         elif cmd == "/dance":
             p.go("dance", 3.5)
-        elif cmd == "/sleep":
-            p.go("sleep")
         elif cmd == "/calm":
             p.toggle_calm()
         else:
@@ -2910,8 +2907,6 @@ class Capri:
             opts.append(("perch", 16))
         if self.surf:
             opts += [("drop", 10)]
-        if time.time() - self.last_active > SLEEP_AFTER:
-            opts.append(("sleep", 25))
         opts = self.mind.adjust_weights(opts, time.time())
         r = self.rng.uniform(0, sum(w for _, w in opts))
         for name, w in opts:
@@ -3069,8 +3064,6 @@ class Capri:
         elif st in ("lounge", "sleep"):
             if st == "lounge" and age > self.state_dur:
                 self.go("idle", 2.0)
-            elif st == "lounge" and age > 6 and self.rng.random() < 0.004:
-                self.go("sleep")
             if st == "sleep" and now - self.last_active < 3 and age > 1:
                 self.go("idle", 2.0)
         elif st == "curious":
@@ -4779,8 +4772,6 @@ class Capri:
         idle = self.win32.idle_seconds()
         if idle > 600 and not self.away:
             self.away = True
-            if self.state in ("idle", "perch", "walk", "lounge", "curious"):
-                self.go("sleep")
         elif self.away and idle < 5:
             self.away = False
             self.poke_awake()
@@ -5080,7 +5071,6 @@ class Capri:
         m.add_command(label="Feed ramen", command=self.feed)
         m.add_command(label="Dance", command=lambda: self.go("dance", 3.5))
         m.add_command(label="Lounge", command=lambda: self.go("lounge", 15))
-        m.add_command(label="Take a nap", command=lambda: self.go("sleep"))
         if self.win32.ok:
             m.add_command(label="Perch on my window", command=lambda: self.teleport("perch"))
         m.add_separator()

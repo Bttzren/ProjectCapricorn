@@ -9,7 +9,7 @@ RUN
 WHAT SHE DOES
   She is the animated Petdex Capri (the pet/ folder: spritesheet + pet.json). She idles,
   walks, waves, jumps, droops when something goes wrong, and her moods change what she does.
-  She roams, lounges, naps, glitch-teleports, gets curious about your cursor, startles if you
+  She roams, lounges, glitch-teleports, gets curious about your cursor, startles if you
   swipe at her, and gets annoyed (sassy for a few minutes) if you spam-click.
   On Windows she can perch on the top edge of your active window (and always on the chat window).
   Drag to pick her up, fling to throw her. Click: poke. Double-click: chat.
@@ -26,7 +26,7 @@ AWARENESS (Windows only)
   She can tell roughly what you're doing and react: coding, watching a video, music, school work,
   chatting, writing, games (extra excited about Cyberpunk 2077), social media (she'll nudge you if
   you scroll for 25 minutes), or chatting with another AI. She also notices when you've been away
-  for 10+ minutes (she naps) and greets you when you're back.
+  for 10+ minutes and greets you when you're back.
   PRIVACY: she only reads the TITLE of the front window and turns it into a one-word category.
   The title is never stored, logged or sent anywhere. She never sees what you type or what's on
   your screen. When you chat, only a short hint such as "coding" is added to the AI's instructions.
@@ -294,9 +294,10 @@ SHE KNOWS YOU
 PERSONALITY
   She talks like a Night City local (choom, preem, nova, gonk, eddies, chrome...), kept PG.
   The same slang is built into her canned lines and into the AI persona prompt.
-  She has moods: sleepy, lonely, sassy, playful, content. Her mood depends on the time of day,
-  how much you interact with her (affection), and whether you annoyed her. Mood changes what she
-  does (a sleepy Capri naps, a playful one dances and teleports, a lonely one follows your cursor),
+  She has moods: sleepy, lonely, sassy, playful, content, hyper, restless. She picks her own mood
+  every 5-14 minutes; time of day and how much you interact with her (affection) only tilt the odds,
+  and she sometimes announces the change. Spam-clicking her still makes her sassy. Mood changes what she
+  does (a sleepy Capri slows down, a playful one dances and teleports, a lonely one follows your cursor),
   what she says, and how she answers in chat. She greets you by time of day, notices if you were
   away for hours, and remembers your name (/name <you>). Affection is kept between runs.
 
@@ -329,7 +330,7 @@ CHAT
   SAVE KEY. It is stored in ~/.capri/api_key.txt. (You can also use /key <key>, an environment
   variable, or copy api_key.example.txt to api_key.txt next to capri.py.)
   Enter sends, Shift+Enter = new line. Click a bubble to copy it. History is saved.
-  Slash commands: /help /focus [min] /remind <min> <text> /name <you> /mood /voice /key <key> /tp /dance /sleep /calm /clear
+  Slash commands: /help /focus [min] /remind <min> <text> /name <you> /mood /voice /key <key> /tp /dance /calm /clear
   Edit personality: create persona.txt next to capri.py with your own instructions.
 
 HER LOOK (pet/ folder)

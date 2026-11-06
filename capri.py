@@ -4885,6 +4885,13 @@ class Capri:
             self.next_chatter = now + int(random.randint(60, 150) * self.mind.chatter_scale(now))
             self.say_ai("idle", {}, self.mind.line("idle", now), 5)
             self.express(now)
+        self.mind.mood(now)                       # she changes her own mood now and then; sometimes she says so
+        shift = self.mind.take_shift()
+        if shift and self.state in ("idle", "perch", "walk") and not self.calm and self.rng.random() < 0.6:
+            new = shift[1]
+            self.say_moment(f"your own mood just shifted by itself and you now feel {new}",
+                            self.rng.choice(personality.SHIFT_LINES.get(new, ["Mood change."])), 5, wait=3)
+            self.express(now)
 
     def react_to_pointer(self, now, dt):
         mx, my = self.pointer

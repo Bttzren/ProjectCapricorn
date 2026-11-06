@@ -100,6 +100,17 @@ OFFLINE_FALLBACK = {
     "restless": ["Finally, something to talk about. Go!", "Okay but make it interesting, choom."],
 }
 
+# Said (sometimes) when she changes her own mind: she announces where her head just went.
+SHIFT_LINES = {
+    "content": ["Okay. Chill mode. For now.", "Huh. I'm fine. Weirdly fine."],
+    "playful": ["Ooh, I just got an idea and it's a bad one. Perfect.", "Switching to mischief mode, choom."],
+    "hyper": ["Oh no. Oh YES. I just got so much energy!", "Something flipped and now I can't sit still!"],
+    "restless": ["...okay I'm bored now. Entertain me.", "Mood check: itchy. Need something to happen."],
+    "lonely": ["Hey... you still there? I got all quiet in my head.", "Feeling a little small right now, choom."],
+    "sassy": ["I woke up on the sassy side of the server.", "Don't mind me, I'm being a brat today."],
+    "sleepy": ["Mm. Suddenly so sleepy, choom."],
+}
+
 MOOD_NOTES = {
     "hyper": "You are bouncing off the walls: fast, loud, excited, interrupting yourself, wanting MORE. Brief and kind.",
     "restless": "You are bored and itching for something to happen: tease the user, propose something silly, "
@@ -119,9 +130,8 @@ EXPRESSIONS = {
     "sassy": [(None, "anger"), ("look", None)],
 }
 
-HYPER_WINDOW = 60.0      # this many seconds ...
-HYPER_COUNT = 4           # ... with this many pokes/chats in a row and she's bouncing
-RESTLESS_AFTER = 12 * 60  # unnoticed this long (while awake) and she gets bored
+MOOD_MIN, MOOD_MAX = 5 * 60, 14 * 60     # she holds a mood for this long (seconds) before choosing again
+STIM_DECAY = 600.0                        # attention she's been getting fades with this half-life-ish scale
 
 SLANG = ("choom", "preem", "nova", "gonk", "eddies", "chrome", "delta", "flatline", "gig", "biz", "corpo", "netrunner")
 
@@ -151,7 +161,9 @@ class Mind:
         self.away_hours = away_h
         self.affection = max(0.0, min(100.0, self.affection - min(40.0, away_h * 0.8)))
         self.last_interaction = now
-        self.recent = []                 # recent attention timestamps: fast pokes make her hyper
+        self.cur, self.cur_until = None, 0.0     # the mood SHE is in; she chooses it herself (see mood())
+        self.stim, self.stim_t = 0.0, now        # how stimulated she's been lately (attention nudges, never decides)
+        self.shift = None                        # (old, new) after she changes her own mind, for the app to voice
         self.annoyed_until = 0.0
         self.last_tick = now
         self.sync(now)
@@ -180,7 +192,8 @@ class Mind:
 
     def _touch(self, now):
         self.last_interaction = now
-        self.recent = [t for t in self.recent if now - t < HYPER_WINDOW] + [now]
+        self._decay(now)
+        self.stim = min(3.0, self.stim + 0.35)
 
     def poke(self, now):
         self.affection = min(100.0, self.affection + 1.5)
@@ -206,20 +219,57 @@ class Mind:
             base += 0.15
         return max(0.0, min(1.0, base))
 
+    def _decay(self, now):
+        dt = max(0.0, now - self.stim_t)
+        self.stim_t = now
+        self.stim *= 0.5 ** (dt / STIM_DECAY)
+
+    def weights(self, now):
+        """How tempting each mood is right now. Her state only tilts the odds; she still rolls the dice."""
+        self._decay(now)
+        e, a = self.energy(now), self.affection
+        idle = max(0.0, now - self.last_interaction)
+        w = {
+            "content": 3.0,
+            "playful": 0.8 + a / 45.0 + 0.4 * self.stim,
+            "hyper": 0.3 + 2.2 * max(0.0, e - 0.5) + 0.7 * self.stim,
+            "restless": 0.4 + min(3.0, idle / 480.0) * (1.0 if e > 0.5 else 0.3),
+            "lonely": 0.2 + max(0.0, (45 - a) / 20.0) + min(1.5, idle / 1800.0),
+            "sassy": 0.5 + max(0.0, (35 - a) / 40.0),
+        }
+        if self.cur in w:
+            w[self.cur] *= 0.3                       # she likes to change it up
+        return w
+
+    def pick_mood(self, now):
+        w = self.weights(now)
+        r = self.rng.uniform(0, sum(w.values()))
+        for name, x in w.items():
+            r -= x
+            if r <= 0:
+                return name
+        return "content"
+
+    def set_mood(self, name, now, secs=None):
+        if name != self.cur:
+            self.shift = (self.cur, name) if self.cur else None
+        self.cur = name
+        self.cur_until = now + (secs if secs else self.rng.uniform(MOOD_MIN, MOOD_MAX))
+
+    def take_shift(self):
+        s, self.shift = self.shift, None
+        return s
+
     def mood(self, now):
+        """Her mood. Body clock and a reaction to being spammed override it; otherwise SHE moves between moods
+        on her own, every 5-14 minutes, nudged (not driven) by time of day, affection and recent attention."""
         if now < self.annoyed_until:
             return "sassy"
         if self.energy(now) < 0.25:
             return "sleepy"
-        if self.affection < 25:
-            return "lonely"
-        if self.affection >= 40 and sum(1 for t in self.recent if now - t < HYPER_WINDOW) >= HYPER_COUNT:
-            return "hyper"
-        if now - self.last_interaction > RESTLESS_AFTER and self.energy(now) > 0.5:
-            return "restless"
-        if self.affection > 65 and self.energy(now) > 0.5:
-            return "playful"
-        return "content"
+        if self.cur is None or now >= self.cur_until:
+            self.set_mood(self.pick_mood(now), now)
+        return self.cur
 
     # -- behaviour --------------------------------------------------------------
     def adjust_weights(self, opts, now):

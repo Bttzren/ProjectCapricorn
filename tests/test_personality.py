@@ -20,17 +20,55 @@ class MindTests(unittest.TestCase):
     def mind(self, store=None, now=None, **kw):
         return P.Mind({} if store is None else store, now=now or at(14), rng=random.Random(1), **kw)
 
-    def test_mood_follows_time_and_affection(self):
+    def test_body_clock_makes_her_sleepy(self):
         m = self.mind(now=at(3))
         m.last_interaction = at(3) - 10000
         self.assertEqual(m.mood(at(3)), "sleepy")
-        m = self.mind({"affection": 10}, now=at(14))
-        m.last_interaction = at(14) - 10000
-        self.assertEqual(m.mood(at(14)), "lonely")
-        m = self.mind({"affection": 90}, now=at(14))
-        self.assertEqual(m.mood(at(14)), "playful")
+
+    def test_she_chooses_her_own_mood_and_holds_it(self):
+        m = self.mind(now=at(14))
+        first = m.mood(at(14))
+        self.assertIn(first, P.MOODS)
+        self.assertEqual(m.mood(at(14) + 60), first)           # holds it
+        self.assertGreaterEqual(m.cur_until - at(14), P.MOOD_MIN)
+        self.assertLessEqual(m.cur_until - at(14), P.MOOD_MAX)
+
+    def test_moods_drift_by_themselves_over_a_day(self):
+        m = self.mind({"affection": 50}, now=at(10))
+        seen, t = set(), at(10)
+        for _ in range(400):
+            t += 120
+            m.last_interaction = t                              # even while the user chats constantly
+            seen.add(m.mood(t))
+        self.assertGreaterEqual(len(seen - {"sleepy"}), 4)
+
+    def test_user_attention_nudges_but_never_sets_her_mood(self):
         m = self.mind({"affection": 50}, now=at(14))
-        self.assertEqual(m.mood(at(14)), "content")
+        m.set_mood("content", at(14), 900)
+        for i in range(30):
+            m.poke(at(14) + i)
+        self.assertEqual(m.mood(at(14) + 40), "content")      # spamming doesn't flip her
+        calm = self.mind({"affection": 50}, now=at(14))
+        self.assertGreater(m.weights(at(14) + 40)["hyper"], calm.weights(at(14) + 40)["hyper"])
+
+    def test_her_state_tilts_the_odds(self):
+        lonely = self.mind({"affection": 5}, now=at(14))
+        lonely.last_interaction = at(14) - 7200
+        happy = self.mind({"affection": 95}, now=at(14))
+        self.assertGreater(lonely.weights(at(14))["lonely"], happy.weights(at(14))["lonely"])
+        self.assertGreater(happy.weights(at(14))["playful"], lonely.weights(at(14))["playful"])
+        bored = self.mind({"affection": 50}, now=at(14))
+        bored.last_interaction = at(14) - 3600
+        self.assertGreater(bored.weights(at(14))["restless"], self.mind(now=at(14)).weights(at(14))["restless"])
+
+    def test_she_can_announce_her_own_mood_change_once(self):
+        m = self.mind(now=at(14))
+        m.set_mood("content", at(14), 100)
+        m.set_mood("hyper", at(14) + 200)
+        self.assertEqual(m.take_shift(), ("content", "hyper"))
+        self.assertIsNone(m.take_shift())
+        for mood in P.MOODS:
+            self.assertIn(mood, P.SHIFT_LINES)
 
     def test_spam_makes_her_sassy_then_recovers(self):
         m = self.mind({"affection": 90}, now=at(14))
@@ -106,6 +144,7 @@ class MindTests(unittest.TestCase):
         m = self.mind({"affection": 5}, now=at(14))
         m.last_interaction = at(14) - 10000
         m.user_name = "Sam"
+        m.set_mood("lonely", at(14), 900)
         ctx = m.context(at(14), "napping")
         for needle in ("lonely", "Sam", "napping", "neglected"):
             self.assertIn(needle, ctx)
@@ -138,30 +177,10 @@ class MindTests(unittest.TestCase):
         for word in ("choom", "preem", "nova", "gonk", "eddies", "PG"):
             self.assertIn(word, persona)
 
-    def test_fast_pokes_make_her_hyper_and_it_wears_off(self):
-        m = self.mind({"affection": 50}, now=at(14))
-        for i in range(4):
-            m.poke(at(14) + i * 5)
-        self.assertEqual(m.mood(at(14) + 20), "hyper")
-        self.assertEqual(m.mood(at(14) + 200), "content")
-
-    def test_low_affection_pokes_dont_make_her_hyper(self):
-        m = self.mind({"affection": 10}, now=at(14))
-        for i in range(5):
-            m.recent.append(at(14) + i)
-        self.assertNotEqual(m.mood(at(14) + 6), "hyper")
-
-    def test_ignored_while_awake_she_gets_restless(self):
-        m = self.mind({"affection": 90}, now=at(14))
-        self.assertEqual(m.mood(at(14)), "playful")
-        self.assertEqual(m.mood(at(14) + 13 * 60), "restless")
-        m.last_interaction = at(3) - 100000
-        self.assertEqual(m.mood(at(3)), "sleepy")      # asleep beats bored
-
     def test_every_mood_has_lines_weights_and_fallbacks(self):
         for mood in P.MOODS:
             m = self.mind({"affection": 50}, now=at(14))
-            m.mood = lambda now, mood=mood: mood
+            m.set_mood(mood, at(14), 900)
             for kind in ("idle", "poke", "wake"):
                 self.assertIn(mood, P.LINES[kind])
             self.assertIn(mood, P.OFFLINE_FALLBACK)
@@ -172,8 +191,7 @@ class MindTests(unittest.TestCase):
 
     def test_hyper_talks_more_and_expresses_with_her_body(self):
         m = self.mind({"affection": 50}, now=at(14))
-        for i in range(4):
-            m.poke(at(14) + i)
+        m.set_mood("hyper", at(14), 900)
         now = at(14) + 10
         self.assertLess(m.chatter_scale(now), 1.0)
         act, icon = m.expression(now)

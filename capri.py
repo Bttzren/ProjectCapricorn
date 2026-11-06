@@ -45,9 +45,12 @@ import localai
 import memory
 import neon
 import gfx
+import monitors
 import personality
+import physics
 import presets
 import reactor
+import sysmon
 import sfx
 import simon
 import sizing
@@ -423,6 +426,32 @@ class Win32:
         except Exception:
             pass
         return None
+
+    def monitors(self):
+        """All screens as a list of monitors.Mon (rect, work area, primary). [] where unknown."""
+        if not self.ok:
+            return []
+        try:
+            ct, wt, u = self.ct, self.wt, self.u
+
+            class MONITORINFO(ct.Structure):
+                _fields_ = [("cbSize", wt.DWORD), ("rcMonitor", wt.RECT), ("rcWork", wt.RECT), ("dwFlags", wt.DWORD)]
+            u.GetMonitorInfoW.argtypes = [wt.HANDLE, ct.POINTER(MONITORINFO)]
+            found = []
+            proc_t = ct.WINFUNCTYPE(wt.BOOL, wt.HANDLE, wt.HDC, ct.POINTER(wt.RECT), wt.LPARAM)
+
+            def cb(hmon, hdc, rect, lparam):
+                mi = MONITORINFO()
+                mi.cbSize = ct.sizeof(MONITORINFO)
+                if u.GetMonitorInfoW(hmon, ct.byref(mi)):
+                    r, w = mi.rcMonitor, mi.rcWork
+                    found.append(monitors.Mon((r.left, r.top, r.right, r.bottom), (w.left, w.top, w.right, w.bottom),
+                                              bool(mi.dwFlags & 1)))
+                return True
+            u.EnumDisplayMonitors(None, None, proc_t(cb), 0)
+            return sorted(found, key=lambda m: (m.rect[0], m.rect[1]))
+        except Exception:
+            return []
 
     def foreground(self):
         """(l, t, r, b, hwnd) of the active normal window, or None."""
@@ -2087,6 +2116,8 @@ class SettingsWindow:
         self.check(box, "Calm mode (she stays put and stops chatting)", "calm", False, self.pet.set_calm)
         self.check(box, "Check-ins (water, stretch, eat reminders)", "checkins", True, self.pet.set_checkins)
         self.check(box, "Fly around the screen", "fly_enabled", True)
+        self.check(box, "Follow me to my other monitor (when I settle on it for a few seconds)", "follow_monitors", True)
+        self.check(box, "React to my PC: heavy CPU load and USB drives plugged in or pulled out", "pc_reactions", True)
         self.check(box, "Launch animation when I start (click her to skip it)", "boot_anim", True)
         self.check(box, "Sound effects (blips and jingles)", "sfx", True,
                    lambda v: setattr(self.pet.sfx, "enabled", bool(v)))
@@ -2504,6 +2535,8 @@ class Capri:
         self.twitch_until, self.next_twitch = 0.0, now + 40
         self.tag, self.next_todo = None, now + 3600
         self.battery_state, self.next_battery, self.next_radio = {}, now + 20, now + 300
+        self.mons, self.mon_i, self.next_mons, self.follower = [], 0, 0.0, monitors.Follower()
+        self.syswatch, self.drag_track, self.last_throw_say = None, physics.Tracker(), 0.0
         self.peek_side, self.peek_said, self.breach_win, self.next_hungry = 0, False, None, now + 3600
         self.simon_win, self.last_watch, self.next_memory_cb = None, now, now + 7200
         self.scanner, self.ledges, self.ledge_counter, self.ledge_next = ledges.Scanner(), [], 0, 0.0
@@ -2562,7 +2595,6 @@ class Capri:
         self.last_startle = 0.0
         self.clicks = []
         self.press = None
-        self.drag_hist = []
         self.pcache = {}
         self.cur_img = None
         self.rng = random.Random()
@@ -2603,8 +2635,30 @@ class Capri:
             self.canvas.config(bg="#101018")
 
     def work_area(self):
+        if len(self.mons) > 1 and 0 <= self.mon_i < len(self.mons):
+            return self.mons[self.mon_i].work
         wa = self.win32.work_area() if self.win32.ok else None
         return wa or (0, 0, self.sw, self.sh - (0 if IS_MAC else 48))
+
+    def watch_monitors(self, now):
+        """Know which screens exist, and follow the user when they settle on another one."""
+        if now < self.next_mons:
+            return
+        self.next_mons = now + 4.0
+        mons = self.win32.monitors() if self.win32.ok else []
+        if mons != self.mons:
+            self.mons = mons
+            self.mon_i = monitors.index_at(mons, self.fx, self.fy - self.fh / 2) or 0
+        if (len(self.mons) < 2 or not self.settings.get("follow_monitors", True) or self.calm
+                or self.state not in ("idle", "perch", "walk", "lounge", "curious")):
+            self.follower.update(now, None, None)
+            return
+        user = monitors.index_at(self.mons, *self.pointer)
+        to = self.follower.update(now, self.mon_i, user)
+        if to is not None:
+            self.mon_i = to
+            self.teleport("ground", "you just followed the user to the screen they moved to",
+                          self.rng.choice(["Over here now!", "Wait for me, choom.", "I follow you everywhere."]))
 
     def ground(self):
         return self.work_area()[3]
@@ -2971,13 +3025,13 @@ class Capri:
             p[5] -= dt
         self.parts = [p for p in self.parts if p[5] > 0 and p[1] < self.Hd + 10]
 
-    def teleport(self, mode=None):
+    def teleport(self, mode=None, situation=None, fallback=None):
         if self.state in ("tp_out", "tp_in", "drag"):
             return
         mode = mode or self.rng.choice(["ground", "ground", "sky", "cursor"])
         self.tp_dest = mode
-        self.say_moment("you are about to glitch-teleport somewhere else on the screen",
-                        self.rng.choice(["Glitching...", "brb", "Don't look."]), 2.5, wait=1.5)
+        self.say_moment(situation or "you are about to glitch-teleport somewhere else on the screen",
+                        fallback or self.rng.choice(["Glitching...", "brb", "Don't look."]), 2.5, wait=1.5)
         self.go("tp_out", 0.5)
 
     def finish_teleport(self):
@@ -3161,21 +3215,28 @@ class Capri:
                     self.go("perch" if self.surf else "idle", 2.0)
         elif st == "air":
             prev = self.fy
-            self.vy = min(self.vy + 1.1 * self.dpi * dt * 25, 38 * self.dpi)
-            self.fy += self.vy * dt * 25
-            self.fx += self.vx * dt * 25
             wa = self.work_area()
-            if self.fx < wa[0] + self.fw * 0.4 or self.fx > wa[2] - self.fw * 0.4:
-                self.fx = min(max(self.fx, wa[0] + self.fw * 0.4), wa[2] - self.fw * 0.4)
-                self.vx *= -0.6
-            if self.fy - self.fh < wa[1]:
-                self.fy, self.vy = wa[1] + self.fh, abs(self.vy) * 0.5
+            half = self.fw * 0.4
+            if len(self.mons) > 1 and abs(self.vx) > 1.0:           # flying off the side of a screen: carry on next door
+                side = "right" if self.vx > 0 else "left"
+                if (self.fx + self.vx * dt * 25 > wa[2] - half) if side == "right" else (self.fx + self.vx * dt * 25 < wa[0] + half):
+                    nxt = monitors.neighbor(self.mons, self.mon_i, side)
+                    if nxt is not None:
+                        self.mon_i = nxt
+                        wa = self.work_area()
+            self.fx, self.fy, self.vx, self.vy, ev = physics.step_air(
+                self.fx, self.fy, self.vx, self.vy, dt, (wa[0], wa[1], wa[2], wa[3]), half, self.fh, self.dpi)
             self.angle_t = max(-30, min(30, self.vx * 3))
+            if "bounce" in ev:
+                self.land_squash = 0.8
+                self.sfx.play("blip")
+            elif "wall" in ev and self.sfx:
+                self.sfx.play("blip")
             if self.vy > 0:
-                for s in self.surfaces:
-                    if prev <= s[1] + 2 and self.fy >= s[1] and s[0] - 4 <= self.fx <= s[2] + 4:
-                        return self.land(s)
-            if self.fy >= self.ground():
+                for sf in self.surfaces:
+                    if prev <= sf[1] + 2 and self.fy >= sf[1] and sf[0] - 4 <= self.fx <= sf[2] + 4:
+                        return self.land(sf)
+            if "floor" in ev:
                 self.land()
 
     # ---- main loop
@@ -4790,6 +4851,8 @@ class Capri:
         if self.settings.get("track_time", True) and idle < 60:      # only the category's minutes are saved
             self.daylog.add(time.strftime("%Y-%m-%d"), cat, dt)
         if cat != self.ctx:
+            if self.ctx == "ai" and now - self.ctx_since >= 240 and not self.calm and self.state in ("idle", "perch", "walk"):
+                self.say_ai("relief", {}, self.rng.choice(awareness.RELIEF), 5)
             self.ctx, self.ctx_since, self.ctx_done = cat, now, False
             return
         if not cat:
@@ -4803,10 +4866,39 @@ class Capri:
         after = awareness.NUDGE_AFTER.get(cat)
         if after and now - self.ctx_since > after and now >= self.ctx_nudge and not self.calm:
             self.ctx_nudge = now + 1200
+            if cat == "ai":                                            # jealous, in words only
+                self.say_ai("jealous", {"minutes": int((now - self.ctx_since) / 60)},
+                            awareness.jealous_line(self.mind.mood(now), self.rng), 9)
+                self.set_icon("anger", 2.5)
+                return
             self.say_ai("nudge", {"activity": awareness.PHRASE.get(cat, cat), "minutes": int((now - self.ctx_since) / 60)},
                         awareness.nudge(cat), 10)
 
+    def watch_pc(self, now):
+        """React to the PC itself: heavy CPU load and USB things coming and going (a few rare lines, never spammy)."""
+        want = bool(self.settings.get("pc_reactions", True))
+        if want and self.syswatch is None:
+            self.syswatch = sysmon.Watch()
+            self.syswatch.start()
+        elif not want and self.syswatch is not None:
+            self.syswatch.stop()
+            self.syswatch = None
+        if self.syswatch is None:
+            return
+        for kind, label in self.syswatch.drain():
+            if self.calm or self.state in ("drag", "tp_out", "tp_in", "sleep"):
+                continue
+            if kind.startswith("cpu") and (self.game or self.ctx in ("game", "cyberpunk")):
+                continue                                         # games are meant to melt the CPU
+            self.say_moment(sysmon.SITUATION[kind], self.rng.choice(sysmon.LINES[kind]), 6, wait=3)
+            self.set_icon({"cpu_high": "!", "usb_in": "?"}.get(kind, "?"), 3.0)
+            if kind == "usb_in":
+                self.hop(6)
+            self.last_active = now
+
     def scheduled(self, now):
+        self.watch_monitors(now)
+        self.watch_pc(now)
         self.watch_context(now)
         self.watch_ledges(now)
         self.drain_reactor()
@@ -4912,7 +5004,7 @@ class Capri:
     # ---- mouse
     def on_press(self, e):
         self.press = (e.x_root, e.y_root, time.time(), False)
-        self.drag_hist = []
+        self.drag_track = physics.Tracker()
         self.poke_awake()
 
     def on_drag(self, e):
@@ -4927,14 +5019,14 @@ class Capri:
             self.anim = "jump"
         if dragging:
             now = time.time()
+            if len(self.mons) > 1:                                  # she goes to whichever screen the mouse is on
+                self.mon_i = monitors.index_at(self.mons, e.x_root, e.y_root) or 0
             wa = self.work_area()
             self.fx = min(max(e.x_root, wa[0] + 20), wa[2] - 20)
             self.fy = min(max(e.y_root + self.fh * 0.45, wa[1] + self.fh), self.ground())
-            self.drag_hist = (self.drag_hist + [(now, e.x_root, e.y_root)])[-5:]
-            if len(self.drag_hist) >= 2:
-                a, b = self.drag_hist[0], self.drag_hist[-1]
-                vx = (b[1] - a[1]) / max(0.001, b[0] - a[0])
-                self.angle_t = max(-28, min(28, -vx * 0.02))
+            self.drag_track.add(now, e.x_root, e.y_root)
+            vx = self.drag_track.velocity(now)[0]
+            self.angle_t = max(-28, min(28, -vx * 0.02))
             self.place()
 
     def on_release(self, e):
@@ -4944,14 +5036,14 @@ class Capri:
         self.press = None
         now = time.time()
         if dragging:
-            vx = vy = 0.0
-            if len(self.drag_hist) >= 2:
-                a, b = self.drag_hist[0], self.drag_hist[-1]
-                dtm = max(0.001, b[0] - a[0])
-                if now - b[0] < 0.15:
-                    vx, vy = (b[1] - a[1]) / dtm / 25.0, (b[2] - a[2]) / dtm / 25.0
-            self.vx, self.vy = max(-30, min(30, vx * 0.6)), max(-30, min(30, vy * 0.6))
+            vx_s, vy_s = self.drag_track.velocity(now)
+            self.vx, self.vy, power = physics.launch(vx_s, vy_s, self.dpi)
             self.go("air")
+            if power > 0.55 and now - self.last_throw_say > 25:
+                self.last_throw_say = now
+                self.set_icon("star", 1.6)
+                self.say_moment("the user just threw you across the screen like a ragdoll",
+                                self.rng.choice(["Wheeeee!", "Yeet!!", "I'm flying, choom!", "Again, again!"]), 3, wait=2.5)
             return
         if self.pending:
             return self.cancel_pending("Okay, cancelled.")

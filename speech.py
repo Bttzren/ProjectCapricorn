@@ -58,6 +58,12 @@ def user_prompt(kind, facts, recent=()):
                 + (f", {f['kstreak']} kills in a row" if f.get("kstreak", 0) >= 2 else "")
                 + (f", {f['dstreak']} deaths in a row" if f.get("dstreak", 0) >= 2 else "")
                 + ". React like a friend watching over their shoulder.")
+    elif kind == "jealous":
+        text = (f"The user has been chatting with a different AI for about {f.get('minutes', 6)} minutes. Be playfully "
+                "jealous about it in one short sentence: sulk, tease, act wounded and dramatic. Friendly, never mean, "
+                "and only words: you can't and won't do anything about it.")
+    elif kind == "relief":
+        text = "The user just stopped chatting with the other AI and came back to you. React, a little smug and relieved."
     elif kind == "diss":
         text = ("You feel like roasting the user right now. Dis them playfully in one short sentence about something "
                 "you can actually see" + (f" ({f['activity']})" if f.get("activity") else " (their tabs, their habits, "

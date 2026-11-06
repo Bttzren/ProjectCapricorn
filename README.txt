@@ -213,6 +213,18 @@ SPOKEN REMINDERS AND TIMERS
   "Hey Capri, remind me in 20 minutes to call mom", "remind me to stretch in an hour", "set a timer for
   10 minutes". She repeats the reminder exactly as you said it when it's time.
 
+PC SENSES, MORE SCREENS AND THROWING
+  * Her PC senses (Settings -> Behaviour -> "React to my PC"): she notices when your CPU has been pinned for
+    20+ seconds (at most once every 15 minutes, never during a game) and when a USB drive / device is plugged
+    in or pulled out (Windows: USB drives; Linux: any USB device). She reads only a CPU percentage and the
+    NAMES of removable devices: nothing stored, and the AI is only told "a USB device was plugged in".
+  * Several monitors: she can walk and be dragged onto any screen, and if you settle on another monitor for
+    8+ seconds she glitches over to join you ("Follow me to my other monitor" in Settings). Windows only.
+  * Throwing: drag her and let go while the mouse is moving and she flies. She bounces off the floor, walls
+    and ceiling, lands on windows, and sails from one monitor onto the next.
+  * Other AIs: when another AI site (ChatGPT, Gemini, Copilot, Perplexity, Grok...) is in front for 6+ minutes
+    she gets jealous, and is smug when you come back. It's talk only: she never touches or closes anything.
+
 HEY CAPRI / CHOOM (hands-free)
   Turn it on with the right-click menu ("Listen for Hey Capri / Choom"), or the checkbox in
   Settings -> Local AI & Voice Input. Needs voice input installed (Settings). Then just say:

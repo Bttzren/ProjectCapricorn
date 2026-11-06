@@ -79,8 +79,11 @@ GAME MODE (she hypes your kills and roasts your deaths)
   TELL HER WHAT HAPPENED (works for any game, any OS):
      /kill [2-5]   /death   /ace   /clutch   /rw (round won)   /rl (round lost)
      /gg win|loss  (match over)   /kd (status)   /match 13-7 15/12 (rounds 13-7, kills/deaths)
-  ROAST LEVEL: /roast off | mild | spicy  (or Settings > Gaming). off = only supportive. mild (default)
-     = "that was tragic, gonk". spicy = she'll tell you that was ass (mild swearing, never slurs).
+  ROAST LEVEL: /roast mood | off | mild | spicy  (or Settings > Gaming). mood (default) = HER call: how hard
+     she dishes it out follows her mood (sassy or cheeky = spicy, lonely = soft), and she'll dis you unprompted
+     too (your tabs, habits, how you play). off = only supportive, mild/spicy = the most she'll ever do.
+     mild = "that was tragic, gonk". spicy = she'll tell you that was ass (mild swearing, never slurs, never
+     about your body, identity or family). In a Discord call with friends she never goes past mild.
   Her chat replies know what you're playing and your session K/D too.
   IMPORTANT FOR FULLSCREEN: games in "Fullscreen" can hide her. Use "Windowed Fullscreen" / borderless.
   AUTOMATIC KILL/DEATH DETECTION - the AI SPOTTER (works for ANY game):

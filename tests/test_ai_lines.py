@@ -33,6 +33,14 @@ class SpeechTests(unittest.TestCase):
         self.assertIn("Never use slurs", S.system_prompt("x", level="spicy"))
         self.assertIn("never swear", S.system_prompt("x", level="nonsense"))        # unknown level -> mild
 
+    def test_diss_prompt_and_spicy_rules_keep_it_friendly(self):
+        d = S.user_prompt("diss", {"activity": "scrolling social media"})
+        self.assertIn("scrolling social media", d)
+        self.assertIn("Friendly, not cruel", d)
+        spicy = S.system_prompt("x", level="spicy")
+        for needle in ("body", "identity", "family", "Never use slurs"):
+            self.assertIn(needle, spicy)
+
     def test_user_prompts_carry_the_facts(self):
         g = S.user_prompt("game", {"game": "Valorant", "event": "round_win", "n": 1, "kills": 7, "deaths": 3,
                                    "kstreak": 3, "dstreak": 0})

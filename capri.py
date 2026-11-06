@@ -1325,15 +1325,16 @@ class ChatWindow:
                              "No game session. Launch a game, or start one with /kill or /death.")
         elif cmd == "/roast":
             arg = parts[1].lower() if len(parts) > 1 else ""
-            if arg in gamemode.LEVELS:
+            if arg in gamemode.LEVELS or arg == "mood":
                 p.settings["roast"] = arg
                 p.save_settings()
                 if p.game:
-                    p.game.level = arg
-                self.system_line(f"Roast level: {arg}.")
+                    p.game.level = p.roast_now()
+                self.system_line("Roast level: " + ("her call (her mood decides)" if arg == "mood" else arg) + ".")
             else:
-                self.system_line("/roast off | mild | spicy    (now: " + p.settings.get("roast", "mild")
-                                 + ")   off = only supportive, spicy = she'll tell you that was ass.")
+                self.system_line("/roast mood | off | mild | spicy    (now: " + p.settings.get("roast", "mood")
+                                 + ")   mood = she decides from how she feels, off = only supportive, "
+                                 "mild/spicy = the most she'll dish out.")
         elif cmd == "/match":
             res = gamemode.parse_match(text.split(None, 1)[1] if len(parts) > 1 else "")
             if res:
@@ -1935,11 +1936,13 @@ class SettingsWindow:
                            "When a game is in front (Windows, Awareness on) she keeps small and quiet and comments on "
                            "your play. Tell her what happened with /kill /death /rw /rl, or set up automatic "
                            "detection (see the README).")
-        self.roast_var = tk.StringVar(value=self.pet.settings.get("roast", "mild"))
+        self.roast_var = tk.StringVar(value=self.pet.settings.get("roast", "mood"))
         for value, label, note in (
+                ("mood", "Her call (default)", "Her mood decides: sassy or cheeky Capri dishes it out (mild swearing, "
+                                                "never cruel), a lonely one is soft. Never that hard in calls."),
                 ("off", "Supportive only", "Hype when you do well, kind words when you die."),
-                ("mild", "Light roasts (default)", "Playful teasing when you die: tragic, gonk, skill issue."),
-                ("spicy", "Spicy", "She'll tell you that was ass. Mild swearing, no slurs.")):
+                ("mild", "Light roasts at most", "Playful teasing when you die: tragic, gonk, skill issue."),
+                ("spicy", "Spicy allowed", "She'll tell you that was ass. Mild swearing, no slurs.")):
             self.radio(box, label, self.roast_var, value, self.pick_roast, note)
         self.check(box, "Stay small and quiet while a game is in front", "game_quiet", True)
         tk.Frame(box, bg=C_PANEL, height=6).pack()
@@ -1950,8 +1953,8 @@ class SettingsWindow:
         self.pet.save_settings()
         if self.pet.game:
             self.pet.game.level = v
-        self.pet.say({"off": "Only nice words. For now.", "mild": "Light roasts it is.",
-                      "spicy": "Spicy mode. Don't cry."}[v], 4, speak=None)
+        self.pet.say({"mood": "My call? Oh, you're gonna regret that.", "off": "Only nice words. For now.",
+                      "mild": "Light roasts it is.", "spicy": "Spicy mode. Don't cry."}[v], 4, speak=None)
 
     def build_ai(self, parent):
         box = self.section(parent, "AI",
@@ -3395,10 +3398,16 @@ class Capri:
     def ai_enabled(self):
         return bool(self.settings.get("ai_lines", True) and ai_available() and time.time() >= self.ai_pause_until)
 
-    def ai_system(self, now=None):
+    def ai_system(self, now=None, call=False):
         now = now or time.time()
         return speech.system_prompt(self.persona_text, self.mind.context(now, self.doing(), self.activity_phrase()),
-                                    self.settings.get("roast", "mild"), self.memory.context())
+                                    self.roast_now(now, call), self.memory.context())
+
+    def roast_now(self, now=None, call=False):
+        """The roast level she's using right now: her mood chooses, your /roast setting is the ceiling.
+        In a call with friends she never goes past light teasing."""
+        lvl = self.mind.roast_level(now or time.time(), self.settings.get("roast", "mood"))
+        return "mild" if call and lvl == "spicy" else lvl
 
     def say_moment(self, situation, fallback, secs=4.0, speak="ambient", wait=4.0):
         """Tell the AI what just happened and let it write her reaction. `fallback` only if the AI can't."""
@@ -3867,7 +3876,7 @@ class Capri:
         """Worker thread: ask the AI what Capri says next ('' = nothing)."""
         if not self.ai_budget.allow():
             return ""
-        return llm_reply(conv.messages(), self.ai_system() + " " + calls.RULES, max_tokens=70)
+        return llm_reply(conv.messages(), self.ai_system(call=True) + " " + calls.RULES, max_tokens=70)
 
     def drain_call(self):
         while True:
@@ -4356,7 +4365,7 @@ class Capri:
             sp.game = self.game.name if self.game else ""
             sp.interval = float(self.settings.get("vision_interval", 6))
             sp.system = vision.spotter_system(self.persona_text, self.mind.context(now, self.doing(),
-                                              self.activity_phrase()), self.settings.get("roast", "mild"),
+                                              self.activity_phrase()), self.roast_now(now),
                                               self.memory.context())
 
     def update_spotter(self, now):
@@ -4412,7 +4421,7 @@ class Capri:
     def start_game(self, key, manual=False):
         """A game session: she keeps small and quiet and comments on events."""
         self.end_game(quiet=True)
-        self.game = gamemode.Session(key, self.rng, self.settings.get("roast", "mild"))
+        self.game = gamemode.Session(key, self.rng, self.roast_now())
         self.game_manual, self.game_seen = manual, time.time()
         if self.settings.get("game_quiet", True):
             self.calm_before_game, self.calm = self.calm, True
@@ -4466,7 +4475,7 @@ class Capri:
         if not self.game:
             self.start_game("other", manual=True)
         g = self.game
-        g.level = self.settings.get("roast", "mild")
+        g.level = self.roast_now()
         preset = g.event(kind, n)                       # counts it. The preset line is only a fallback
         if line:
             self.say(line, 6, speak="priority")
@@ -4874,7 +4883,10 @@ class Capri:
             self.say_ai("checkin", {}, self.mind.line("checkin", now), 10)
         if now >= self.next_chatter and self.state in ("idle", "perch") and not self.calm:
             self.next_chatter = now + int(random.randint(60, 150) * self.mind.chatter_scale(now))
-            self.say_ai("idle", {}, self.mind.line("idle", now), 5)
+            if self.mind.wants_to_diss(now, self.settings.get("roast", "mood")):
+                self.say_ai("diss", {"activity": self.activity_phrase()}, self.mind.line("diss", now), 6)
+            else:
+                self.say_ai("idle", {}, self.mind.line("idle", now), 5)
             self.express(now)
         self.mind.mood(now)                       # she changes her own mood now and then; sometimes she says so
         shift = self.mind.take_shift()

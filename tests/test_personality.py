@@ -203,6 +203,35 @@ class MindTests(unittest.TestCase):
         for word in ("Edgerunners", "curious", "chaotic", "thrill", "never encourage real harm"):
             self.assertIn(word, persona)
 
+    def test_her_mood_decides_how_hard_she_roasts_within_the_ceiling(self):
+        m = self.mind(now=at(14))
+        for mood, want in (("sassy", "spicy"), ("playful", "spicy"), ("content", "mild"), ("lonely", "off")):
+            m.set_mood(mood, at(14), 900)
+            self.assertEqual(m.roast_level(at(14), "mood"), want, mood)
+        m.set_mood("sassy", at(14), 900)
+        self.assertEqual(m.roast_level(at(14), "mild"), "mild")       # ceiling caps her
+        self.assertEqual(m.roast_level(at(14), "off"), "off")
+        self.assertEqual(m.roast_level(at(14), "spicy"), "spicy")
+
+    def test_she_only_dissed_unprompted_when_mood_and_setting_allow(self):
+        m = self.mind(now=at(14))
+        m.set_mood("lonely", at(14), 900)
+        self.assertFalse(any(m.wants_to_diss(at(14), "mood") for _ in range(200)))
+        m.set_mood("sassy", at(14), 900)
+        self.assertFalse(any(m.wants_to_diss(at(14), "off") for _ in range(200)))
+        self.assertTrue(any(m.wants_to_diss(at(14), "mood") for _ in range(200)))
+
+    def test_diss_lines_exist_and_stay_off_the_hard_stuff(self):
+        bad = re.compile(r"\b(fuck\w*|shit\w*|bitch\w*|cunt|nigg\w*|fag\w*|retard\w*|kill yourself)\b")
+        for mood, lines in P.DISS.items():
+            self.assertIn(mood, P.MOODS)
+            for l in lines:
+                self.assertLessEqual(len(l), 120)
+                self.assertIsNone(bad.search(l.lower()), l)
+        m = self.mind(now=at(14))
+        m.set_mood("sassy", at(14), 900)
+        self.assertIn(m.line("diss", at(14)), P.DISS["sassy"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -100,6 +100,26 @@ OFFLINE_FALLBACK = {
     "restless": ["Finally, something to talk about. Go!", "Okay but make it interesting, choom."],
 }
 
+# How hard she feels like roasting you in each mood. The user's setting is a ceiling ("off" = never, "mild" = cap at
+# light teasing); "mood" (the default) lets her decide completely.
+ROAST_BY_MOOD = {"sassy": "spicy", "playful": "spicy", "restless": "mild", "hyper": "mild", "content": "mild",
+                 "lonely": "off", "sleepy": "off"}
+ROAST_RANK = {"off": 0, "mild": 1, "spicy": 2}
+
+# Preset diss lines for when no AI is available. Only used in moods that roast.
+DISS = {
+    "sassy": ["Wow. Forty tabs. Truly a mind of discipline, choom.", "That was ass. I said what I said.",
+              "You call that a plan? Bold. Wrong, but bold.", "Skill issue. Mine? No. Yours. Definitely yours.",
+              "I've seen better decisions from a glitched vending machine."],
+    "playful": ["Hehe, nice try, gonk. Try harder.", "You type like you're being chased. Respect. Also tragic.",
+                "I'd roast you but you're doing it yourself. Efficient.", "Oh? You wanna go? Bet. I'm ten feet tall in here.",
+                "Your desktop is a crime scene and I'm the only witness."],
+    "restless": ["You've been staring at that for ages. It's not gonna blink first.", "Riveting. Truly. Wake me when it's fun.",
+                 "Productive? Or just really good at looking busy, choom?"],
+    "hyper": ["You're so slow, choom! SLOW! Faster!", "Tragic! Hilarious! Do it again!"],
+    "content": ["Eh. You'll live, gonk.", "Nice work. For a corpo drone."],
+}
+
 # Said (sometimes) when she changes her own mind: she announces where her head just went.
 SHIFT_LINES = {
     "content": ["Okay. Chill mode. For now.", "Huh. I'm fine. Weirdly fine."],
@@ -298,8 +318,22 @@ class Mind:
         opts = EXPRESSIONS.get(self.mood(now))
         return self.rng.choice(opts) if opts else (None, None)
 
+    def roast_level(self, now, ceiling="mood"):
+        """How hard she'll roast you right now: her mood decides, capped by the user's setting."""
+        want = ROAST_BY_MOOD.get(self.mood(now), "mild")
+        if ceiling in ROAST_RANK:
+            want = min(want, ceiling, key=ROAST_RANK.get)
+        return want
+
+    def wants_to_diss(self, now, ceiling="mood"):
+        """Does she feel like dissing you unprompted? Only if her mood roasts and the setting allows it."""
+        if self.roast_level(now, ceiling) == "off":
+            return False
+        chance = {"sassy": 0.5, "playful": 0.4, "restless": 0.3, "hyper": 0.15, "content": 0.05}.get(self.mood(now), 0)
+        return self.rng.random() < chance
+
     def line(self, kind, now):
-        pool = LINES[kind]
+        pool = DISS if kind == "diss" else LINES[kind]
         if isinstance(pool, dict):
             pool = pool.get(self.mood(now)) or pool["content"]
         if kind == "checkin" and hour_of(now) < 5:

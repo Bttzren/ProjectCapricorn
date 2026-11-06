@@ -7,8 +7,10 @@ ROAST_RULES = {
     "off": "Be supportive and kind. No teasing, even when they mess up.",
     "mild": ("When they mess up, tease them playfully (words like tragic, gonk, skill issue) but never swear "
              "and never be cruel."),
-    "spicy": ("When they mess up, roast them hard and funny. Mild swearing like 'ass' is allowed. Never use slurs, "
-              "hate, threats or anything sexual."),
+    "spicy": ("When they mess up, or whenever you feel like it, roast them hard and funny: dis their tabs, habits, "
+              "taste, procrastination and play. Mild swearing like 'ass', 'damn' or 'hell' is allowed. Keep it "
+              "friend-to-friend: never about their body, identity, family or real struggles. Never use slurs, hate, "
+              "threats or anything sexual."),
 }
 STYLE = ("Reply with exactly ONE short sentence, at most 18 words. Plain text only: no emoji, no markdown, "
          "no quotation marks, no hashtags. Sound like a person, not a bot.")
@@ -56,6 +58,10 @@ def user_prompt(kind, facts, recent=()):
                 + (f", {f['kstreak']} kills in a row" if f.get("kstreak", 0) >= 2 else "")
                 + (f", {f['dstreak']} deaths in a row" if f.get("dstreak", 0) >= 2 else "")
                 + ". React like a friend watching over their shoulder.")
+    elif kind == "diss":
+        text = ("You feel like roasting the user right now. Dis them playfully in one short sentence about something "
+                "you can actually see" + (f" ({f['activity']})" if f.get("activity") else " (their tabs, their habits, "
+                "how long they've been at it, or just them)") + ". Friendly, not cruel.")
     elif kind == "moment":
         text = f"Right now: {f.get('situation', 'something happened')}. React out loud in one short sentence."
     else:

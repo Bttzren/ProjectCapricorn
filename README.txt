@@ -123,7 +123,7 @@ TALKING TO HER (voice input)
 TALKING TO YOUR FRIENDS IN A DISCORD CALL (call mode)
   She listens to the call through your PC's audio, understands what your friends say, and answers OUT LOUD
   in the call when someone says "Capri". Start: /call on (you're already in the call) or /call join (she opens
-  Discord and joins the voice channel herself, needs Full control + a Claude key), or say "join Discord and
+  Discord and joins the voice channel herself, needs Full control + a Claude or Gemini key), or say "join Discord and
   talk to my friends". Stop: /call off or "leave the call". /call status shows what's missing.
   One-time setup (Windows), because a call only hears your microphone:
     1. Install the free VB-Audio Virtual Cable (vb-audio.com/Cable) and restart. (Mac: BlackHole, but call mode
@@ -197,7 +197,7 @@ ONE-CLICK PRESETS (Settings -> QUICK SETUP, or /preset none | some | full, /powe
         sending to AI, no clicking for you.
   FULL  Full control (keys, typing, clicking, /do tasks), 'Hey Capri' always-listen, AI sees your screen.
         If voice input isn't installed yet, FULL installs it for you. Tasks and AI screen-watching still
-        need a Claude key (Settings), and everything she types for you still asks first.
+        need a Claude or Gemini key (Settings), and everything she types for you still asks first.
   Choosing a preset sets all the switches at once; one confirmation dialog lists everything that turns ON.
   Every switch can still be flipped on its own afterwards (the label then says CUSTOM). Reflexes (auto-lock,
   auto-pause when you walk away) are never part of a preset. Saying "Capri, privacy mode" (or "turn
@@ -245,13 +245,15 @@ BUILT-IN LOCAL AI (no key, works offline)
   /brain cloud  always your Claude/Gemini key      /brain local  always the local AI
   /getbrain remove deletes it. Honest limits: a small model is dumber than Claude (simple replies, sometimes
   odd), uses 1-3 GB of RAM while running, and is slow on old PCs. It is text only: screen watching (/watch,
-  the AI Spotter) and tasks (/do) still need a Claude key.
+  the AI Spotter) and tasks (/do) still need a Claude or Gemini key.
 
 DOING TASKS FOR YOU (/do)
   Tell her what you want done and she operates the computer: she looks at your screen, then clicks, types
   and presses keys, one step at a time, until it's finished. Example:
       /do open Discord, join the voice channel my friends are in and tell them I'll be on in 15 minutes
-  Set up once:  1) Settings -> Full control   2) a Claude key (sk-ant...)   3) type /agent on and agree.
+  Set up once:  1) Settings -> Full control   2) a Claude key (sk-ant...) or a Gemini key   3) type /agent on
+  and agree. Claude aims more reliably; Gemini works too but may miss small buttons more often (untested
+  on real hardware so far - tell me how it does).
   How it stays safe:
     * only starts when you type /do and confirm that exact task
     * you must approve every piece of text she is about to type

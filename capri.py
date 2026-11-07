@@ -365,13 +365,18 @@ def cloud_reply(key, messages, persona, max_tokens=None, model=None):
     return fn(key, messages, persona, **kw)
 
 
-def vision_ask(system, media_type, b64, prompt, max_tokens=120, model=None):
-    """Ask the vision model about ONE shrunken screenshot. The image goes to the AI provider that owns your key."""
+GEMINI_AGENT_NOTE = (" Coordinates are PIXELS in the screenshot you were given (x from the left, y from the top), "
+                     "not a 0-1000 scale. Reply with the JSON object only.")
+
+
+def vision_ask(system, media_type, b64, prompt, max_tokens=120, model=None, room=1):
+    """Ask the vision model about ONE shrunken screenshot. The image goes to the AI provider that owns your key.
+    room: multiplier for Gemini's token cap (its newer models spend output tokens on thinking first)."""
     key = read_api_key()
     if not key:
         raise RuntimeError("401: no API key")
     if detect_provider(key) == "gemini":
-        body = json.dumps(vision.gemini_body(system, media_type, b64, prompt, max_tokens)).encode()
+        body = json.dumps(vision.gemini_body(system, media_type, b64, prompt, max_tokens * room)).encode()
         last = "no Gemini model worked"
         for model in list(GEMINI_MODELS):
             req = urllib.request.Request(
@@ -1562,7 +1567,7 @@ class ChatWindow:
                 self.system_line("Tasks are off.")
             else:
                 self.system_line("Tasks: " + ("on" if p.settings.get("agent") else "off")
-                                 + "  (/agent on | off).  Needs Full control and a Claude key.  Then: /do <task>")
+                                 + "  (/agent on | off).  Needs Full control and a Claude or Gemini key.  Then: /do <task>")
         elif cmd == "/talk":
             p.start_listening()
         elif cmd == "/open" or cmd == "/search":
@@ -4002,8 +4007,8 @@ class Capri:
                 notes.append("installing voice input so I can hear you")
         else:
             self.stop_wake()
-        if (cfg["agent"] or cfg["ai_vision"]) and not (read_api_key() and detect_provider(read_api_key()) == "anthropic"):
-            notes.append("tasks and AI screen-watching need a Claude key (Settings)")
+        if (cfg["agent"] or cfg["ai_vision"]) and not read_api_key():
+            notes.append("tasks and AI screen-watching need a Claude or Gemini key (Settings)")
         self.notify(f"Preset: {presets.LABELS[name]}." + (" " + "; ".join(notes).capitalize() + "." if notes else ""),
                     secs=8)
         win = self.settings_win
@@ -4233,8 +4238,6 @@ class Capri:
             return False, "I'm already doing something. Click me or /stop to stop it."
         if not read_api_key():
             return False, "I need an AI key first (Settings)."
-        if detect_provider(read_api_key()) != "anthropic":
-            return False, "Doing tasks needs a Claude key (sk-ant...). Gemini isn't supported for this yet."
         if self.hands.level != "full":
             return False, "That needs Full control in Settings."
         if not self.settings.get("agent"):
@@ -4272,7 +4275,7 @@ class Capri:
             return False, "Okay, cancelled."
         h = hands.Hands(level=self.hands.level, threaded=False, log=log, per_min=120)
         ag = agent.Agent(
-            ledges.capture, lambda mt, b64, system, prompt: vision_ask(system, mt, b64, prompt, 300, AGENT_MODEL), h,
+            ledges.capture, self._agent_ask, h,
             title=self.win32.foreground_title, pointer=self.win32.cursor_pos, approve=self._agent_approve,
             blocked=self._agent_blocked, note=lambda t: self.agent_events.put(("note", t)), budget=self.agent_budget)
         self.agent = ag
@@ -4290,6 +4293,12 @@ class Capri:
             self.agent_events.put(("end", res[0], res[1], task))
         threading.Thread(target=work, daemon=True).start()
         return True, ""
+
+    @staticmethod
+    def _agent_ask(media_type, b64, system, prompt):
+        if detect_provider(read_api_key()) == "gemini":
+            return vision_ask(system + GEMINI_AGENT_NOTE, media_type, b64, prompt, 300, room=8)
+        return vision_ask(system, media_type, b64, prompt, 300, AGENT_MODEL)
 
     def stop_agent(self):
         if self.agent is not None:

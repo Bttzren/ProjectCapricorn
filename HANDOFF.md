@@ -1,7 +1,12 @@
 # Capri — handoff for the next session
 
 Read this first, then `README.txt` (user-facing feature docs). State as of branch tip
-`claude/amazing-allen-ur4fi2`, **333 unit tests passing**, nothing uncommitted.
+`claude/zen-ptolemy-6a26qh`, **352 unit tests passing** (1 skipped), nothing uncommitted.
+
+**Fresh container setup** (both were missing in the last session; without them 4 tests error and every smoke
+script dies on `import tkinter`):
+`apt-get install -y python3-tk python3-pil.imagetk` and
+`/usr/bin/python3.12 -m pip install --user --break-system-packages numpy pyflakes`.
 
 ## 1. What this is, and who it's for
 
@@ -11,14 +16,17 @@ often can't test (e.g. on a streetcar). I test **headless on Linux** with fakes;
 Windows hardware. Be honest about that every time.
 
 ### How the user wants you to work
-- "Work autonomously." No PR was ever requested. Commit + push to `claude/amazing-allen-ur4fi2` only.
+- "Work autonomously." No PR was ever requested. Commit + push to the branch the harness names (last:
+  `claude/zen-ptolemy-6a26qh`; before that `claude/amazing-allen-ur4fi2`).
 - They want **useful and cool, not corny**. They told me to *stop* "corny things" (mini games, badges, streaks,
-  daily gigs were built and **reverted** — do not bring them back). Habit streaks in `/habit` still exist (ask if
-  they want those gone too).
+  daily gigs were built and **reverted** — do not bring them back). Habit streaks were **removed** too (user said
+  yes); `/habit` is a plain daily checklist. Game-mode kill/death streak *commentary* was kept (it's not a tracker).
 - They get angry when something unrequested is visible: they hated the cyan **glowing outline** I made default
   (now off, opt-in only). **Never change her default look without being asked.** Default accent = original green.
-- **Open request, unanswered:** "make her better" (after the outline rant). Unclear whether it means look /
-  movement / personality / something broken. I asked; no reply yet. Ask again briefly, then act.
+- "make her better" was answered: **"ALL OF EM"** (look, movement, personality, bugs, useful features). Done in
+  the zen-ptolemy session — see §10. They like high energy replies and short status lines; don't ask more
+  questions when they've said "all".
+- The user can attach an **advisor** (`/advisor`); use it before big changes and before declaring done.
 - Their message style is blunt/profane when frustrated. Don't over-apologise; fix it and say what changed.
 
 ## 2. Workflow rules that matter
@@ -33,7 +41,11 @@ Windows hardware. Be honest about that every time.
   use `PIL.ImageGrab` for screenshots — look at screenshots with the Read tool; they caught real bugs).
   Index: 15 `/do` agent · 16 voice→local AI + offline fallback · 17 wake word · 18 size/presets/clip ·
   19 clip + settings shot · 20 launcher/controls/brief/neon · 21 boot animation frames · 22 hear PC audio ·
-  23 call mode · 24 chat+settings screenshots · 25 other windows regression · 26 outline-off check.
+  23 call mode · 24 chat+settings screenshots · 25 other windows regression · 26 outline-off check ·
+  27 notes (typed + spoken) · 28 quiet in calls (faked mic registry) · 29 `/do` with a Gemini key ·
+  30 movement trace (eased walk, edge turn, steps, landing squash).
+  Also grep each run's `$HOME/.capri/capri.log` for `tick error` — that's how a frozen-pet bug shows up.
+  (smoke20 sets `state="fly"` by hand; that used to log IndexErrors, now guarded.)
 - Every behaviour change: add/adjust unit tests in `tests/` for the pure module. When an old test breaks because
   behaviour changed *on purpose*, update the expectation (and say so); when a test finds a real bug, fix the code.
 - Commits end with the attribution lines the harness gives (Co-Authored-By / Claude-Session).
@@ -45,7 +57,9 @@ Windows hardware. Be honest about that every time.
 
 Pure modules (all unit-tested, no Tk): `speech.py` (prompts, sanitize, Budget 14/min & 800/day) ·
 `vision.py` (screenshot→AI JSON events, Spotter) · `gamemode.py` · `reactor.py` (template detectors, optional) ·
-`ledges.py` (find boxes to sit on) · `hands.py` (keys/click/launch, levels visual<media<full, rate limits, blocked
+`ledges.py` (find boxes to sit on) · `notes.py` (voice/typed notes, keyword recall) · `meeting.py` (in a
+call? title patterns + Windows mic-in-use registry, grace period) · `motion.py` (walk easing, step clock,
+landing squash) · `hands.py` (keys/click/launch, levels visual<media<full, rate limits, blocked
 combos) · `agent.py` (`/do` computer-use loop) · `voice.py` (Fish → Edge neural → system TTS, Speaker, mp3 play,
 call routing) · `audioout.py` (play into virtual cable) · `listen.py` (mic, Whisper, endpointing, **intent()**,
 wake words, reminders parsing) · `hearing.py` (PC loopback, beats, ring buffer) · `call.py` (Discord-call
@@ -120,17 +134,42 @@ Real hardware reports from the user are the most valuable input — ask for exac
 
 ## 8. Open items / ideas (none started)
 
-1. **Answer "make her better"** (see §1) — ask which of look / movement / personality / bug.
+1. (done) "make her better" → all of it; see §10. Next: get real-Windows feedback on §10 items.
 2. Real-hardware feedback loop: have the user run `py capri.py`, try `/call setup`, `/getbrain`, `/getears`,
    `/do open notepad and type hello`, and report `[ERR]` text.
-3. Ask whether to remove habit streaks too (user said "remove the streaks and allat" about the corny batch).
+3. (done) Habit streaks removed.
 4. Possible next *useful* features (user wants useful, not gimmicks): notes with voice recall, per-app muting of
-   her chatter during calls/meetings, saving presets of her settings per profile, Gemini support for `/do`
-   (currently Claude-only), speaker separation in call mode (currently everyone = "Friend").
+   her chatter during calls/meetings, saving presets of her settings per profile, speaker separation in call mode
+   (currently everyone = "Friend"; needs model downloads, HF is blocked here). Notes, call/meeting quiet and
+   Gemini `/do` are DONE.
 5. Optionally turn `tools/smoke/*.py` into a runnable suite (they're scripts with prints, not asserts).
 
 ## 9. First moves for the new session
 
 1. `git pull`/checkout `claude/amazing-allen-ur4fi2`; run the unit tests (expect 333 OK).
 2. Skim `README.txt` and this file; do not re-derive decisions listed above.
-3. Reply to the user about "make her better" with one short question, unless they've already answered.
+3. Ask the user for real-Windows feedback on the §10 changes (exact `[ERR]` text + `capri.log`).
+
+## 10. zen-ptolemy session (what changed; all unit/fake-tested, NOT run on real Windows)
+
+- **Habit streaks removed** (`habits.check` returns `(ok, name)`; no confetti at 7/30).
+- **Notes**: "Capri, note that …" / "take a note: …" / "write this down …" / `/note <text>`; recall with
+  "what did I note about X" / "read my notes" / `/notes [query]`, `/notes rm N`. `listen.note_intent` runs
+  before controls/remind/launch; tests pin that "open notepad", remind, brief, hear, tasks, chat still route.
+  Stored as text in settings.json (`notes`), never sent to the AI. Spoken recall reads the best match only.
+- **Quiet in calls/meetings** (setting `meeting_quiet`, default ON, Settings > Gaming): meeting window titles
+  (Awareness on) or another app with the mic open (HKCU ConsentStore\microphone, `LastUsedTimeStop == 0`;
+  python/pythonw/py/capri ignored). Sets calm (stash/restore like game mode), 45 s grace, manual calm toggle
+  during a call wins. The registry reading is the riskiest unverified part — ask the user if she goes quiet in
+  a Discord call and back afterwards.
+- **`/do` with Gemini**: only the provider guard blocked it. Gemini agent calls add a "pixels, not 0-1000" note
+  and 8x maxOutputTokens (thinking tokens). Accuracy vs Claude unknown.
+- **Personality**: persona/STYLE ask for sparse slang + dry humour; preset lines rewritten with far fewer
+  "choom"s (test now requires slang in >10% and <50% of preset lines, "choom" ≤ 3); `Mind.pick` shuffle-bag
+  so preset lines don't repeat until a pool is used up.
+- **Movement**: `motion.py` — 0.35 s ease in/out per walk, random pace 0.85–1.15, slow near edges, 0.25 s turn
+  pause then ease back up, bob + run frames follow a distance-based step clock (`SheetSprites.frame(..., phase)`),
+  landing squash by fall speed. Fixed an edge flip-flop found by the smoke 30 trace. `fly` with no waypoints
+  now drops to `air`.
+- **Look**: only a ~0.1 s width squash when she turns (NEAREST scaling, alpha stays 0/255). Default look,
+  green accent, outline-off all unchanged.

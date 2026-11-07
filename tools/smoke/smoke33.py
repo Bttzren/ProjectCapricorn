@@ -25,6 +25,14 @@ p.calm = True; print("calm blocks:", not p.express("surprised")); p.calm = False
 p.agent = object(); print("task blocks:", not p.express("surprised")); p.agent = None
 p.settings["expressive"] = False; print("setting off blocks:", not p.express("surprised"))
 print("but /express preview works:", p.express("smug", forced=True)); p.settings["expressive"] = True
+# perched + feeling: she stays seated (key starts with perch), angry -> perch_glitch
+p.set_skin("capri", announce=False); time.sleep(1.5)       # let the background warm-up finish
+for name in ("smug", "sad", "angry"):
+    p.expr = None; p.expr_gate = expression.Gate(); p.go("perch", 99); p.express(name, forced=True)
+    p.clear_sprite_caches(); p.sprite_image(time.time()); print(f"perched + {name} -> drawn:", p._last_ck[0][0])
+# first drag after the warm-up: no stall
+t = time.time(); p.go("drag"); p.clear_sprite_caches(); p.sprite_image(time.time()); print("first drag frame ms:", int((time.time() - t) * 1000))
+p.go("idle", 99)
 # contact sheet: every emotion on both the new skin and the classic sheet
 rows = []
 for skin in ("capri", "classic"):

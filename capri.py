@@ -810,6 +810,7 @@ class SkinSprites:
 
     def __init__(self, folder, target_h, name="capri"):
         self.folder, self.target_h, self.name = folder, target_h, name
+        self._lock = threading.RLock()
         idle = Image.open(os.path.join(folder, "idle.png")).convert("RGBA")
         bb = idle.getchannel("A").point(lambda v: 255 if v > 127 else 0).getbbox()
         if not bb:
@@ -834,7 +835,22 @@ class SkinSprites:
     def has(self, name):
         return bool(self.lay(name[1:]) if name.startswith("@") else self.strip(name))
 
+    def warm(self):
+        """Build every remaining strip/pose in the background (PIL only, no Tk objects), so her first drag,
+        perch or nap doesn't freeze the pet for a few hundred ms."""
+        def run():
+            for n in self.STRIPS:
+                self.strip(n)
+            for n in ("lay", "lay_awake", "lay_talk", "lay_talk2"):
+                self.lay(n)
+        threading.Thread(target=run, daemon=True).start()
+        return self
+
     def strip(self, name):
+        with self._lock:
+            return self._strip(name)
+
+    def _strip(self, name):
         if name in self.strips:
             return self.strips[name]
         frames = []
@@ -858,6 +874,10 @@ class SkinSprites:
         return frames
 
     def lay(self, name):
+        with self._lock:
+            return self._lay(name)
+
+    def _lay(self, name):
         """A lying-down pose, scaled so her body is about as long as she is tall standing."""
         if name in self.lays:
             return self.lays[name]
@@ -1008,7 +1028,7 @@ def load_art(dpi, skin="capri"):
         d = find_skin_dir(skin) or find_skin_dir("capri")
         if d:
             try:
-                art = SkinSprites(d, target, os.path.basename(d))
+                art = SkinSprites(d, target, os.path.basename(d)).warm()
                 log(f"loaded skin {os.path.basename(d)} from {d}")
                 return art
             except Exception:
@@ -3261,6 +3281,9 @@ class Capri:
 
     def draw_feelings(self, c, now, lfx, lfy, top, bub):
         """Cut-in panel (rare, big moments) across her, and a face close-up by her speech bubble."""
+        if self.tiny_on():                                # tiny mode: the mini face already shows it
+            self.cutin = None
+            return
         acc = self.accent()
         if self.cutin:
             stem, t0 = self.cutin
@@ -5695,8 +5718,9 @@ class Capri:
                 anim = "wake"
             elif glitch > 0.02 and self.state in ("idle", "perch", "lounge"):
                 anim, glitch = ("perch-glitch" if self.state == "perch" else "glitch"), 0.0   # drawn glitch, not the fx
-            elif self.state == "perch" and anim in ("idle", "talk"):
-                anim = "perch"
+            elif self.state == "perch" and (anim in ("idle", "talk") or self.expr):
+                # a feeling while perched keeps her seated; motion, icon and face pop-up carry it
+                anim = "perch-glitch" if self.expr and self.expr[0] in ("angry", "scared") else "perch"
         key, frame = self.art.frame(anim, now - self.t_start, self.dir, self.step_ph if anim == "walk" else None)
         tiny = self.tiny_on()
         if tiny:                                                  # just her floating visor face
@@ -6073,7 +6097,7 @@ def pet_preview():
     enable_dpi_awareness()
     root = tk.Tk()
     root.title("Capri pet preview")
-    art = load_art(1.0)
+    art = load_art(1.0, "classic")
     if art.kind != "sheet":
         tk.Label(root, text="No Codex/Petdex sheet found.\nInstall one with:  npx petdex install capri",
                  padx=20, pady=20).pack()

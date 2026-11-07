@@ -1172,7 +1172,7 @@ class ChatWindow:
     def photo(self, key):
         img = self.pet.art.portraits.get(key) or self.pet.art.portraits["idle"]
         if key not in self.images:
-            self.images[key] = ImageTk.PhotoImage(img)
+            self.images[key] = ImageTk.PhotoImage(img, master=self.win)
         return self.images[key]
 
     def build(self):
@@ -1380,7 +1380,7 @@ class ChatWindow:
             k = ("mini", name)
             if k not in self.images:
                 img = MINI_FACES.get(name, 56, bg=C_PANEL)
-                self.images[k] = ImageTk.PhotoImage(img) if img else None
+                self.images[k] = ImageTk.PhotoImage(img, master=self.win) if img else None
             if self.images[k]:
                 self.portrait.config(image=self.images[k])
             self.win.after(80, self.tick_avatar)
@@ -1393,7 +1393,7 @@ class ChatWindow:
                 self.av_i = (self.av_i + 1) % len(frames)
                 k = (key, self.av_i)
                 if k not in self.images:
-                    self.images[k] = ImageTk.PhotoImage(frames[self.av_i])
+                    self.images[k] = ImageTk.PhotoImage(frames[self.av_i], master=self.win)
                 self.portrait.config(image=self.images[k])
         self.win.after(160, self.tick_avatar)
 
@@ -3270,7 +3270,7 @@ class Capri:
                         else:
                             chh = int(im.width / r)
                             im = im.crop((0, (im.height - chh) // 2, im.width, (im.height - chh) // 2 + chh))
-                        ph = ImageTk.PhotoImage(crisp(im.resize((w, h), Image.LANCZOS)))
+                        ph = ImageTk.PhotoImage(crisp(im.resize((w, h), Image.LANCZOS)), master=self.root)
                     except Exception:
                         log(f"panel {sub}/{stem} failed: " + traceback.format_exc())
                     break
@@ -5747,7 +5747,7 @@ class Capri:
             if self.outline_on():
                 img = neon.outline(img, neon.COLORS[self.neon_name], self.neon_px())
             self._last_ck = None
-            return ImageTk.PhotoImage(img), ax, ay, img.width, img.height
+            return ImageTk.PhotoImage(img, master=self.root), ax, ay, img.width, img.height
         ck = (key, round(self.angle / 3), round(self.sx * 25), round(self.sy * 25), flip, dim)
         self._last_ck = ck
         hit = self.pcache.get(ck)
@@ -5757,7 +5757,7 @@ class Capri:
             img, ax, ay = pose(frame, self.angle, self.sx, self.sy, flip, dim)
             if self.outline_on():
                 img = neon.outline(img, neon.COLORS[self.neon_name], self.neon_px())
-            hit = (ImageTk.PhotoImage(img), ax, ay, img.width, img.height)
+            hit = (ImageTk.PhotoImage(img, master=self.root), ax, ay, img.width, img.height)
             self.pcache[ck] = hit
             self.pil_cache[ck] = img
         return hit
@@ -5797,7 +5797,7 @@ class Capri:
             d = pet_asset_dirs("intro")[0]
             for st in intro.STEMS:
                 im = Image.open(os.path.join(d, st + ".webp")).convert("RGBA").resize((W, H), Image.LANCZOS)
-                frames[st] = ImageTk.PhotoImage(fast_crisp(im))
+                frames[st] = ImageTk.PhotoImage(fast_crisp(im), master=self.root)
         except Exception:
             log("intro failed, using the beam animation: " + traceback.format_exc())
             return False
@@ -5939,7 +5939,7 @@ class Capri:
         if ph is None:
             if len(self.ghost_cache) > 400:
                 self.ghost_cache.clear()
-            ph = self.ghost_cache[key] = ImageTk.PhotoImage(pil.crop((0, 0, pil.width, min(pil.height, vis))))
+            ph = self.ghost_cache[key] = ImageTk.PhotoImage(pil.crop((0, 0, pil.width, min(pil.height, vis))), master=self.root)
         dx = self.rng.randint(-3, 3) if reveal < 0.85 else 0
         c.create_image(x0 + dx, y0, image=ph, anchor="nw")
         return y0 + vis
@@ -5998,7 +5998,7 @@ class Capri:
             key = (self._last_ck, level, self.neon_name)
             gp = self.ghost_cache.get(key)
             if gp is None:
-                gp = self.ghost_cache[key] = ImageTk.PhotoImage(neon.ghost(pil, neon.COLORS[self.neon_name], level))
+                gp = self.ghost_cache[key] = ImageTk.PhotoImage(neon.ghost(pil, neon.COLORS[self.neon_name], level), master=self.root)
             c.create_image(x0 + (old[1] - self.fx), y0 + (old[2] - self.fy), image=gp, anchor="nw")
 
     def draw(self, now):
@@ -6038,7 +6038,7 @@ class Capri:
             if img is not None:
                 pop = min(1.0, (now - self.emote[1]) / 0.18)
                 ei = pose(img, 0, 0.5 + 0.5 * pop, 0.5 + 0.5 * pop)[0]
-                self._emote_photo = ImageTk.PhotoImage(ei)
+                self._emote_photo = ImageTk.PhotoImage(ei, master=self.root)
                 c.create_image(lfx + self.fw * 0.12, max(0, top - 2 - ei.height * 0.1 + math.sin(now * 8) * 2),
                                image=self._emote_photo, anchor="sw")
         if self.icon and now < self.icon[2]:

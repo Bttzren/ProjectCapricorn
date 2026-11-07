@@ -255,16 +255,43 @@ def parse_glance(text):
     return doing, say
 
 
+LOOK_MIN, LOOK_MAX, LOOK_DEFAULT = 1, 90, 10          # seconds between looks (user setting)
+
+
+def look_secs(value, default=LOOK_DEFAULT):
+    """The user's 'look every N seconds' setting, kept within 1-90."""
+    try:
+        v = int(round(float(value)))
+    except (TypeError, ValueError):
+        return default
+    return max(LOOK_MIN, min(LOOK_MAX, v))
+
+
 class GlanceGate:
-    """At most one glance per `gap` seconds and `per_day` a day, only when the app in front changed."""
+    """One look per `interval` seconds (the user picks 1-90), never two at once. No daily limit."""
 
-    def __init__(self, gap=90.0, per_day=120):
-        self.gap, self.per_day, self.last, self.day, self.count = gap, per_day, -1e9, "", 0
+    def __init__(self):
+        self.last, self.busy = -1e9, False
 
-    def allow(self, now, day):
-        if day != self.day:
-            self.day, self.count = day, 0
-        if now - self.last < self.gap or self.count >= self.per_day:
+    def allow(self, now, interval):
+        if self.busy or now - self.last < look_secs(interval):
             return False
-        self.last, self.count = now, self.count + 1
+        self.last, self.busy = now, True
         return True
+
+    def done(self):
+        self.busy = False
+
+
+def changed_activity(old, new):
+    """Did what the user is doing really change? ('watching a Minecraft video' vs 'watching Minecraft videos on
+    YouTube' = same; 'coding in VS Code' = different). Word overlap, so the AI's rewording doesn't count."""
+    def words(x):
+        return {w.rstrip("s") for w in "".join(c if c.isalnum() else " " for c in (x or "").lower()).split()
+                if len(w) > 2 and w not in ("the", "and", "with", "watching", "using", "looking", "user")}
+    a, b = words(old), words(new)
+    if not b:
+        return False
+    if not a:
+        return True
+    return len(a & b) / float(len(a | b)) < 0.34

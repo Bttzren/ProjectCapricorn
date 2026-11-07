@@ -86,7 +86,9 @@ LET HER SEE YOUR SCREEN (one switch: Settings > Quick setup > LET HER SEE MY SCR
   Turns on: Awareness (which app is in front), screen ledges (she sits on windows/boxes she finds), and AI
   glances: when you switch to something new she takes ONE small screenshot and the AI says exactly what you're
   doing ("watching a Minecraft speedrun on YouTube"), so her comments and chat know what's really on screen
-  instead of guessing from the window title. At most one glance per 90 s and 120 a day; never on banking /
+  instead of guessing from the window title. Then she keeps looking every 10 s (change it: /see every <1-90>
+  or the Settings > AI slider; no daily limit) and only speaks up when what you're doing changes. An unchanged
+  screen isn't sent. Never on banking /
   password / private windows, while you're away, in a call/game-quiet, or during a /do task. Glances need an AI
   key and send that one screenshot to your AI provider. /see shows what's on.
 
@@ -142,8 +144,8 @@ GAME MODE (she hypes your kills and roasts your deaths)
      so it can include anything visible on your screen. Capri never saves it. It is only sent when the
      screen changed, she pauses on banking / password / sign-in / private-browsing windows, while you're
      away, and while her own windows are in front. It uses your API credits: very roughly $1-3 an hour with
-     Claude (Haiku); set the interval to 10s to cut that, and there's a daily limit (600 looks by default,
-     vision_daily_cap in settings.json). She never acts on what the AI says: it can only make her talk
+     Claude (Haiku) at one look every 10 s (the default). You pick 1-90 s (Settings > AI slider, or
+     /see every 15); faster costs more. There is NO daily limit. She never acts on what the AI says: it can only make her talk
      and count K/D.
   (There's also an offline option: game_events.json with reference images of fixed screen patches, see
    game_events.example.json. It never sends anything anywhere, but needs setting up per game.)

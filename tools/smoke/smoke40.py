@@ -25,7 +25,22 @@ def pump(s):
         p.root.update(); p._tick(); time.sleep(0.02)
 p.ctx = "video"; p.react_context("video"); pump(0.8)
 print("asked the AI:", "DOING:" in asked[-1], "| she said:", repr(p.bubble), "| activity for chat:", repr(p.activity_phrase()))
-p.ctx = "coding"; p.react_context("coding"); print("second switch within 90 s -> glance:", len(asked) == 1)
+# periodic looks: every N s (default 10), silent while the activity is the same, speaks when it changes
+print("look every (default):", p.look_every())
+said = []
+orig_say = p.say
+p.say = lambda text, *a, **k: (said.append(text), orig_say(text, *a, **k))[1]
+ledges.capture = lambda: Image.new("RGB", (800, 450), (120, 40, 90))      # screen changed, same activity
+p.glance_gate.last -= 11; p.glance_tick(time.time()); pump(0.6)
+print("periodic look, same activity -> spoke:", said, "| looks so far:", len(asked))
+p.glance_gate.last -= 11; p.glance_tick(time.time()); pump(0.6)
+print("same screen again -> sent to AI:", len(asked), "(2 = unchanged screen skipped)")
+capri.vision_ask = lambda system, mt, b64, q, n=120, model=None, room=1: (asked.append(q), "DOING: coding a Python desktop pet in VS Code SAY: Is that me in there?")[1]
+ledges.capture = lambda: Image.new("RGB", (800, 450), (200, 200, 230))
+p.glance_gate.last -= 11; p.glance_tick(time.time()); pump(0.6)
+print("activity changed -> spoke:", said[-1:], "| activity:", p.activity_phrase())
+p.open_chat(); p.chat.submit("/see every 1"); p.chat.submit("/see every 500"); print("/see every 500 ->", p.look_every())
+p.chat.submit("/see every 10")
 p.glance_gate.last = -1e9; p.calm = True; print("calm -> glance:", p.glance("coding")); p.calm = False
 p.win32.ok = True; p.win32.foreground_title = lambda: "Online Banking - Google Chrome"; p.win32.idle_seconds = lambda: 1.0
 print("banking window -> glance:", p.glance("coding"))

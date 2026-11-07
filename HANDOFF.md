@@ -1,7 +1,7 @@
 # Capri — handoff for the next session
 
 Read this first, then `README.txt` (user-facing feature docs). State as of branch tip
-`claude/zen-ptolemy-6a26qh`, **355 unit tests passing** (1 skipped), nothing uncommitted.
+`claude/zen-ptolemy-6a26qh`, **354 unit tests passing** (1 skipped), nothing uncommitted.
 
 **Fresh container setup** (both were missing in the last session; without them 4 tests error and every smoke
 script dies on `import tkinter`):

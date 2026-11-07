@@ -955,6 +955,45 @@ def fast_crisp(img, cut=170):
     return out
 
 
+# ------------------------------------------------------------------ mouse wheel
+WHEEL_TARGETS = {}          # str(toplevel) -> the canvas that scrolls in that window
+
+
+def wheel_steps(delta):
+    """Scroll units for one <MouseWheel> event: 3 per notch (delta 120), at least 1 for touchpads' small deltas.
+    Negative = up."""
+    if not delta:
+        return 0
+    notches = max(1, int(round(abs(delta) / 120.0)))
+    return -3 * notches if delta > 0 else 3 * notches
+
+
+def install_wheel(root):
+    """One router for every window. On Windows Tk can deliver the wheel to whichever window has keyboard
+    focus (often the pet, after you open Settings from her menu), not the one under the mouse, so the
+    window is found from the POINTER position instead. Linux sends Button-4/5."""
+    def route(e, steps=None):
+        try:
+            w = root.winfo_containing(e.x_root, e.y_root)
+        except (tk.TclError, KeyError):
+            w = None
+        if w is None and not isinstance(e.widget, str):
+            w = e.widget
+        if w is None:
+            return None
+        try:
+            cv = WHEEL_TARGETS.get(str(w.winfo_toplevel()))
+            if cv is None or not cv.winfo_exists():
+                return None
+            cv.yview_scroll(steps if steps is not None else wheel_steps(e.delta), "units")
+        except tk.TclError:
+            return None
+        return "break"
+    root.bind_all("<MouseWheel>", route)
+    root.bind_all("<Button-4>", lambda e: route(e, -3))
+    root.bind_all("<Button-5>", lambda e: route(e, 3))
+
+
 class MiniFaces:
     """Her visor face (pet/mini/*.png, 2048px canvases): cropped to one shared box so faces don't jump, kept
     downscaled in memory, then sized per use (soft edges on a solid background for the chat, crisp hard
@@ -1229,16 +1268,13 @@ class ChatWindow:
         # messages
         mid = tk.Frame(w, bg=C_BG)
         mid.pack(fill="both", expand=True)
-        self.canvas = tk.Canvas(mid, bg=C_BG, highlightthickness=0, bd=0)
+        self.canvas = tk.Canvas(mid, bg=C_BG, highlightthickness=0, bd=0, yscrollincrement=20)
         self.canvas.pack(fill="both", expand=True)
+        WHEEL_TARGETS[str(self.win)] = self.canvas
         self.inner = tk.Frame(self.canvas, bg=C_BG)
         self.win_id = self.canvas.create_window(0, 0, window=self.inner, anchor="nw")
         self.canvas.bind("<Configure>", self.on_resize)
         self.inner.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
-        for wd in (self.canvas, self.inner):
-            wd.bind("<MouseWheel>", self.on_wheel)
-            wd.bind("<Button-4>", lambda e: self.canvas.yview_scroll(-3, "units"))
-            wd.bind("<Button-5>", lambda e: self.canvas.yview_scroll(3, "units"))
         self.bubbles = []
         self.win.after(700, self.blink)
 
@@ -1298,7 +1334,7 @@ class ChatWindow:
                 pass
 
     def on_wheel(self, e):
-        self.canvas.yview_scroll(-1 if e.delta > 0 else 1, "units" if abs(e.delta) < 120 else "units")
+        self.canvas.yview_scroll(wheel_steps(e.delta), "units")
 
     def scroll_end(self):
         self.win.update_idletasks()
@@ -1337,8 +1373,6 @@ class ChatWindow:
                            anchor="w", padx=12, pady=7, wraplength=wrap)
             lbl.pack(side="left")
         self.bubbles.append(lbl)
-        for wd in (row, holder, line, lbl, tag):
-            wd.bind("<MouseWheel>", self.on_wheel)
         lbl.bind("<Button-1>", lambda e, t=text: self.copy(t))
         self.win.after(30, self.scroll_end)
         return lbl
@@ -2126,9 +2160,9 @@ class SettingsWindow:
         ui.button(foot, "[ DONE ]", self.close, (f, 9, "bold"), filled=True, padx=22, pady=6).pack(pady=8)
         mid = tk.Frame(w, bg=C_BG)
         mid.pack(fill="both", expand=True)
-        canvas = tk.Canvas(mid, bg=C_BG, highlightthickness=0, bd=0, width=430)
+        canvas = tk.Canvas(mid, bg=C_BG, highlightthickness=0, bd=0, width=430, yscrollincrement=20)
         bar = tk.Scrollbar(mid, orient="vertical", command=canvas.yview, bg=C_PANEL2, troughcolor=C_BG,
-                           activebackground=self.acc, bd=0, relief="flat", width=10, highlightthickness=0)
+                           activebackground=self.acc, bd=0, relief="flat", width=16, highlightthickness=0)
         canvas.configure(yscrollcommand=bar.set)
         bar.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
@@ -2136,10 +2170,12 @@ class SettingsWindow:
         canvas.create_window(0, 0, window=body, anchor="nw", width=410)
         body.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         self.canvas = canvas
-        for wd in (canvas, body, w):
-            wd.bind("<MouseWheel>", lambda e: canvas.yview_scroll(-1 if e.delta > 0 else 1, "units"))
-            wd.bind("<Button-4>", lambda e: canvas.yview_scroll(-2, "units"))
-            wd.bind("<Button-5>", lambda e: canvas.yview_scroll(2, "units"))
+        WHEEL_TARGETS[str(w)] = canvas
+        for key, amount, what in (("<Prior>", -1, "pages"), ("<Next>", 1, "pages"), ("<Up>", -3, "units"),
+                                  ("<Down>", 3, "units")):
+            w.bind(key, lambda e, a=amount, k=what: None if isinstance(e.widget, tk.Entry) else canvas.yview_scroll(a, k))
+        w.bind("<Home>", lambda e: None if isinstance(e.widget, tk.Entry) else canvas.yview_moveto(0))
+        w.bind("<End>", lambda e: None if isinstance(e.widget, tk.Entry) else canvas.yview_moveto(1))
         pad = tk.Frame(body, bg=C_BG)
         pad.pack(fill="x", padx=8, pady=(0, 8))
         self.build_presets(pad)
@@ -2154,6 +2190,8 @@ class SettingsWindow:
         w.update_idletasks()
         h = min(700, pet.sh - 80)
         w.geometry(f"460x{h}+{max(0, pet.sw // 2 - 230)}+{max(0, pet.sh // 2 - h // 2)}")
+        w.lift()
+        w.focus_force()                  # so keys (and, on Windows, the wheel) go here, not to the pet
 
     # ---- small widgets
     def section(self, parent, title, note=""):
@@ -2847,6 +2885,7 @@ class Capri:
         self.canvas.pack()
         self.setup_transparency()
         self.set_app_icon()
+        install_wheel(self.root)
         self.win32 = Win32()
         self.sw, self.sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
 
@@ -5176,6 +5215,7 @@ class Capri:
             try:
                 if self.settings_win.win.winfo_exists():
                     self.settings_win.win.lift()
+                    self.settings_win.win.focus_force()
                     return
             except tk.TclError:
                 pass

@@ -8,7 +8,7 @@ messagebox.askyesno = lambda title, msg, **k: (dialogs.append((title, msg)), Tru
 capri.read_api_key = lambda: ""
 listen.installed = lambda: True
 installed = []
-p = capri.Capri()
+p = capri.Capri(); p.cancel_intro()
 p.start_wake = lambda: installed.append("wake") or True
 p.root.update()
 w0, h0 = p.fw, p.fh

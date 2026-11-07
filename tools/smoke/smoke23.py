@@ -36,7 +36,7 @@ class Edge:
     def fetch(self, t): return mp3
 sd = FakeSD(); FakeStream.slow = False
 cable_player = audioout.Player(sd, decoder=lambda path, rate, ch: np.zeros((rate // 2, ch), dtype="float32"))
-p = capri.Capri(); p.boot = None; p.root.update()
+p = capri.Capri(); p.boot = None; p.cancel_intro(); p.root.update()
 local = []
 p.speaker = voice.Speaker(platform="linux", which=lambda n: None, edge=Edge(), threaded=True,
                           player=lambda path: (local.append(path), (None, 0.2))[1])

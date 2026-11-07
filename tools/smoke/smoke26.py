@@ -4,7 +4,7 @@ sys.path.insert(0, "/home/user/ProjectCapricorn")
 import capri
 from PIL import ImageGrab
 capri.read_api_key = lambda: ""
-p = capri.Capri(); p.boot = None; p.root.update()
+p = capri.Capri(); p.boot = None; p.cancel_intro(); p.root.update()
 print("neon:", p.neon_name, "| outline:", p.outline_on(), "| ui accent:", capri.ui.acc())
 p.say("Yo choom, no more blue outline. Promise.", 20, speak=None)
 for _ in range(25): p.root.update(); time.sleep(0.03)

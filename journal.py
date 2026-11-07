@@ -4,10 +4,10 @@ from datetime import date, timedelta
 MAX_ENTRIES = 120
 
 REPLIES = {
-    1: ["That sounds rough, choom. I'm here. If it's heavy, talk to someone you trust too.",
+    1: ["That sounds rough. I'm here. If it's heavy, talk to someone you trust too.",
         "Ugh. Tomorrow's a fresh run. Rest up."],
     2: ["Meh days happen. Be gentle with yourself.", "Not great, huh? Small win tomorrow. One tiny step."],
-    3: ["Solid middle-of-the-road. Respect.", "Okay day. Okay is fine, choom."],
+    3: ["Solid middle-of-the-road. Respect.", "Okay day. Okay is fine."],
     4: ["Nice! Good day. Keep that energy.", "Preem. I'll take a good day."],
     5: ["NOVA! Best day! Tell me everything!", "Five out of five?! Legendary, choom."],
 }

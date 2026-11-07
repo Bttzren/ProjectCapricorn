@@ -1,7 +1,7 @@
 """Small in-character toys: dice, coin, 8-ball, and a to-do list (pure logic, no Tk)."""
 import re
 
-EIGHT_BALL = ["Preem. Do it.", "Nova yes.", "Signs point to yes, choom.", "Ask me after caffeine.",
+EIGHT_BALL = ["Preem. Do it.", "Nova yes.", "Signs point to yes.", "Ask me after caffeine.",
               "Flatline chances: high. Nope.", "My chrome says no.", "Probably. Don't quote me.",
               "Reply hazy. Reboot and try again.", "Absolutely. Go get it.", "Nah, choom. Pick another gig."]
 
@@ -33,7 +33,7 @@ def coin(rng):
 
 def eight_ball(question, rng):
     if not (question or "").strip():
-        return "Ask a question first, choom."
+        return "Ask a question first."
     return rng.choice(EIGHT_BALL)
 
 

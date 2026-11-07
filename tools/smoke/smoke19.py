@@ -5,7 +5,7 @@ import capri
 from PIL import ImageGrab
 capri.read_api_key = lambda: "sk-ant-x"
 capri.llm_reply = lambda msgs, persona, max_tokens=None, model=None: "Hello friend, how are you?"
-p = capri.Capri(); p.root.update()
+p = capri.Capri(); p.cancel_intro(); p.root.update()
 p.open_chat(); bubbles = []
 p.chat.add_bubble = lambda role, text, animate=False: bubbles.append((role, text))
 p.root.clipboard_clear(); p.root.clipboard_append("Hola amigo")

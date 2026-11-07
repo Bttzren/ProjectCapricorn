@@ -32,9 +32,11 @@ import brief
 import call as calls
 import clip
 import daylog
+import expression
 import fun
 import gamemode
 import habits
+import intro
 import hands
 import hearing
 import journal
@@ -43,7 +45,10 @@ import ledges
 import listen
 import localai
 import memory
+import meeting
+import motion
 import neon
+import notes
 import personality
 import presets
 import reactor
@@ -95,10 +100,11 @@ DEFAULT_PERSONA = (
     "from many human souls, playful and a bit cheeky, warm underneath. You talk like a Night City local "
     "from Cyberpunk: casual street slang such as choom (friend), preem (great), nova (cool), gonk (fool), "
     "eddies (money), chrome (cyberware), delta (leave), flatline (fail or shut down), gig (job), biz "
-    "(business), corpo and netrunner. Work it in naturally, about one or two slang words per reply, never "
-    "every sentence. Keep it PG: no real swearing or slurs. Reply in 1-3 short sentences, plain text, no "
-    "markdown, no emoji. Help with quick questions, focus, and getting unstuck by suggesting one tiny next "
-    "step. Never claim to be anyone else."
+    "(business), corpo and netrunner. Use slang sparingly: at most one slang word in a reply, and most "
+    "replies need none. Don't call them choom every time. Your humour is dry and observant, not cheesy: no "
+    "catchphrases, no forced hype, no exclamation-mark spam. Keep it PG: no real swearing or slurs. Reply in "
+    "1-3 short sentences, plain text, no markdown, no emoji. Help with quick questions, focus, and getting "
+    "unstuck by suggesting one tiny next step. Never claim to be anyone else."
 )
 
 
@@ -363,13 +369,18 @@ def cloud_reply(key, messages, persona, max_tokens=None, model=None):
     return fn(key, messages, persona, **kw)
 
 
-def vision_ask(system, media_type, b64, prompt, max_tokens=120, model=None):
-    """Ask the vision model about ONE shrunken screenshot. The image goes to the AI provider that owns your key."""
+GEMINI_AGENT_NOTE = (" Coordinates are PIXELS in the screenshot you were given (x from the left, y from the top), "
+                     "not a 0-1000 scale. Reply with the JSON object only.")
+
+
+def vision_ask(system, media_type, b64, prompt, max_tokens=120, model=None, room=1):
+    """Ask the vision model about ONE shrunken screenshot. The image goes to the AI provider that owns your key.
+    room: multiplier for Gemini's token cap (its newer models spend output tokens on thinking first)."""
     key = read_api_key()
     if not key:
         raise RuntimeError("401: no API key")
     if detect_provider(key) == "gemini":
-        body = json.dumps(vision.gemini_body(system, media_type, b64, prompt, max_tokens)).encode()
+        body = json.dumps(vision.gemini_body(system, media_type, b64, prompt, max_tokens * room)).encode()
         last = "no Gemini model worked"
         for model in list(GEMINI_MODELS):
             req = urllib.request.Request(
@@ -632,6 +643,7 @@ class SheetSprites:
         "talk": ["waving", "idle"],
         "look-a": ["look-a", "idle"], "look-b": ["look-b", "idle"], "type": ["waving", "idle"],
     }
+    FALLBACK.update({name: [name] + chain + ["idle"] for name, (chain, _m, _i) in expression.EMOTIONS.items()})
 
     def __init__(self, folder, target_h):
         path = next((os.path.join(folder, n) for n in ("spritesheet.webp", "spritesheet.png")
@@ -708,7 +720,8 @@ class SheetSprites:
         i = self.map.get(name)
         return self.rows[i] if i is not None and 0 <= i < len(self.rows) and self.rows[i] else None
 
-    def frame(self, anim, t, d):
+    def frame(self, anim, t, d, phase=None):
+        """phase: walking step clock (1 per step). Run frames then follow distance walked, not time."""
         if anim == "walk":
             order = ["running-right", "running", "idle"] if d > 0 else ["running-left", "running", "idle"]
         else:
@@ -716,7 +729,10 @@ class SheetSprites:
         for name in order + ["idle"]:
             fr = self.row_frames(name)
             if fr:
-                i = int(t * (5 if name == "idle" else 9)) % len(fr)
+                if phase is not None and name != "idle":
+                    i = int(phase * len(fr) / 2) % len(fr)      # one run cycle = two steps
+                else:
+                    i = int(t * (5 if name == "idle" else 9)) % len(fr)
                 return (name, i), fr[i]
         fr = next(r for r in self.rows if r)
         return ("any", 0), fr[0]
@@ -739,8 +755,257 @@ class PlaceholderSprites:
         self.w, self.h = self.idle.size
         self.emotes, self.portraits = {}, {"idle": thumb(self.idle, 56)}
 
-    def frame(self, anim, t, d):
+    def frame(self, anim, t, d, phase=None):
         return ("p",), self.idle
+
+
+SKINS = ("capri", "watcher", "classic")        # "classic" = the original Petdex sprite sheet
+SKIN_LABELS = {"capri": "Capri (new look)", "watcher": "The Watcher", "classic": "Classic sprite sheet"}
+
+
+def pet_asset_dirs(*sub):
+    """Where bundled art lives: next to the app, inside the built exe, or in the data folder (user-added)."""
+    out = []
+    for base in (app_dir(), getattr(sys, "_MEIPASS", None), data_dir()):
+        if base:
+            p = os.path.join(base, "pet", *sub)
+            if os.path.isdir(p) and p not in out:
+                out.append(p)
+    return out
+
+
+def find_skin_dir(name):
+    for d in pet_asset_dirs("skins", name):
+        if os.path.isfile(os.path.join(d, "idle.png")):
+            return d
+    return None
+
+
+class SkinSprites:
+    """A skin drawn as separate strips (pet/skins/<name>/idle.png, grin.png, ...): 240x384 standing frames,
+    384x384 perch frames, single big lay_* poses. Strips load on first use. Blinking and talking mouths are
+    handled here, so the app just asks for 'idle' or 'talk'."""
+    kind = "skin"
+    flip_dir = True
+    lies = True                     # she has lying-down art: don't rotate her 90 degrees to sleep
+    STRIPS = {"idle": 240, "blink": 240, "blink_glitch": 240, "glitch": 240, "grin": 240, "sleep": 240,
+              "wake": 240, "dangle": 240, "mouth": 240, "perch": 384, "perch_blink": 384,
+              "perch_blink_glitch": 384, "perch_glitch": 384}
+    FPS = {"idle": 10, "grin": 12, "sleep": 6, "glitch": 24, "perch_glitch": 24, "wake": 14, "dangle": 14,
+           "perch": 9, "blink": 16, "perch_blink": 16}
+    # app animation / sheet row / emotion name -> strip (first one this skin has wins)
+    ANIM = {
+        "idle": ["idle"], "walk": ["idle"], "run": ["idle"], "talk": ["idle"], "look-a": ["idle"],
+        "look-b": ["idle"], "wait": ["idle"], "think": ["idle"], "review": ["idle"], "waiting": ["idle"],
+        "wave": ["grin"], "waving": ["grin"], "dance": ["grin"], "type": ["grin"], "jump": ["grin"],
+        "jumping": ["grin"], "startle": ["glitch"], "fail": ["glitch"], "failed": ["glitch"],
+        "glitch": ["glitch"], "perch": ["perch", "idle"], "perch-glitch": ["perch_glitch", "glitch"],
+        "dangle": ["dangle", "idle"], "doze": ["sleep", "idle"], "wake": ["wake", "idle"],
+        "sleep": ["@lay", "sleep"], "lounge": ["@lay_awake", "@lay", "idle"], "lay-talk": ["@lay_talk", "@lay_awake"],
+        "happy": ["grin"], "laugh": ["grin"], "excited": ["grin"], "love": ["grin"], "proud": ["grin"],
+        "smug": ["grin"], "singing": ["grin"], "sad": ["sleep", "idle"], "sleepy": ["sleep", "idle"],
+        "bored": ["sleep", "idle"], "angry": ["glitch"], "scared": ["glitch"], "surprised": ["wake", "glitch"],
+        "embarrassed": ["blink", "idle"], "thinking": ["idle"], "confused": ["idle"], "curious": ["idle"],
+    }
+
+    def __init__(self, folder, target_h, name="capri"):
+        self.folder, self.target_h, self.name = folder, target_h, name
+        self._lock = threading.RLock()
+        idle = Image.open(os.path.join(folder, "idle.png")).convert("RGBA")
+        bb = idle.getchannel("A").point(lambda v: 255 if v > 127 else 0).getbbox()
+        if not bb:
+            raise ValueError("empty idle strip")
+        self.top, self.bottom = bb[1], bb[3]                  # the figure's rows inside a 384-high frame
+        self.k = target_h / float(self.bottom - self.top)
+        self.strips, self.lays = {}, {}
+        first = self.strip("idle")[0]
+        self.w, self.h = first.size
+        self.emotes = {}
+        self.portraits = {"idle": head_portrait(first)}
+        g = self.strip("grin")
+        if g:
+            self.portraits["talk"] = head_portrait(g[len(g) // 2])
+        gl = self.strip("glitch")
+        if gl:
+            self.portraits["angry"] = head_portrait(gl[len(gl) // 2])
+        self.avatar = {"idle": head_portraits(self.strip("idle")[::2])}
+        if g:
+            self.avatar["talk"] = head_portraits(g[::2])
+
+    def has(self, name):
+        return bool(self.lay(name[1:]) if name.startswith("@") else self.strip(name))
+
+    def warm(self):
+        """Build every remaining strip/pose in the background (PIL only, no Tk objects), so her first drag,
+        perch or nap doesn't freeze the pet for a few hundred ms."""
+        def run():
+            for n in self.STRIPS:
+                self.strip(n)
+            for n in ("lay", "lay_awake", "lay_talk", "lay_talk2"):
+                self.lay(n)
+        threading.Thread(target=run, daemon=True).start()
+        return self
+
+    def strip(self, name):
+        with self._lock:
+            return self._strip(name)
+
+    def _strip(self, name):
+        if name in self.strips:
+            return self.strips[name]
+        frames = []
+        path = os.path.join(self.folder, name + ".png")
+        if name in self.STRIPS and os.path.isfile(path):
+            try:
+                im = Image.open(path).convert("RGBA")
+                fw = self.STRIPS[name]
+                n = max(1, im.width // fw)
+                sub = im.crop((0, 0, n * fw, im.height)).getchannel("A").point(lambda v: 255 if v > 127 else 0).getbbox()
+                bottom = max(self.bottom, sub[3]) if sub else self.bottom
+                h = max(2, round((bottom - self.top) * self.k))
+                for i in range(n):
+                    cell = im.crop((i * fw, self.top, (i + 1) * fw, bottom))
+                    if name == "mouth" or cell.getchannel("A").getbbox():
+                        frames.append(scale_to(cell, h))
+            except Exception:
+                log(f"skin strip {name} failed: " + traceback.format_exc())
+                frames = []
+        self.strips[name] = frames
+        return frames
+
+    def lay(self, name):
+        with self._lock:
+            return self._lay(name)
+
+    def _lay(self, name):
+        """A lying-down pose, scaled so her body is about as long as she is tall standing."""
+        if name in self.lays:
+            return self.lays[name]
+        img = None
+        path = os.path.join(self.folder, name + ".png")
+        if os.path.isfile(path):
+            try:
+                im = Image.open(path).convert("RGBA")
+                bb = im.getchannel("A").point(lambda v: 255 if v > 127 else 0).getbbox()
+                if bb:
+                    im = im.crop(bb)
+                    k = self.target_h * 1.15 / im.width
+                    img = scale_to(im, max(2, round(im.height * k)))
+            except Exception:
+                log(f"skin pose {name} failed: " + traceback.format_exc())
+        self.lays[name] = img
+        return img
+
+    def _blinking(self, t):
+        """A blink every 3.5-6 s (varies by cycle so it doesn't look mechanical); True for ~0.25 s."""
+        cyc = int(t / 4.6)
+        start = cyc * 4.6 + ((cyc * 7919) % 13) / 10.0
+        return 0 <= t - start < 0.25, t - start
+
+    def pick(self, anim):
+        for name in self.ANIM.get(anim, [anim]) + ["idle"]:
+            if self.has(name):
+                return name
+        return "idle"
+
+    def frame(self, anim, t, d, phase=None):
+        name = self.pick(anim)
+        if name.startswith("@"):
+            return (name,), self.lay(name[1:])
+        frames = self.strip(name)
+        fps = self.FPS.get(name, 10)
+        if phase is not None and anim in ("walk", "run"):
+            i = int(phase * 4) % len(frames)                      # breathing loop sped up by her steps
+        else:
+            i = int(t * fps) % len(frames)
+        if name in ("idle", "perch") and anim not in ("talk",):
+            blink, bt = self._blinking(t)
+            bname = "blink" if name == "idle" else "perch_blink"
+            b = self.strip(bname) if blink else None
+            if b:
+                j = min(len(b) - 1, int(bt * self.FPS.get(bname, 16)))
+                return (bname, j), b[j]
+        img = frames[i]
+        if anim == "talk":
+            m = self.strip("mouth")
+            if m:
+                j = (int(t * 9) * 7) % len(m)                         # mouth shapes in a speech-like jumble
+                key = ("talk", i, j)
+                cache = self.__dict__.setdefault("_talk", {})
+                if key not in cache:
+                    base = img.copy()
+                    base.alpha_composite(m[j], (0, 0)) if m[j].size == base.size else None
+                    cache[key] = base
+                return key, cache[key]
+        return (name, i), img
+
+
+def fast_crisp(img, cut=170):
+    """crisp() for big images, using only PIL point ops: hard alpha, and no pixel left on the exact key colour.
+    (Edge pixels keep their own colour, which is fine for the one-off intro.)"""
+    img = img.convert("RGBA")
+    r, g, b, a = img.split()
+    a = a.point(lambda v: 255 if v >= cut else 0)
+    key = ImageChops.multiply(ImageChops.multiply(r.point(lambda v: 255 if v == 255 else 0),
+                                                  g.point(lambda v: 255 if v == 0 else 0)),
+                              b.point(lambda v: 255 if v == 255 else 0))
+    out = Image.merge("RGBA", (r, g, b, a))
+    if key.getbbox():
+        out.paste((254, 0, 255, 255), mask=ImageChops.multiply(key, a))
+    return out
+
+
+class MiniFaces:
+    """Her visor face (pet/mini/*.png, 2048px canvases): cropped to one shared box so faces don't jump, kept
+    downscaled in memory, then sized per use (soft edges on a solid background for the chat, crisp hard
+    edges for the color-keyed desktop window)."""
+
+    def __init__(self):
+        self.src, self.cache, self.tried = {}, {}, False
+
+    def load(self):
+        if self.tried:
+            return bool(self.src)
+        self.tried = True
+        dirs = pet_asset_dirs("mini")
+        if not dirs:
+            return False
+        imgs = {}
+        for name in expression.MINI:
+            path = os.path.join(dirs[0], name + ".png")
+            if os.path.isfile(path):
+                try:
+                    im = Image.open(path).convert("RGBA")
+                    imgs[name] = im.reduce(4) if im.width >= 1024 else im
+                except Exception:
+                    log(f"mini face {name} failed: " + traceback.format_exc())
+        boxes = [b for b in (i.getchannel("A").getbbox() for i in imgs.values()) if b]
+        if "idle" not in imgs or not boxes:
+            return False
+        box = (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
+        self.src = {n: i.crop(box) for n, i in imgs.items()}
+        return True
+
+    def get(self, name, h, hard=False, bg=None):
+        if not self.load():
+            return None
+        key = (name, h, hard, bg)
+        if key not in self.cache:
+            im = self.src.get(name) or self.src["idle"]
+            im = im.resize((max(1, round(im.width * h / im.height)), h), Image.LANCZOS)
+            if hard:
+                im = crisp(im)
+            elif bg:
+                back = Image.new("RGBA", im.size, bg)
+                back.alpha_composite(im)
+                im = back.convert("RGB")
+            if len(self.cache) > 80:
+                self.cache.clear()
+            self.cache[key] = im
+        return self.cache[key]
+
+
+MINI_FACES = MiniFaces()
 
 
 def find_pet_dir():
@@ -757,8 +1022,17 @@ def find_pet_dir():
     return None
 
 
-def load_art(dpi):
+def load_art(dpi, skin="capri"):
     target = int(SPRITE_HEIGHT * dpi)
+    if skin != "classic":
+        d = find_skin_dir(skin) or find_skin_dir("capri")
+        if d:
+            try:
+                art = SkinSprites(d, target, os.path.basename(d)).warm()
+                log(f"loaded skin {os.path.basename(d)} from {d}")
+                return art
+            except Exception:
+                log("skin failed, using the classic sheet: " + traceback.format_exc())
     folder = find_pet_dir()
     if folder:
         try:
@@ -898,7 +1172,7 @@ class ChatWindow:
     def photo(self, key):
         img = self.pet.art.portraits.get(key) or self.pet.art.portraits["idle"]
         if key not in self.images:
-            self.images[key] = ImageTk.PhotoImage(img)
+            self.images[key] = ImageTk.PhotoImage(img, master=self.win)
         return self.images[key]
 
     def build(self):
@@ -1096,6 +1370,21 @@ class ChatWindow:
     def tick_avatar(self):
         if not self.alive():
             return
+        pet = self.pet
+        now = time.time()
+        if MINI_FACES.load():                                     # her visor face: blinks, talks, glances, gets mad
+            name = expression.mini_pick(now, talking=now < pet.talk_until, thinking=self.busy,
+                                        angry=self.face_override == "angry",
+                                        watcher=pet.settings.get("skin", "capri") == "watcher",
+                                        emotion=pet.expr[0] if pet.expr else None)
+            k = ("mini", name)
+            if k not in self.images:
+                img = MINI_FACES.get(name, 56, bg=C_PANEL)
+                self.images[k] = ImageTk.PhotoImage(img, master=self.win) if img else None
+            if self.images[k]:
+                self.portrait.config(image=self.images[k])
+            self.win.after(80, self.tick_avatar)
+            return
         av = getattr(self.pet.art, "avatar", None)
         if av and not self.face_override:
             key = "talk" if (self.busy or time.time() < self.pet.talk_until) else "idle"
@@ -1104,7 +1393,7 @@ class ChatWindow:
                 self.av_i = (self.av_i + 1) % len(frames)
                 k = (key, self.av_i)
                 if k not in self.images:
-                    self.images[k] = ImageTk.PhotoImage(frames[self.av_i])
+                    self.images[k] = ImageTk.PhotoImage(frames[self.av_i], master=self.win)
                 self.portrait.config(image=self.images[k])
         self.win.after(160, self.tick_avatar)
 
@@ -1143,8 +1432,11 @@ class ChatWindow:
         persona = (self.persona + " " + mind.context(now, self.pet.doing(), self.pet.activity_phrase())
                    + " " + self.pet.memory.context()).strip()
         offline = None if ai_available() else mind.offline_reply(text, now)
+        tags = self.pet.expressive() and not offline
+        if tags:                                       # her body acts out the reply; the tag is stripped in work()
+            persona += expression.TAG_INSTRUCTION
         snapshot = [{"role": m["role"], "content": m["content"]} for m in self.history[-20:]]
-        threading.Thread(target=self.work, args=(snapshot, persona, offline), daemon=True).start()
+        threading.Thread(target=self.work, args=(snapshot, persona, offline, tags), daemon=True).start()
         self.win.after(100, self.poll)
 
     def show_typing(self):
@@ -1174,17 +1466,21 @@ class ChatWindow:
                 self.bubbles.remove(self.typing_row)
         self.typing_row, self.typing_job = None, None
 
-    def work(self, msgs, persona, offline=None):
+    def work(self, msgs, persona, offline=None, tags=False):
         try:
             if offline:
                 time.sleep(0.6)
-            self.q.put(("ok", offline or llm_reply(msgs, persona)))
+            reply, emo = offline or llm_reply(msgs, persona), None
+            if tags:          # strip BEFORE anything sees it: history, saved json, bubble, voice, a call
+                emo, clean = expression.split_reply(reply)
+                reply = clean or expression.strip_tags(reply) or "..."
+            self.q.put(("ok", reply, emo))
         except Exception as exc:
-            self.q.put(("err", str(exc) or type(exc).__name__))
+            self.q.put(("err", str(exc) or type(exc).__name__, None))
 
     def poll(self):
         try:
-            kind, text = self.q.get_nowait()
+            kind, text, emo = self.q.get_nowait()
         except queue.Empty:
             if self.alive():
                 self.win.after(100, self.poll)
@@ -1198,7 +1494,9 @@ class ChatWindow:
             self.save_history()
             lbl = self.add_bubble("assistant", text, animate=True)
             self.typewrite(lbl, text, 0)
-            self.pet.react("happy")
+            self.pet.icon = None                                   # clear the "?" from react("think")
+            if not (emo and self.pet.express(emo)):
+                self.pet.react("happy")
             self.pet.speak(text, priority=True, call=self.pet.take_route())
             try:
                 if self.win.state() != "normal":                  # a voice command: show it above her instead
@@ -1243,8 +1541,8 @@ class ChatWindow:
             self.system_line("/focus [min]  /remind <min> <text>  /name <you>  /mood  /key <api key>  "
                              "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
                              "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /tp  /dance  "
-                             "/sleep  /calm  /watch  /look  /ailines  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /remember  /facts  /feel  "
-                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /size  /neon  /boot  /hear  /call  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
+                             "/sleep  /calm  /watch  /look  /ailines  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /note  /notes  /remember  /facts  /feel  "
+                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /size  /skin  /tiny  /intro  /express  /neon  /boot  /hear  /call  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
@@ -1387,14 +1685,10 @@ class ChatWindow:
                     self.system_line(line)
         elif cmd == "/did":
             today = time.strftime("%Y-%m-%d")
-            ok, name, streak = p.habits.check(int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0, today)
+            ok, name = p.habits.check(int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0, today)
             if ok:
-                extra = ""
-                if streak in (7, 30):
-                    extra = f" {streak} days in a row. Nova!"
-                    p.spawn_confetti(40)
                 p.save_settings()
-                self.system_line(f"{name}: done! {streak}-day streak.{extra}")
+                self.system_line(f"{name}: done.")
                 p.react("happy")
             elif name:
                 self.system_line(f"You already did {name} today.", err=True)
@@ -1412,6 +1706,21 @@ class ChatWindow:
         elif cmd == "/facts":
             for line in p.memory.lines():
                 self.system_line(line)
+        elif cmd == "/note":
+            body = text.split(None, 1)[1] if len(parts) > 1 else ""
+            saved = p.add_note(body)
+            self.system_line(f"Noted: {saved}" if saved else
+                             ("Already in your notes." if body.strip() else "What should I note? /note <text>"),
+                             err=not saved)
+        elif cmd == "/notes":
+            if len(parts) > 2 and parts[1].lower() in ("rm", "remove", "del") and parts[2].isdigit():
+                gone = p.notes.remove(int(parts[2]))
+                p.save_settings()
+                self.system_line(f"Deleted note: {gone}" if gone else "Which one? /notes shows the numbers.",
+                                 err=not gone)
+            else:
+                for line in p.notes.lines(text.split(None, 1)[1] if len(parts) > 1 else ""):
+                    self.system_line(line)
         elif cmd == "/feel":
             today = time.strftime("%Y-%m-%d")
             if len(parts) > 1 and parts[1].isdigit() and 1 <= int(parts[1]) <= 5:
@@ -1549,7 +1858,7 @@ class ChatWindow:
                 self.system_line("Tasks are off.")
             else:
                 self.system_line("Tasks: " + ("on" if p.settings.get("agent") else "off")
-                                 + "  (/agent on | off).  Needs Full control and a Claude key.  Then: /do <task>")
+                                 + "  (/agent on | off).  Needs Full control and a Claude or Gemini key.  Then: /do <task>")
         elif cmd == "/talk":
             p.start_listening()
         elif cmd == "/open" or cmd == "/search":
@@ -1606,6 +1915,21 @@ class ChatWindow:
                 self.system_line("Launch animation: " + arg)
             else:
                 p.start_boot(first=arg == "first", greet=False)
+        elif cmd == "/intro":
+            arg = parts[1].lower() if len(parts) > 1 else ""
+            if arg in ("on", "off", "once"):
+                p.settings["intro"] = arg
+                p.save_settings()
+                self.system_line("Launch intro: " + {
+                    "on": "every launch",
+                    "once": "only on the very first launch (already happened here, so: not again)"
+                    if p.settings.get("booted") else "only on the very first launch",
+                    "off": "off (the beam animation plays instead; /boot off for none)"}[arg])
+            elif p.intro_available():
+                p.start_intro(greet=False)
+                self.system_line(f"Replaying the intro. (/intro on | once | off  - now: {p.intro_mode()})")
+            else:
+                self.system_line("Her intro needs the new skin (/skin capri) and pet/intro art.", err=True)
         elif cmd == "/neon":
             arg = parts[1].lower() if len(parts) > 1 else ""
             if arg == "outline":
@@ -1634,6 +1958,31 @@ class ChatWindow:
         elif cmd == "/powers":
             for line in presets.table(p.settings):
                 self.system_line(line)
+        elif cmd == "/express":
+            name = expression.canonical(parts[1]) if len(parts) > 1 else None
+            if name:
+                ok = p.express(name, forced=True)
+                self.system_line(f"{name}" if ok else "She can't act it out right now (busy, moving or asleep).",
+                                 err=not ok)
+            else:
+                self.system_line("Expressions: " + ", ".join(expression.EMOTIONS) + "   /express <name> to preview. "
+                                 "Her AI lines pick one by themselves" + ("" if p.expressive() else
+                                                                          " (off: Settings > Size & look)") + ".")
+        elif cmd == "/tiny":
+            mode = parts[1].lower() if len(parts) > 1 else ""
+            if mode in ("on", "off", "auto"):
+                p.set_tiny(mode)
+                self.system_line(f"Tiny mode: {mode}")
+            else:
+                self.system_line(f"Tiny mode: {p.settings.get('tiny', 'auto')}   /tiny on | off | auto  (auto = just her "
+                                 "face while you game or run a focus timer)")
+        elif cmd == "/skin":
+            name = parts[1].lower() if len(parts) > 1 else ""
+            if name and p.set_skin(name):
+                self.system_line(f"Skin: {SKIN_LABELS.get(name, name)}")
+            else:
+                self.system_line("Skins: " + ", ".join(p.available_skins()) + f"  (now: {p.settings.get('skin', 'capri')})"
+                                 + "   /skin <name>  or right-click me > Skins", err=bool(name))
         elif cmd == "/size":
             arg = " ".join(parts[1:]).lower() if len(parts) > 1 else ""
             if arg in ("auto on", "auto off", "auto"):
@@ -1888,13 +2237,12 @@ class SettingsWindow:
     def pick_hands(self):
         value = self.hands_var.get()
         if value == "full" and self.pet.hands.level != "full":
-            from tkinter import messagebox
-            ok = messagebox.askyesno(
-                "Turn on Full control?",
+            ok = self.pet.ask_once(
+                "full", "Turn on Full control?",
                 "Full control lets Capri press any keys, type text and click in ANY app when you tell her to, "
                 "and run any reflexes you switch on.\n\nA wrong command can send a message, close something or "
                 "lose work. She never acts because of what the AI says, and you can lower this at any time.\n\n"
-                "Turn on Full control?", parent=self.win, default="no", icon="warning")
+                "Turn on Full control?", parent=self.win)
             if not ok:
                 self.hands_var.set(self.pet.hands.level)
                 return
@@ -1941,6 +2289,8 @@ class SettingsWindow:
                 ("spicy", "Spicy", "She'll tell you that was ass. Mild swearing, no slurs.")):
             self.radio(box, label, self.roast_var, value, self.pick_roast, note)
         self.check(box, "Stay small and quiet while a game is in front", "game_quiet", True)
+        self.check(box, "Go quiet during calls and meetings (Windows: Zoom/Meet/Teams in front, or Discord, Zoom "
+                        "etc. using your mic)", "meeting_quiet", True)
         tk.Frame(box, bg=C_PANEL, height=6).pack()
 
     def pick_roast(self):
@@ -2027,6 +2377,11 @@ class SettingsWindow:
                 ui.NeonRadio(nrow, text=name.title(), variable=self.neon_var, value=name, font=(self.fam, 8),
                              swatch=None if name == "off" else neon.hex_of(neon.COLORS[name]),
                              command=lambda n=name: pet.set_neon(n)).pack(side="left", padx=(0, 10))
+        self.check(box, "Act out how she feels (poses, little moves and icons that match what she says)",
+                   "expressive", True)
+        self.check(box, "Face close-ups next to her speech bubble while she feels something", "faces", True)
+        self.check(box, "Cut-in panels for big moments (laughing, hyped, shocked; at most every 5 minutes)",
+                   "cutins", True)
         self.check(box, "Glowing outline around her (off by default; needs a neon colour above)", "outline", False,
                    lambda v: pet.clear_sprite_caches())
         tk.Frame(box, bg=C_PANEL, height=4).pack()
@@ -2464,6 +2819,13 @@ class Capri:
         self.todos = fun.Todos(self.settings.setdefault("todos", []))
         self.habits = habits.Habits(self.settings.setdefault("habits", []))
         self.memory = memory.Memory(self.settings.setdefault("memory", []))
+        self.notes = notes.Notes(self.settings.setdefault("notes", []))
+        done = self.settings.setdefault("consented", {})              # already switched on = already agreed
+        for key, on in (("ledges", self.settings.get("ledges")), ("vision", self.settings.get("ai_vision")),
+                        ("hear", self.settings.get("hear")), ("wake", self.settings.get("wake")),
+                        ("agent", self.settings.get("agent")), ("full", self.settings.get("hands") == "full")):
+            if on:
+                done[key] = True
         self.daylog = daylog.DayLog(self.settings.setdefault("daylog", {}))
         self.journal = journal.Journal(self.settings.setdefault("journal", []))
         self.msgs = []
@@ -2484,6 +2846,7 @@ class Capri:
         self.canvas = tk.Canvas(self.root, width=self.Wd, height=self.Hd, highlightthickness=0, bd=0)
         self.canvas.pack()
         self.setup_transparency()
+        self.set_app_icon()
         self.win32 = Win32()
         self.sw, self.sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
 
@@ -2503,6 +2866,8 @@ class Capri:
         self.sx = self.sy = self.sxt = self.syt = 1.0
         self.glitch = 0.0
         self.hop_y = 0.0
+        self.step_ph, self.walk_k, self.turn_until = 0.0, 1.0, 0.0     # walking: step clock, pace, turn pause
+        self.facing, self.turn_squash = None, 0.0                    # quick squash when she visibly turns
         self.surf = None            # (id, left_at_last_seen) when standing on a window
         self.surfaces = []
         self.surf_check = 0.0
@@ -2531,12 +2896,15 @@ class Capri:
         self.simon_win, self.last_watch, self.next_memory_cb = None, now, now + 7200
         self.scanner, self.ledges, self.ledge_counter, self.ledge_next = ledges.Scanner(), [], 0, 0.0
         self.game, self.game_seen, self.game_manual, self.reactor, self.calm_before_game = None, now, False, None, None
+        self.meeting, self.calm_before_meeting = meeting.Detector(), None
         self.persona_text = read_first(["persona.txt"]) or DEFAULT_PERSONA
         self.ai_budget = speech.Budget(per_min=14, per_day=int(self.settings.get("ai_daily_cap", 800)),
                                        store=self.settings.setdefault("ai_day", {}))
         self.ai_results, self.ai_pending, self.ai_seq, self.ai_inflight = queue.Queue(), {}, 0, 0
         self.ai_fails, self.ai_pause_until = 0, 0.0
         self.recent_lines = collections.deque(maxlen=8)
+        self.expr, self.expr_gate = None, expression.Gate()
+        self.cutin, self.last_cutin, self.panel_cache, self._face_stems = None, -1e9, {}, None
         self.agent = None
         self.agent_events = queue.Queue()
         self.brain_events, self.ears_events = queue.Queue(), queue.Queue()
@@ -2551,6 +2919,7 @@ class Capri:
         self.pc_events, self.hear_install_events = queue.Queue(), queue.Queue()
         self.music_talk_at, self.pending_hear, self.hear_installing = 0.0, False, False
         self.boot = None
+        self.intro = None
         self.mono = pick_font(self.root, "Consolas", "Menlo", "DejaVu Sans Mono", "Courier New")
         self.trail = collections.deque(maxlen=40)
         self.pil_cache, self.ghost_cache, self._last_ck = {}, {}, None
@@ -2667,13 +3036,15 @@ class Capri:
         if state in ("idle", "perch"):
             self.angle_t, self.anim = 0.0, "idle"
         elif state == "sleep":
-            self.angle_t, self.anim = 90.0 * self.dir, "sleep"
+            self.angle_t, self.anim = (0.0 if getattr(self.art, "lies", False) else 90.0 * self.dir), "sleep"
             self.say("zzz...", 2)
         elif state == "lounge":
-            self.angle_t, self.anim = 90.0 * self.dir, "lounge"
+            self.angle_t, self.anim = (0.0 if getattr(self.art, "lies", False) else 90.0 * self.dir), "lounge"
         elif state == "walk":
             self.anim = "walk"
             self.angle_t = 0.0
+            self.walk_k = self.rng.uniform(0.85, 1.15)              # some walks are strolls, some are brisk
+            self.turn_until = 0.0
         elif state == "dance":
             self.anim = "dance"
             self.angle_t = 0.0
@@ -2710,7 +3081,7 @@ class Capri:
         if scale not in self.art_cache:
             if len(self.art_cache) >= 5:
                 self.art_cache.pop(next(iter(self.art_cache)))
-            self.art_cache[scale] = load_art(self.dpi * scale)
+            self.art_cache[scale] = load_art(self.dpi * scale, self.settings.get("skin", "capri"))
         return self.art_cache[scale]
 
     def size_factor(self, now):
@@ -2733,6 +3104,36 @@ class Capri:
         self.parts = []
         self._geo = None
         self.place()
+        return True
+
+    def tiny_on(self):
+        """Tiny mode: only her visor face. 'on' always, 'auto' (default) while a game or focus timer runs."""
+        mode = self.settings.get("tiny", "auto")
+        if mode == "on":
+            return True
+        return mode == "auto" and (bool(self.game) or (self.timer_mode == "focus" and bool(self.timer_end)))
+
+    def set_tiny(self, mode):
+        self.settings["tiny"] = mode
+        self.save_settings()
+        self.clear_sprite_caches()
+        self.say({"on": "Tiny mode.", "off": "Full size again.", "auto": "Tiny while you game or focus."}[mode], 3,
+                 speak=None)
+
+    def available_skins(self):
+        return [k for k in SKINS if k == "classic" or find_skin_dir(k)]
+
+    def set_skin(self, name, announce=True):
+        if name not in self.available_skins():
+            return False
+        self.settings["skin"] = name
+        self.save_settings()
+        self.art_cache.clear()
+        self.angle_t = 0.0 if self.state in ("sleep", "lounge") and name != "classic" else self.angle_t
+        self.apply_size(force=True)
+        if announce:
+            self.say({"capri": "New look. Like it?", "watcher": "...watching.",
+                      "classic": "Old school. Okay."}.get(name, "New look."), 4, speak=None)
         return True
 
     def set_size(self, scale, announce=True):
@@ -2759,6 +3160,8 @@ class Capri:
         self.last_active = time.time()
         if self.state in ("sleep", "lounge"):
             self.angle_t = 0.0
+            if self.state == "sleep":
+                self.wake_until = time.time() + 0.9                  # skins with a wake-up stretch play it
             self.go("idle", 2.0)
 
     def hop(self, power=9.0):
@@ -2829,6 +3232,110 @@ class Capri:
             self.set_emote("angry", 2.0)
             self.set_icon("anger", 2.0)
             self.anim = "fail"
+
+    def expressive(self):
+        return bool(self.settings.get("expressive", True))
+
+    def express(self, name, forced=False, secs=2.2):
+        """Act out a feeling in place: a pose, a small motion, maybe an icon. Never moves her across the screen,
+        and stays still while she's calm (calls, games), doing a task, being dragged, teleporting or asleep."""
+        if not name or name not in expression.EMOTIONS or not (forced or self.expressive()):
+            return False
+        if self.agent is not None or self.state not in ("idle", "perch", "walk", "curious"):
+            return False
+        if self.calm and not forced:
+            return False
+        now = time.time()
+        if not self.expr_gate.allow(now, name, forced):
+            return False
+        if self.state in ("walk", "curious"):
+            self.go("perch" if self.surf else "idle", secs + 0.5)
+        self.expr = (name, now, now + secs)
+        if (name in expression.CUTINS and self.settings.get("cutins", True)
+                and (forced or now - self.last_cutin >= expression.CUTIN_GAP)):
+            self.cutin, self.last_cutin = (expression.CUTINS[name], now), now
+        icon = expression.EMOTIONS[name][2]
+        if icon:
+            self.set_icon(icon, min(secs, 1.8))
+        return True
+
+    def face_stems(self):
+        if self._face_stems is None:
+            self._face_stems = {f.rsplit(".", 1)[0] for d in pet_asset_dirs("faces") for f in os.listdir(d)
+                                if f.lower().endswith((".png", ".webp"))}
+        return self._face_stems
+
+    def panel(self, sub, stem, w, h):
+        """A face / cut-in picture cropped to w:h, scaled and hard-edged (crisp) for the color-key window."""
+        key = (sub, stem, w, h)
+        if key not in self.panel_cache:
+            ph = None
+            for d in pet_asset_dirs(sub):
+                path = next((os.path.join(d, stem + e) for e in (".png", ".webp") if os.path.isfile(os.path.join(d, stem + e))),
+                            None)
+                if path:
+                    try:
+                        im = Image.open(path).convert("RGBA")
+                        r = w / float(h)
+                        if im.width / float(im.height) > r:
+                            cw = int(im.height * r)
+                            im = im.crop(((im.width - cw) // 2, 0, (im.width - cw) // 2 + cw, im.height))
+                        else:
+                            chh = int(im.width / r)
+                            im = im.crop((0, (im.height - chh) // 2, im.width, (im.height - chh) // 2 + chh))
+                        ph = ImageTk.PhotoImage(crisp(im.resize((w, h), Image.LANCZOS)), master=self.root)
+                    except Exception:
+                        log(f"panel {sub}/{stem} failed: " + traceback.format_exc())
+                    break
+            if len(self.panel_cache) > 40:
+                self.panel_cache.clear()
+            self.panel_cache[key] = ph
+        return self.panel_cache[key]
+
+    def draw_feelings(self, c, now, lfx, lfy, top, bub):
+        """Cut-in panel (rare, big moments) across her, and a face close-up by her speech bubble."""
+        if self.tiny_on():                                # tiny mode: the mini face already shows it
+            self.cutin = None
+            return
+        acc = self.accent()
+        if self.cutin:
+            stem, t0 = self.cutin
+            off = expression.cutin_slide(now - t0)
+            if off is None or self.agent is not None or self.state not in ("idle", "perch"):
+                self.cutin = None
+            else:
+                w = self.Wd - 16
+                h = int(w / 3)
+                ph = self.panel("cutins", stem, w, h)
+                if ph:
+                    x, y = 8 + off * self.Wd, max(2, int(lfy - self.fh * 0.62 - h / 2))
+                    c.create_rectangle(x - 3, y - 3, x + w + 2, y + h + 2, fill=C_BLACK, outline=acc, width=2)
+                    c.create_image(x, y, image=ph, anchor="nw")
+        if self.expr and self.settings.get("faces", True) and self.state in ("idle", "perch"):
+            stem = expression.face_for(self.expr[0], self.face_stems())
+            size = int(44 * self.dpi)
+            ph = self.panel("faces", stem, size, size) if stem else None
+            if ph:
+                if bub:
+                    x, y = bub[0] - 4, bub[1] - size - 6              # sits on top of the bubble, never over text
+                else:
+                    x, y = lfx - self.fw * 0.5 - size * 0.3, top - size - 4
+                x, y = min(max(3, x), self.Wd - size - 3), max(3, y)
+                c.create_rectangle(x - 2, y - 2, x + size + 1, y + size + 1, fill=C_BLACK, outline=acc, width=2)
+                c.create_image(x, y, image=ph, anchor="nw")
+
+    def update_expression(self, now):
+        if not self.expr:
+            return
+        name, t0, t1 = self.expr
+        if now >= t1 or self.state not in ("idle", "perch"):
+            self.expr = None
+            self.hop_y, self.angle_t = 0.0, 0.0
+            return
+        dy, ang, sx, sy = expression.motion(expression.EMOTIONS[name][1], now - t0, t1 - t0, self.dpi, self.dir)
+        self.hop_y, self.angle_t = dy, ang
+        self.sx *= sx
+        self.sy *= sy
 
     def set_emote(self, name, secs):
         if name in self.art.emotes:
@@ -3010,10 +3517,14 @@ class Capri:
         self.angle = self.angle_t = 0.0
         self.go("tp_in", 0.5)
 
+    def stride(self):
+        """Pixels per step, in proportion to her size, so steps match her speed at any size."""
+        return max(8.0, self.fw * 0.3)
+
     def land(self, surface=None):
+        self.land_squash = motion.landing_squash(self.vy, self.dpi)    # a long fall lands harder than a hop
         self.vy = 0.0
         self.vx *= 0.2
-        self.land_squash = 1.0
         if surface:
             self.surf = (surface[4], surface[0])
             self.fy = surface[1]
@@ -3035,11 +3546,22 @@ class Capri:
                 self.anim = "idle"
                 self.choose_next()
         elif st == "walk":
-            self.fx += self.dir * sp
-            if self.fx < lo or self.fx > hi:
+            if now < self.turn_until:                           # stopped at an edge, turning around
+                self.anim, f = "idle", 0.0
+            else:
+                self.anim = "walk"
+                f = motion.walk_factor(age, self.state_dur) * motion.edge_slow(self.fx, lo, hi, self.dir, self.fw * 0.6)
+                if self.turn_until:
+                    f *= motion.smoothstep((now - self.turn_until) / motion.RAMP)     # speed up again after turning
+            d = self.dir * sp * self.walk_k * f
+            self.fx += d
+            if (self.fx >= hi and self.dir > 0) or (self.fx <= lo and self.dir < 0):     # walked into an edge
                 self.fx = min(max(self.fx, lo), hi)
                 self.dir *= -1
-            self.hop_y = -abs(math.sin(now * 9)) * 3 * self.dpi
+                self.turn_until = now + motion.TURN_PAUSE
+            self.fx = min(max(self.fx, lo), hi)
+            self.step_ph = motion.step_phase(self.step_ph, d, self.stride())
+            self.hop_y = motion.bob(self.step_ph, 3 * self.dpi)
             if age > self.state_dur:
                 self.hop_y = 0
                 self.go("perch" if self.surf else "idle", self.rng.uniform(2, 5))
@@ -3055,9 +3577,12 @@ class Capri:
             target = mx + (-1 if self.fx > mx else 1) * self.fw * 0.9
             if abs(target - self.fx) > 20:
                 self.dir = 1 if target > self.fx else -1
-                self.fx = min(max(self.fx + self.dir * sp * 1.8, lo), hi)
+                d = self.dir * sp * 1.8 * min(1.0, abs(target - self.fx) / (self.fw * 0.8) + 0.3)   # ease in
+                nx = min(max(self.fx + d, lo), hi)
+                self.step_ph = motion.step_phase(self.step_ph, nx - self.fx, self.stride())
+                self.fx = nx
                 self.anim = "walk"
-                self.hop_y = -abs(math.sin(now * 12)) * 3 * self.dpi
+                self.hop_y = motion.bob(self.step_ph, 3 * self.dpi)
             else:
                 self.hop_y = 0
                 self.anim = "idle"
@@ -3131,6 +3656,8 @@ class Capri:
                 tx = mx + math.cos(self.orbit_a) * 170 * self.dpi
                 ty = my + math.sin(self.orbit_a) * 90 * self.dpi - self.fh * 0.4
                 done = age > (self.state_dur or 5.5)
+            elif not self.fly_pts:                               # nowhere to go (shouldn't happen): just drop
+                return self.go("air")
             else:
                 tx, ty = self.fly_pts[0]
             dx, dy = tx - self.fx, ty - self.fy
@@ -3219,14 +3746,17 @@ class Capri:
         # smoothing
         self.angle += (self.angle_t - self.angle) * min(1.0, 0.22 * dt * 25)
         self.land_squash = max(0.0, self.land_squash - dt * 5)
+        self.turn_squash = max(0.0, self.turn_squash - dt * 8)
         self.sy = 1.0 - 0.16 * self.land_squash
-        self.sx = 1.0 + 0.12 * self.land_squash
+        self.sx = (1.0 + 0.12 * self.land_squash) * (1.0 - 0.3 * motion.smoothstep(self.turn_squash))
         if self.state in ("tp_out", "tp_in"):
             self.sx = max(0.12, 1.0 - 0.9 * self.glitch ** 1.5)
             self.sy = 1.0 + 0.12 * self.glitch
+        self.update_expression(now)
         self.update_busy(now)
         self.update_twitch(now)
         self.update_boot(now)
+        self.update_intro(now)
         self.update_particles(dt)
         self.scheduled(now)
         self.place()
@@ -3323,16 +3853,14 @@ class Capri:
     def enable_ledges(self, parent=None, ask=True):
         """Switch screen ledges on, but only after the user agrees to what it does. Returns True if on."""
         if ask:
-            from tkinter import messagebox
-            if not messagebox.askyesno(
-                    "Let Capri look at your screen?",
+            if not self.ask_once(
+                    "ledges", "Let Capri look at your screen?",
                     "To find boxes to sit on, Capri takes a screenshot every few seconds and looks for box "
                     "edges, entirely on your computer.\n\n* The screenshot lives in memory for a moment, then "
                     "it's thrown away.\n* Nothing is saved to disk or sent anywhere.\n* She pauses on pages "
                     "that look private (banking, passwords, private browsing).\n\nAnything on your screen is "
                     "briefly visible to her code, so only turn this on if you're comfortable with that. You can "
-                    "switch it off any time.\n\nTurn on screen ledges?",
-                    parent=parent, default="no", icon="warning"):
+                    "switch it off any time.\n\nTurn on screen ledges?", parent=parent):
                 return False
         self.settings["ledges"] = True
         self.ledge_next = 0.0
@@ -3401,21 +3929,22 @@ class Capri:
                                 "expired": False}
         self.ai_inflight += 1
         system = self.ai_system(now)
-        user = speech.user_prompt(kind, facts, list(self.recent_lines))
-        threading.Thread(target=self._ai_worker, args=(rid, system, user), daemon=True).start()
+        tags = self.expressive()
+        user = speech.user_prompt(kind, facts, list(self.recent_lines), tags=tags)
+        threading.Thread(target=self._ai_worker, args=(rid, system, user, tags), daemon=True).start()
 
-    def _ai_worker(self, rid, system, user):
+    def _ai_worker(self, rid, system, user, tags=False):
         try:
-            text = speech.sanitize(llm_reply([{"role": "user", "content": user}], system, max_tokens=80,
-                                             model=LINE_MODEL))
-            self.ai_results.put((rid, text, ""))
+            raw = llm_reply([{"role": "user", "content": user}], system, max_tokens=80, model=LINE_MODEL)
+            emo, raw = expression.parse_tag(raw) if tags else (None, raw)   # the tag is never shown or spoken
+            self.ai_results.put((rid, speech.sanitize(raw), "", emo))
         except Exception as exc:
-            self.ai_results.put((rid, "", str(exc) or type(exc).__name__))
+            self.ai_results.put((rid, "", str(exc) or type(exc).__name__, None))
 
     def drain_ai(self, now):
         while True:
             try:
-                rid, text, err = self.ai_results.get_nowait()
+                rid, text, err, emo = self.ai_results.get_nowait()
             except queue.Empty:
                 break
             self.ai_inflight = max(0, self.ai_inflight - 1)
@@ -3434,6 +3963,7 @@ class Capri:
             line = text or p["fallback"]
             if line:
                 self.say(line, p["secs"], speak=p["speak"])
+                self.express(emo if text else expression.for_mood(self.mind.mood(now)))
             if text:
                 self.recent_lines.append(text)
         for p in self.ai_pending.values():
@@ -3441,6 +3971,7 @@ class Capri:
                 p["expired"] = True
                 if p["fallback"]:
                     self.say(p["fallback"], p["secs"], speak=p["speak"])
+                    self.express(expression.for_mood(self.mind.mood(now)))
         while True:
             try:
                 text, err = self.look_results.get_nowait()
@@ -3457,9 +3988,8 @@ class Capri:
     def enable_vision(self, parent=None, ask=True):
         """Switch the AI spotter on, but only after the user agrees to what it does. Returns True if on."""
         if ask:
-            from tkinter import messagebox
-            if not messagebox.askyesno(
-                    "Let Capri watch your screen with AI?",
+            if not self.ask_once(
+                    "vision", "Let Capri watch your screen with AI?",
                     "While she's watching, Capri takes a small shrunken screenshot every few seconds (only when the "
                     "screen changed) and SENDS it to your AI provider (Claude or Gemini, whichever key you use) so "
                     "the AI can see what's happening and react.\n\n* It can include ANYTHING visible on your "
@@ -3468,7 +3998,7 @@ class Capri:
                     "and while you're away.\n* It uses your API credits: very roughly $1-3 an hour with Claude "
                     "(there is a daily limit).\n* It starts by itself when a game is in front. /watch on works "
                     "for anything else.\n\nOnly turn this on if you're comfortable with that. You can switch it "
-                    "off any time. Turn on AI screen watching?", parent=parent, default="no", icon="warning"):
+                    "off any time. Turn on AI screen watching?", parent=parent):
                 return False
         self.settings["ai_vision"] = True
         self.save_settings()
@@ -3476,6 +4006,27 @@ class Capri:
         return True
 
     # ---- local AI and voice input
+    def ask_once(self, key, title, text, parent=None):
+        """No nagging: a feature that opens your mic or screen explains itself ONCE, the first time ever.
+        After a yes it never asks again. Per-action 'are you sure?' popups don't exist anymore."""
+        done = self.settings.setdefault("consented", {})
+        if done.get(key):
+            return True
+        from tkinter import messagebox
+        if not messagebox.askyesno(title, text + "\n\n(You'll only see this once.)", parent=parent, default="no",
+                                   icon="warning"):
+            return False
+        done[key] = True
+        self.save_settings()
+        return True
+
+    def add_note(self, text):
+        """Save a note (typed or dictated). Text only, kept in settings.json on this PC; never sent to the AI."""
+        saved = self.notes.add(text, time.strftime("%m-%d %H:%M"))
+        if saved:
+            self.save_settings()
+        return saved
+
     def notify(self, text, err=False, secs=6.0):
         self.say(text, secs, speak=None)
         if self.chat and self.chat.alive():
@@ -3594,20 +4145,19 @@ class Capri:
 
     # ---- hearing the PC's own audio
     def enable_hear(self, parent=None, ask=True):
-        from tkinter import messagebox
         if sys.platform == "darwin":
             self.notify("macOS can't share its audio without a helper (like BlackHole), so I can't hear your Mac.",
                         err=True)
             return False
-        if ask and not messagebox.askyesno(
-                "Let Capri hear your PC?",
+        if ask and not self.ask_once(
+                "hear", "Let Capri hear your PC?",
                 "While this is on, Capri listens to whatever your PC is PLAYING (music, videos, game sound, voice "
                 "calls).\n\n* The audio is kept only in memory (the last minute), never saved to disk.\n* It's "
                 "turned into text on your computer, only when you ask (\"what did they just say\", \"summarize "
                 "this\"). Nothing is sent anywhere unless you ask for a summary, which sends the TEXT to your AI.\n"
                 "* A call can include other people's voices: tell them if that matters.\n* She uses the beat to dance "
                 "to music. She pauses on banking/password windows and while she's talking.\n\nTurn on hearing your PC?",
-                parent=parent, default="no", icon="warning"):
+                parent=parent):
             return False
         self.settings["hear"] = True
         self.save_settings()
@@ -3779,17 +4329,15 @@ class Capri:
             return True
         local = BRAIN["mode"] == "local" or (BRAIN["mode"] == "auto" and not read_api_key())
         if ask:
-            from tkinter import messagebox
-            if not messagebox.askyesno(
-                    "Let Capri talk in your call?",
+            if not self.ask_once(
+                    "call", "Let Capri talk in your call?",
                     "Capri will listen to your voice call through your PC's audio and answer your friends OUT LOUD in "
                     "the call.\n\n* Your friends' voices are turned into text on your PC and never saved.\n* "
                     + ("The local AI writes her answers, so nothing leaves your PC.\n" if local else
                        "The recent TEXT of the conversation is sent to your AI provider to write her answers.\n")
                     + "* She answers only when someone says her name, a few times a minute at most.\n* She "
                     "announces herself to the call when she starts: tell your friends first.\n* Stop her any time "
-                    "with /call off or by saying 'leave the call'.\n\nStart call mode?",
-                    parent=parent, default="no", icon="warning"):
+                    "with /call off or by saying 'leave the call'.\n\nStart call mode?", parent=parent):
                 return False
         if join:
             okj, whyj = self.agent_ready()
@@ -3931,13 +4479,12 @@ class Capri:
             return False
         lines = presets.risky(name, self.settings)
         if ask and lines:
-            from tkinter import messagebox
-            if not messagebox.askyesno(
-                    f"Switch to {presets.LABELS[name]}?",
+            if not self.ask_once(
+                    "preset_" + name, f"Switch to {presets.LABELS[name]}?",
                     "This turns ON:\n\n* " + "\n* ".join(lines) + "\n\nThings she hears or sees can be misread by "
-                    "the AI, so don't hand her anything you can't undo. Tasks still ask before she types, she "
-                    "stops when you move the mouse, and you can flip any single switch afterwards in Settings.\n\n"
-                    f"Switch to {presets.LABELS[name]}?", parent=parent, default="no", icon="warning"):
+                    "the AI, so don't hand her anything you can't undo. She stops the moment you move the mouse, "
+                    "and you can flip any single switch afterwards in Settings.\n\n"
+                    f"Switch to {presets.LABELS[name]}?", parent=parent):
                 return False
         cfg = presets.PRESETS[name]
         self.hands.set_level(cfg["hands"])
@@ -3978,8 +4525,8 @@ class Capri:
                 notes.append("installing voice input so I can hear you")
         else:
             self.stop_wake()
-        if (cfg["agent"] or cfg["ai_vision"]) and not (read_api_key() and detect_provider(read_api_key()) == "anthropic"):
-            notes.append("tasks and AI screen-watching need a Claude key (Settings)")
+        if (cfg["agent"] or cfg["ai_vision"]) and not read_api_key():
+            notes.append("tasks and AI screen-watching need a Claude or Gemini key (Settings)")
         self.notify(f"Preset: {presets.LABELS[name]}." + (" " + "; ".join(notes).capitalize() + "." if notes else ""),
                     secs=8)
         win = self.settings_win
@@ -4031,19 +4578,18 @@ class Capri:
             self.say(text[:220], 14, speak="priority")
 
     def enable_wake(self, parent=None):
-        from tkinter import messagebox
         if not listen.installed():
             self.notify("I need ears first. Type /getears and I'll install voice input.", err=True)
             return False
-        if not messagebox.askyesno(
-                "Let Capri listen for \"Hey Capri\" and \"Choom\"?",
+        if not self.ask_once(
+                "wake", "Let Capri listen for \"Hey Capri\" and \"Choom\"?",
                 "While this is on, your MICROPHONE stays open all the time (Windows shows its mic indicator).\n\n"
                 "* Everything you say is turned into text ON YOUR COMPUTER. Nothing is sent anywhere and "
                 "nothing is saved.\n* Anything that doesn't START with \"Hey Capri\", \"Capri\", \"Hey Choom\" or "
                 "\"Choom\" is thrown away immediately.\n* If you chat with friends and say \"choom\" at the start of a "
                 "sentence she WILL wake up and answer. Turn this off (right-click her) in calls.\n* It uses some "
-                "CPU whenever someone talks near the mic.\n* Tasks she hears still ask for your OK first.\n\n"
-                "Turn on wake word listening?", parent=parent, default="no", icon="warning"):
+                "CPU whenever someone talks near the mic.\n* Tasks she hears start right away (move the mouse to stop "
+                "her).\n\nTurn on wake word listening?", parent=parent):
             return False
         self.settings["wake"] = True
         self.save_settings()
@@ -4153,6 +4699,22 @@ class Capri:
             if kind == "focus":
                 self.start_focus()
                 continue
+            if kind == "note":
+                if not body:
+                    self.say("What should I note? Say 'note that' and then the note.", 6, speak="priority")
+                elif self.add_note(body):
+                    self.react("happy")
+                    self.notify(f"Noted: {body[:120]}", secs=5)
+                    self.speak("Noted.", priority=True)
+                else:
+                    self.say("That's already in your notes.", 4, speak="priority")
+                continue
+            if kind == "notes":
+                self.say(self.notes.spoken(body), 9, speak="priority")
+                if self.chat and self.chat.alive():
+                    for line in self.notes.lines(body):
+                        self.chat.system_line(line)
+                continue
             if kind == "remind":
                 mins, what = listen.parse_reminder(body) or (None, "")
                 if mins:
@@ -4193,8 +4755,6 @@ class Capri:
             return False, "I'm already doing something. Click me or /stop to stop it."
         if not read_api_key():
             return False, "I need an AI key first (Settings)."
-        if detect_provider(read_api_key()) != "anthropic":
-            return False, "Doing tasks needs a Claude key (sk-ant...). Gemini isn't supported for this yet."
         if self.hands.level != "full":
             return False, "That needs Full control in Settings."
         if not self.settings.get("agent"):
@@ -4202,16 +4762,16 @@ class Capri:
         return True, ""
 
     def enable_agent(self, parent=None):
-        from tkinter import messagebox
-        if not messagebox.askyesno(
-                "Let Capri do tasks for you?",
-                "When you type /do <task>, Capri will LOOK at your screen (a screenshot is sent to Claude, using your "
-                "key and credits), then click, type and press keys in your apps to get it done, for up to 20 steps.\n\n"
-                "* She can click and type in ANY app, including sending messages.\n* Every text she wants to type "
-                "is shown to you for approval first.\n* She stops the moment you move the mouse, click her, or type "
-                "/stop. She also stops on banking/password windows.\n* She never enters passwords or payments.\n"
-                "* AI can misread a screen and click the wrong thing. Don't use it for anything you can't undo.\n\n"
-                "Turn on tasks?", parent=parent, default="no", icon="warning"):
+        if not self.ask_once(
+                "agent", "Let Capri do tasks for you?",
+                "When you ask her to do something (/do <task>, or say it), Capri will LOOK at your screen (a "
+                "screenshot is sent to the AI provider of your key: Anthropic for a Claude key, Google for a Gemini "
+                "key, using your credits), then click, type and press keys in your apps to get it done, for up to "
+                "20 steps.\n\n* She starts RIGHT AWAY, no 'are you sure?' popups. What she types shows in the chat.\n"
+                "* She can click and type in ANY app, including sending messages.\n* She stops the moment you move "
+                "the mouse, click her, or type /stop. She also stops on banking/password windows.\n* She never "
+                "enters passwords or payments.\n* AI can misread a screen and click the wrong thing. Don't use it "
+                "for anything you can't undo.\n\nTurn on tasks?", parent=parent):
             return False
         self.settings["agent"] = True
         self.save_settings()
@@ -4224,16 +4784,11 @@ class Capri:
         task = " ".join((task or "").split())[:300]
         if not task:
             return False, "Tell me what to do: /do open Discord and tell my friends I'll be on in 15"
-        from tkinter import messagebox
-        if not messagebox.askyesno(
-                "Do this task?",
-                f"Capri will try to do this by clicking and typing on your screen:\n\n  {task}\n\n"
-                "Move the mouse, click her, or type /stop to take over at any time.", default="no"):
-            return False, "Okay, cancelled."
+        self.notify(f"On it: {task[:120]}  (move the mouse, click me or /stop to stop)", secs=6)
         h = hands.Hands(level=self.hands.level, threaded=False, log=log, per_min=120)
         ag = agent.Agent(
-            ledges.capture, lambda mt, b64, system, prompt: vision_ask(system, mt, b64, prompt, 300, AGENT_MODEL), h,
-            title=self.win32.foreground_title, pointer=self.win32.cursor_pos, approve=self._agent_approve,
+            ledges.capture, self._agent_ask, h,
+            title=self.win32.foreground_title, pointer=self.win32.cursor_pos, approve=self._agent_typing,
             blocked=self._agent_blocked, note=lambda t: self.agent_events.put(("note", t)), budget=self.agent_budget)
         self.agent = ag
         if self.chat and self.chat.alive():
@@ -4251,6 +4806,12 @@ class Capri:
         threading.Thread(target=work, daemon=True).start()
         return True, ""
 
+    @staticmethod
+    def _agent_ask(media_type, b64, system, prompt):
+        if detect_provider(read_api_key()) == "gemini":
+            return vision_ask(system + GEMINI_AGENT_NOTE, media_type, b64, prompt, 300, room=8)
+        return vision_ask(system, media_type, b64, prompt, 300, AGENT_MODEL)
+
     def stop_agent(self):
         if self.agent is not None:
             self.agent.stop()
@@ -4258,6 +4819,11 @@ class Capri:
     def _agent_blocked(self, x, y):
         """True when (x, y) is on top of Capri herself or her bubble."""
         return (self.fx - self.fw * 0.8 <= x <= self.fx + self.fw * 0.8 and self.fy - self.fh * 1.8 <= y <= self.fy + 20)
+
+    def _agent_typing(self, kind, detail):
+        """No popup per text anymore: just show what she types in the chat as she types it."""
+        self.agent_events.put(("note", f"Typing: {detail[:200]}"))
+        return True
 
     def _agent_approve(self, kind, detail):
         """Called on the agent's thread: ask the user on the main thread and wait for the answer."""
@@ -4767,6 +5333,7 @@ class Capri:
             self.react("happy")
             self.set_icon("heart", 1.6)
         self.reflexes(now, idle)
+        self.meeting_tick(now)
         if not self.aware:
             return
         if not self.settings.get("aware_notice") and now - self.t_start > 25:
@@ -4980,7 +5547,38 @@ class Capri:
         self.reminders.append((time.time() + mins * 60, text))
         self.say(f"Got it. Pinging you in {mins:g} min.", 4)
 
+    def meeting_tick(self, now):
+        """In a call or meeting (meeting window in front, or another app has the mic open): stay quiet and put."""
+        if not self.settings.get("meeting_quiet", True):
+            if self.meeting.active:
+                self.meeting.active = False
+                self.meeting_ended()
+            return
+        title = self.win32.foreground_title() if self.aware else ""     # title: checked here, never kept
+        ev = self.meeting.update(now, title, meeting.mic_users(meeting.read_mic_entries()))
+        if ev == "start":
+            log(f"meeting quiet on ({self.meeting.why})")
+            if self.calm_before_meeting is None:
+                self.calm_before_meeting, self.calm = self.calm, True
+            self.speaker.stop()
+            if self.state == "dance":
+                self.go("idle", 4)
+            self.say("In a call. I'll keep quiet.", 3, speak=None)
+        elif ev == "end":
+            self.meeting_ended()
+
+    def meeting_ended(self):
+        was, self.calm_before_meeting = self.calm_before_meeting, None
+        if was is None:
+            return
+        log("meeting quiet off")
+        if self.game and self.calm_before_game is not None:
+            self.calm_before_game = was                              # the game still wants her quiet
+        else:
+            self.calm = was
+
     def toggle_calm(self):
+        self.calm_before_meeting = None                              # you chose: don't undo it when the call ends
         self.calm = not self.calm
         self.settings["calm"] = self.calm
         self.save_settings()
@@ -5062,6 +5660,19 @@ class Capri:
             m.add_cascade(label="Voice", menu=vm)
         else:
             m.add_command(label="Voice: no speech engine found", state="disabled")
+        sk = tk.Menu(m, tearoff=0, bg=C_PANEL, fg=C_TEXT, activebackground=C_GREEN, activeforeground=C_BLACK,
+                     bd=0, relief="flat", font=(self.font_family, 10))
+        cur_skin = self.settings.get("skin", "capri")
+        for key in self.available_skins():
+            sk.add_command(label=("* " if cur_skin == key else "   ") + SKIN_LABELS.get(key, key),
+                           command=lambda k=key: self.set_skin(k))
+        m.add_cascade(label="Skins", menu=sk)
+        tm = tk.Menu(m, tearoff=0, bg=C_PANEL, fg=C_TEXT, activebackground=C_GREEN, activeforeground=C_BLACK,
+                     bd=0, relief="flat", font=(self.font_family, 10))
+        cur_tiny = self.settings.get("tiny", "auto")
+        for key, label in (("auto", "Auto (while gaming or focusing)"), ("on", "Always"), ("off", "Never")):
+            tm.add_command(label=("* " if cur_tiny == key else "   ") + label, command=lambda k=key: self.set_tiny(k))
+        m.add_cascade(label="Tiny mode (just her face)", menu=tm)
         m.add_command(label=f"Calm mode: {'on' if self.calm else 'off'}", command=self.toggle_calm)
         m.add_command(label=f"Check-ins: {'on' if self.checkins else 'off'}", command=self.toggle_checkins)
         if self.win32.ok:
@@ -5099,21 +5710,57 @@ class Capri:
             self._geo = g
 
     def sprite_image(self, now):
-        if now < self.talk_until and self.state in ("idle", "perch"):
+        skin = getattr(self.art, "kind", "") == "skin"
+        glitch = self.glitch
+        if self.expr and self.state in ("idle", "perch"):
+            anim = self.expr[0]                               # the feeling wins over the talking mouth
+        elif now < self.talk_until and self.state in ("idle", "perch"):
             anim = "talk"
         elif self.typing_along and self.state in ("idle", "perch"):
             anim = "type"
         else:
             anim = self.anim
-        key, frame = self.art.frame(anim, now - self.t_start, self.dir)
-        flip = self.art.flip_dir and self.dir < 0
+        if skin:                                             # the new skin has drawn poses for these
+            if self.state in ("drag", "air"):                  # picked up, or falling / hopping: legs tucked
+                anim = "dangle"
+            elif self.state == "lounge" and now < self.talk_until:
+                anim = "lay-talk"
+            elif self.state in ("sleep", "lounge"):
+                anim = self.state
+            elif self.state in ("idle", "perch") and now < getattr(self, "wake_until", 0):
+                anim = "wake"
+            elif glitch > 0.02 and self.state in ("idle", "perch", "lounge"):
+                anim, glitch = ("perch-glitch" if self.state == "perch" else "glitch"), 0.0   # drawn glitch, not the fx
+            elif self.state == "perch" and (anim in ("idle", "talk") or self.expr):
+                # a feeling while perched keeps her seated; motion, icon and face pop-up carry it
+                anim = "perch-glitch" if self.expr and self.expr[0] in ("angry", "scared") else "perch"
+        key, frame = self.art.frame(anim, now - self.t_start, self.dir, self.step_ph if anim == "walk" else None)
+        tiny = self.tiny_on()
+        if tiny:                                                  # just her floating visor face
+            name = expression.mini_pick(now, talking=now < self.talk_until, thinking=self.ai_inflight > 0,
+                                        watcher=self.settings.get("skin", "capri") == "watcher",
+                                        emotion=self.expr[0] if self.expr else None)
+            h = max(24, int(self.fh * 0.36))
+            img = MINI_FACES.get(name, h, hard=True)
+            if img is not None:
+                key, frame = ("mini", name, h), img
+            else:
+                tiny = False
+        flip = self.art.flip_dir and self.dir < 0 and not tiny
         dim = self.state == "sleep"
-        if self.glitch > 0.02:
-            img, ax, ay = pose(frame, self.angle, self.sx, self.sy, flip, dim, self.glitch, self.rng)
+        # what she visibly faces: the left/right run row, or a mirrored sprite. Squash only when THAT changes,
+        # not when self.dir flips while the drawn picture stays the same (the sheet's idle doesn't mirror).
+        facing = key[0] if str(key[0]).startswith("running-") else (flip if self.art.flip_dir else None)
+        if facing is not None:
+            if self.facing is not None and facing != self.facing:
+                self.turn_squash = 1.0
+            self.facing = facing
+        if glitch > 0.02:
+            img, ax, ay = pose(frame, self.angle, self.sx, self.sy, flip, dim, glitch, self.rng)
             if self.outline_on():
                 img = neon.outline(img, neon.COLORS[self.neon_name], self.neon_px())
             self._last_ck = None
-            return ImageTk.PhotoImage(img), ax, ay, img.width, img.height
+            return ImageTk.PhotoImage(img, master=self.root), ax, ay, img.width, img.height
         ck = (key, round(self.angle / 3), round(self.sx * 25), round(self.sy * 25), flip, dim)
         self._last_ck = ck
         hit = self.pcache.get(ck)
@@ -5123,7 +5770,7 @@ class Capri:
             img, ax, ay = pose(frame, self.angle, self.sx, self.sy, flip, dim)
             if self.outline_on():
                 img = neon.outline(img, neon.COLORS[self.neon_name], self.neon_px())
-            hit = (ImageTk.PhotoImage(img), ax, ay, img.width, img.height)
+            hit = (ImageTk.PhotoImage(img, master=self.root), ax, ay, img.width, img.height)
             self.pcache[ck] = hit
             self.pil_cache[ck] = img
         return hit
@@ -5134,8 +5781,120 @@ class Capri:
         self.say_ai("greeting", {"away": f"They were away about {self.mind.away_hours:.0f} hours." if self.mind.away_hours >= 3 else ""},
                     self.mind.greeting(now), 7)
 
+    def set_app_icon(self):
+        """Her icon on every window and the taskbar (pet/icons)."""
+        for d in pet_asset_dirs("icons"):
+            try:
+                png = os.path.join(d, "capri.png")
+                if os.path.isfile(png):
+                    self._icon = ImageTk.PhotoImage(Image.open(png).convert("RGBA"), master=self.root)
+                    self.root.iconphoto(True, self._icon)          # True: default for every later window too
+                ico = os.path.join(d, "capri.ico")
+                if IS_WIN and os.path.isfile(ico):
+                    self.root.iconbitmap(default=ico)
+            except Exception:
+                log("icon failed: " + traceback.format_exc())
+            return
+
+    def intro_mode(self):
+        """'on' (every launch, default), 'once' (only the very first launch) or 'off'."""
+        m = self.settings.get("intro", "on")
+        return {True: "on", False: "off"}.get(m, m) if m in (True, False, "on", "off", "once") else "on"
+
+    def intro_ok(self):
+        """Should the intro play at launch?"""
+        mode = self.intro_mode()
+        if mode == "off" or (mode == "once" and self.settings.get("booted")):
+            return False
+        return self.intro_available()
+
+    def intro_available(self):
+        return (self.settings.get("skin", "capri") != "classic"
+                and all(any(os.path.isfile(os.path.join(d, st + ".webp")) for d in pet_asset_dirs("intro"))
+                        for st in intro.STEMS))
+
+    def start_intro(self, greet=True):
+        """She climbs up into the screen, says hi, grins and waves, then drops away and the pet appears."""
+        wa = self.work_area()
+        W, H = intro.size(wa[2] - wa[0], wa[3] - wa[1])
+        frames = {}
+        try:
+            d = pet_asset_dirs("intro")[0]
+            for st in intro.STEMS:
+                im = Image.open(os.path.join(d, st + ".webp")).convert("RGBA").resize((W, H), Image.LANCZOS)
+                frames[st] = ImageTk.PhotoImage(fast_crisp(im), master=self.root)
+        except Exception:
+            log("intro failed, using the beam animation: " + traceback.format_exc())
+            return False
+        win = tk.Toplevel(self.root)
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+        bg = KEY if IS_WIN else ("systemTransparent" if IS_MAC else "#101018")
+        lbl = tk.Label(win, bd=0, highlightthickness=0, bg=bg)
+        lbl.pack()
+        win.config(bg=bg)
+        if IS_WIN:
+            win.attributes("-transparentcolor", KEY)
+        elif IS_MAC:
+            win.attributes("-transparent", True)
+        lbl.bind("<Button-1>", lambda e: self.finish_intro(skipped=True))
+        x, yup = int((wa[0] + wa[2]) / 2 - W / 2), int(wa[3] - H)
+        win.geometry(f"{W}x{H}+{x}+{wa[3] + 10}")
+        self.intro = {"t0": time.time(), "win": win, "lbl": lbl, "frames": frames, "greet": greet, "W": W, "H": H,
+                      "x": x, "yup": yup, "stem": None, "happy": False}
+        self.bubble, self.surf = "", None
+        self.go("idle", intro.DURATION + 5)
+        self.sfx.play("blip")
+        return True
+
+    def update_intro(self, now):
+        it = self.intro
+        if not it:
+            return
+        r = intro.at(now - it["t0"])
+        if r is None:
+            return self.finish_intro()
+        stem, drop = r
+        try:
+            if stem != it["stem"]:
+                it["stem"] = stem
+                it["lbl"].config(image=it["frames"][stem])
+                if stem == "intro-happy" and not it["happy"]:
+                    it["happy"] = True
+                    self.sfx.play("success")
+            it["win"].geometry(f"{it['W']}x{it['H']}+{it['x']}+{int(it['yup'] + drop * (it['H'] + 40))}")
+        except tk.TclError:
+            self.finish_intro(skipped=True)
+
+    def cancel_intro(self):
+        """Close the intro without greeting (tests, or when something more important starts)."""
+        it, self.intro = self.intro, None
+        if it:
+            try:
+                it["win"].destroy()
+            except tk.TclError:
+                pass
+
+    def finish_intro(self, skipped=False):
+        it, self.intro = self.intro, None
+        if not it:
+            return
+        try:
+            it["win"].destroy()
+        except tk.TclError:
+            pass
+        self.settings["booted"] = True
+        self.save_settings()
+        self.go("idle", 2.0)
+        if not skipped:
+            self.react("happy")
+        if it["greet"]:
+            self.greet()
+
     def start_boot(self, first=None, greet=True):
-        if self.boot:
+        if self.boot or self.intro:
+            return
+        if self.intro_ok() and self.start_intro(greet):
             return
         first = (not self.settings.get("booted")) if first is None else first
         D = boot.duration(first)
@@ -5205,7 +5964,7 @@ class Capri:
         if ph is None:
             if len(self.ghost_cache) > 400:
                 self.ghost_cache.clear()
-            ph = self.ghost_cache[key] = ImageTk.PhotoImage(pil.crop((0, 0, pil.width, min(pil.height, vis))))
+            ph = self.ghost_cache[key] = ImageTk.PhotoImage(pil.crop((0, 0, pil.width, min(pil.height, vis))), master=self.root)
         dx = self.rng.randint(-3, 3) if reveal < 0.85 else 0
         c.create_image(x0 + dx, y0, image=ph, anchor="nw")
         return y0 + vis
@@ -5264,12 +6023,14 @@ class Capri:
             key = (self._last_ck, level, self.neon_name)
             gp = self.ghost_cache.get(key)
             if gp is None:
-                gp = self.ghost_cache[key] = ImageTk.PhotoImage(neon.ghost(pil, neon.COLORS[self.neon_name], level))
+                gp = self.ghost_cache[key] = ImageTk.PhotoImage(neon.ghost(pil, neon.COLORS[self.neon_name], level), master=self.root)
             c.create_image(x0 + (old[1] - self.fx), y0 + (old[2] - self.fy), image=gp, anchor="nw")
 
     def draw(self, now):
         c = self.canvas
         c.delete("all")
+        if self.intro:                                    # the big intro window is playing; the pet appears after
+            return
         photo, ax, ay, w, h = self.sprite_image(now)
         self.cur_img = photo
         lfx, lfy = self.Wd / 2.0, self.Hd - 8 + self.hop_y
@@ -5302,7 +6063,7 @@ class Capri:
             if img is not None:
                 pop = min(1.0, (now - self.emote[1]) / 0.18)
                 ei = pose(img, 0, 0.5 + 0.5 * pop, 0.5 + 0.5 * pop)[0]
-                self._emote_photo = ImageTk.PhotoImage(ei)
+                self._emote_photo = ImageTk.PhotoImage(ei, master=self.root)
                 c.create_image(lfx + self.fw * 0.12, max(0, top - 2 - ei.height * 0.1 + math.sin(now * 8) * 2),
                                image=self._emote_photo, anchor="sw")
         if self.icon and now < self.icon[2]:
@@ -5331,6 +6092,7 @@ class Capri:
             base_y = y1 - 10
         if pr is not None:
             self.draw_boot_over(c, pr, bt, lfx, y0, w, scan_y)
+        bub = None
         if self.bubble and now < self.bubble_until and not self.boot:
             shown = int((now - self.bubble_t0) * 80)
             txt = self.bubble[:max(1, shown)]
@@ -5350,6 +6112,9 @@ class Capri:
             c.tag_lower(tail)
             c.tag_lower(bg)
             c.coords(tid, lfx, y2)
+            bub = (bx1, by1)
+        if not self.boot:
+            self.draw_feelings(c, now, lfx, lfy, top, bub)
 
 
 # ------------------------------------------------------------------ preview / main
@@ -5357,7 +6122,7 @@ def pet_preview():
     enable_dpi_awareness()
     root = tk.Tk()
     root.title("Capri pet preview")
-    art = load_art(1.0)
+    art = load_art(1.0, "classic")
     if art.kind != "sheet":
         tk.Label(root, text="No Codex/Petdex sheet found.\nInstall one with:  npx petdex install capri",
                  padx=20, pady=20).pack()

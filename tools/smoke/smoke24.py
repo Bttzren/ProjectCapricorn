@@ -4,7 +4,7 @@ sys.path.insert(0, "/home/user/ProjectCapricorn")
 import capri
 from PIL import ImageGrab
 capri.read_api_key = lambda: ""
-p = capri.Capri(); p.boot = None; p.root.update()
+p = capri.Capri(); p.boot = None; p.cancel_intro(); p.root.update()
 p.open_chat(); c = p.chat
 c.win.geometry("420x640+10+10")
 c.add_bubble("assistant", "Hey. I'm here. Type something, or tap a button below.", animate=False)

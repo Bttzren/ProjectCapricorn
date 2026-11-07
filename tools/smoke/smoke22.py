@@ -22,7 +22,7 @@ capri.read_api_key = lambda: "sk-ant-x"
 capri.llm_reply = lambda msgs, persona, max_tokens=None, model=None: "Meeting moved to Friday 3pm; bring the report."
 said, moments = [], []
 capri.Capri.say_moment = lambda self, sit, fb, *a, **k: moments.append(sit)
-p = capri.Capri(); p.boot = None; p.root.update()
+p = capri.Capri(); p.boot = None; p.cancel_intro(); p.root.update()
 p.open_chat(); lines = []
 p.chat.system_line = lambda t, err=False: lines.append(t)
 bubbles = []
@@ -55,7 +55,7 @@ print("ring grows while she is silent?", before > 0, "| frozen while she talks:"
 p.disable_hear(); print("after off:", p.hear, p.settings["hear"])
 # preset full starts hearing
 import presets
-p.speaker = type("S", (), {"speaking": False, "stop": lambda self: None, "available": False, "engine": "none", "speak": lambda *a, **k: False})()
+p.speaker = type("S", (), {"speaking": False, "stop": lambda self: None, "available": False, "engine": "none", "last_error": "", "speak": lambda *a, **k: False})()
 p.apply_preset("full", ask=False)
 for _ in range(10): p.root.update(); time.sleep(0.05)
 print("FULL -> hear running:", p.hear is not None and p.hear.running, presets.detect(p.settings))

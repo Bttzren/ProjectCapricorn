@@ -20,7 +20,7 @@ class Model:
     def transcribe(self, audio, **kw):
         s = Seg(); s.text = said_text[0]; return [s], None
 listen.Whisper._load = lambda self: Model()
-p = capri.Capri()
+p = capri.Capri(); p.cancel_intro()
 p.open_chat()
 lines = []
 orig_sys = p.chat.system_line

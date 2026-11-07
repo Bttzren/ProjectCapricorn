@@ -6,6 +6,8 @@ from PIL import ImageGrab, Image
 greets = []
 capri.Capri.greet = lambda self: greets.append(time.time())
 capri.read_api_key = lambda: ""
+import json; os.makedirs(capri.data_dir(), exist_ok=True)
+json.dump({"intro": False}, open(os.path.join(capri.data_dir(), "settings.json"), "w"))   # this one tests the beam boot
 p = capri.Capri()
 print("boot started:", bool(p.boot), "first:", p.boot["first"], "dur:", p.boot["dur"], "booted flag before:", p.settings.get("booted"))
 p.root.update()

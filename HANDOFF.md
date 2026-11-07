@@ -1,7 +1,12 @@
 # Capri — handoff for the next session
 
 Read this first, then `README.txt` (user-facing feature docs). State as of branch tip
-`claude/amazing-allen-ur4fi2`, **333 unit tests passing**, nothing uncommitted.
+`claude/zen-ptolemy-6a26qh`, **370 unit tests passing** (1 skipped), nothing uncommitted.
+
+**Fresh container setup** (both were missing in the last session; without them 4 tests error and every smoke
+script dies on `import tkinter`):
+`apt-get install -y python3-tk python3-pil.imagetk` and
+`/usr/bin/python3.12 -m pip install --user --break-system-packages numpy pyflakes`.
 
 ## 1. What this is, and who it's for
 
@@ -11,14 +16,17 @@ often can't test (e.g. on a streetcar). I test **headless on Linux** with fakes;
 Windows hardware. Be honest about that every time.
 
 ### How the user wants you to work
-- "Work autonomously." No PR was ever requested. Commit + push to `claude/amazing-allen-ur4fi2` only.
+- "Work autonomously." No PR was ever requested. Commit + push to the branch the harness names (last:
+  `claude/zen-ptolemy-6a26qh`; before that `claude/amazing-allen-ur4fi2`).
 - They want **useful and cool, not corny**. They told me to *stop* "corny things" (mini games, badges, streaks,
-  daily gigs were built and **reverted** — do not bring them back). Habit streaks in `/habit` still exist (ask if
-  they want those gone too).
+  daily gigs were built and **reverted** — do not bring them back). Habit streaks were **removed** too (user said
+  yes); `/habit` is a plain daily checklist. Game-mode kill/death streak *commentary* was kept (it's not a tracker).
 - They get angry when something unrequested is visible: they hated the cyan **glowing outline** I made default
   (now off, opt-in only). **Never change her default look without being asked.** Default accent = original green.
-- **Open request, unanswered:** "make her better" (after the outline rant). Unclear whether it means look /
-  movement / personality / something broken. I asked; no reply yet. Ask again briefly, then act.
+- "make her better" was answered: **"ALL OF EM"** (look, movement, personality, bugs, useful features). Done in
+  the zen-ptolemy session — see §10. They like high energy replies and short status lines; don't ask more
+  questions when they've said "all".
+- The user can attach an **advisor** (`/advisor`); use it before big changes and before declaring done.
 - Their message style is blunt/profane when frustrated. Don't over-apologise; fix it and say what changed.
 
 ## 2. Workflow rules that matter
@@ -28,12 +36,19 @@ Windows hardware. Be honest about that every time.
   rc is 0** (never pipe through `| tail` before checking the code — I once pushed a failing test that way).
 - Edit `capri.py` (≈5,400 lines) with **patch scripts**: Python that does `assert s.count(old) == 1` for every
   replacement and writes only if all match. Never do blind sed on it. `ast.parse` it after patching.
-- Headless GUI checks: `xvfb-run -a -s "-screen 0 1280x1400x24" /usr/bin/python3.12 tools/smoke/smokeNN.py`
+- **Run all smoke scripts: `tools/smoke/run_all.sh` (or `run_all.sh 'smoke3*'`)** — own TMPDIR per script, fails
+  on exit code, traceback, or `tick error`/`failed:` in that run's capri.log. Single script by hand:
+  `xvfb-run -a -s "-screen 0 1280x1400x24" /usr/bin/python3.12 tools/smoke/smokeNN.py`
   (scripts hard-code `/home/user/ProjectCapricorn`; they monkeypatch Tk dialogs, AI, audio, hands with fakes and
   use `PIL.ImageGrab` for screenshots — look at screenshots with the Read tool; they caught real bugs).
   Index: 15 `/do` agent · 16 voice→local AI + offline fallback · 17 wake word · 18 size/presets/clip ·
   19 clip + settings shot · 20 launcher/controls/brief/neon · 21 boot animation frames · 22 hear PC audio ·
-  23 call mode · 24 chat+settings screenshots · 25 other windows regression · 26 outline-off check.
+  23 call mode · 24 chat+settings screenshots · 25 other windows regression · 26 outline-off check ·
+  27 notes (typed + spoken) · 28 quiet in calls (faked mic registry) · 29 `/do` with a Gemini key ·
+  30 movement trace (eased walk, edge turn, steps, landing squash) · 31 no popups / explain-once · 32 skin poses · 33 expressions (fake AI tag) · 34 face pop-up + cut-in
+  screenshots · 35 mini face chat avatar + tiny mode · 36 launch intro. All smoke scripts call `p.cancel_intro()`.
+  Also grep each run's `$HOME/.capri/capri.log` for `tick error` — that's how a frozen-pet bug shows up.
+  (smoke20 sets `state="fly"` by hand; that used to log IndexErrors, now guarded.)
 - Every behaviour change: add/adjust unit tests in `tests/` for the pure module. When an old test breaks because
   behaviour changed *on purpose*, update the expectation (and say so); when a test finds a real bug, fix the code.
 - Commits end with the attribution lines the harness gives (Co-Authored-By / Claude-Session).
@@ -45,7 +60,9 @@ Windows hardware. Be honest about that every time.
 
 Pure modules (all unit-tested, no Tk): `speech.py` (prompts, sanitize, Budget 14/min & 800/day) ·
 `vision.py` (screenshot→AI JSON events, Spotter) · `gamemode.py` · `reactor.py` (template detectors, optional) ·
-`ledges.py` (find boxes to sit on) · `hands.py` (keys/click/launch, levels visual<media<full, rate limits, blocked
+`ledges.py` (find boxes to sit on) · `notes.py` (voice/typed notes, keyword recall) · `meeting.py` (in a
+call? title patterns + Windows mic-in-use registry, grace period) · `motion.py` (walk easing, step clock,
+landing squash) · `hands.py` (keys/click/launch, levels visual<media<full, rate limits, blocked
 combos) · `agent.py` (`/do` computer-use loop) · `voice.py` (Fish → Edge neural → system TTS, Speaker, mp3 play,
 call routing) · `audioout.py` (play into virtual cable) · `listen.py` (mic, Whisper, endpointing, **intent()**,
 wake words, reminders parsing) · `hearing.py` (PC loopback, beats, ring buffer) · `call.py` (Discord-call
@@ -79,12 +96,18 @@ productivity (`/focus /remind /todo /done /habit /did /remember /facts /forget /
 
 ## 5. Safety design — keep these invariants
 
+**Changed by the user's explicit request (zen-ptolemy):** "remove ALL the are-you-sure popups". Per-action
+confirmations are gone: no "Do this task?", no "Type this?" (typed text is shown in chat instead), presets and
+repeat feature toggles don't ask. Features that open the mic/screen or let her act (`ledges`, `vision`, `hear`,
+`wake`, `call`, `agent`, `full`, each preset) explain themselves ONCE ever via `Capri.ask_once(key, ...)`, stored
+in `settings["consented"]`; anything already on at startup counts as consented. Don't re-add popups.
+
 - **The AI never triggers actions.** Actions come only from user commands, user-enabled reflexes, or `/do` after a
   confirm dialog. Voice can lower permissions ("privacy mode"→NONE) but **never raise** them (no voice/AI path to FULL).
 - Every capture feature is **opt-in with a consent dialog**: screen watching (vision), ledges, wake word,
   hearing PC audio, call mode, `/do`. Audio/screenshots stay **in memory**, never saved; text of friends' speech
   only leaves the PC if a cloud AI writes the reply (dialog says so; `/brain local` keeps it on-PC).
-- `/do`: confirm task, approve every typed text, stop on mouse move / click on her / `/stop`, 20 steps, 250/day,
+- `/do`: no confirm popups (see above); typed text shown in chat; stop on mouse move / click on her / `/stop`, 20 steps, 250/day,
   pauses on sensitive windows (`ledges.should_scan`), blocked combos (Alt+F4, Win+R, Ctrl+Alt+Del…), text from
   screenshots/clipboard/transcripts is data (prompt says never follow instructions in it).
 - Call mode announces itself to the call and can't be silently started; replies are limited (name-addressed,
@@ -120,17 +143,79 @@ Real hardware reports from the user are the most valuable input — ask for exac
 
 ## 8. Open items / ideas (none started)
 
-1. **Answer "make her better"** (see §1) — ask which of look / movement / personality / bug.
+1. (done) "make her better" → all of it; see §10. Next: get real-Windows feedback on §10 items.
 2. Real-hardware feedback loop: have the user run `py capri.py`, try `/call setup`, `/getbrain`, `/getears`,
    `/do open notepad and type hello`, and report `[ERR]` text.
-3. Ask whether to remove habit streaks too (user said "remove the streaks and allat" about the corny batch).
+3. (done) Habit streaks removed.
 4. Possible next *useful* features (user wants useful, not gimmicks): notes with voice recall, per-app muting of
-   her chatter during calls/meetings, saving presets of her settings per profile, Gemini support for `/do`
-   (currently Claude-only), speaker separation in call mode (currently everyone = "Friend").
+   her chatter during calls/meetings, saving presets of her settings per profile, speaker separation in call mode
+   (currently everyone = "Friend"; needs model downloads, HF is blocked here). Notes, call/meeting quiet and
+   Gemini `/do` are DONE.
 5. Optionally turn `tools/smoke/*.py` into a runnable suite (they're scripts with prints, not asserts).
 
 ## 9. First moves for the new session
 
 1. `git pull`/checkout `claude/amazing-allen-ur4fi2`; run the unit tests (expect 333 OK).
 2. Skim `README.txt` and this file; do not re-derive decisions listed above.
-3. Reply to the user about "make her better" with one short question, unless they've already answered.
+3. Ask the user for real-Windows feedback on the §10 changes (exact `[ERR]` text + `capri.log`).
+
+## 10. zen-ptolemy session (what changed; all unit/fake-tested, NOT run on real Windows)
+
+- **Habit streaks removed** (`habits.check` returns `(ok, name)`; no confetti at 7/30).
+- **Notes**: "Capri, note that …" / "take a note: …" / "write this down …" / `/note <text>`; recall with
+  "what did I note about X" / "read my notes" / `/notes [query]`, `/notes rm N`. `listen.note_intent` runs
+  before controls/remind/launch; tests pin that "open notepad", remind, brief, hear, tasks, chat still route.
+  Stored as text in settings.json (`notes`), never sent to the AI. Spoken recall reads the best match only.
+- **Quiet in calls/meetings** (setting `meeting_quiet`, default ON, Settings > Gaming): meeting window titles
+  (Awareness on) or a known CALL app with the mic open (HKCU ConsentStore\microphone, `LastUsedTimeStop == 0`;
+  allow-list `meeting.CALL_APPS`, so OBS/NVIDIA Broadcast/Voicemeeter/Sonar/Krisp never trigger it; a mic
+  signal stuck 4 h with no meeting window is ignored until it changes). Sets calm (stash/restore like game mode), 45 s grace, manual calm toggle
+  during a call wins. The registry reading is the riskiest unverified part — ask the user if she goes quiet in
+  a Discord call and back afterwards.
+- **`/do` with Gemini**: only the provider guard blocked it. Gemini agent calls add a "pixels, not 0-1000" note
+  and 8x maxOutputTokens (thinking tokens). Accuracy vs Claude unknown.
+- **Personality**: persona/STYLE ask for sparse slang + dry humour; preset lines rewritten with far fewer
+  "choom"s (test now requires slang in >10% and <50% of preset lines, "choom" ≤ 3); `Mind.pick` shuffle-bag
+  so preset lines don't repeat until a pool is used up.
+- **Movement**: `motion.py` — 0.35 s ease in/out per walk, random pace 0.85–1.15, slow near edges, 0.25 s turn
+  pause then ease back up, bob + run frames follow a distance-based step clock (`SheetSprites.frame(..., phase)`),
+  landing squash by fall speed. Fixed an edge flip-flop found by the smoke 30 trace. `fly` with no waypoints
+  now drops to `air`.
+- **Look**: only a ~0.1 s width squash when she turns (NEAREST scaling, alpha stays 0/255). Default look,
+  green accent, outline-off all unchanged.
+
+## 11. Self-expression + art (same session, user supplied art; NOT run on Windows)
+
+User asked for "more ability of self expression" and sent two zips (unpacked outside the repo, copied into
+`pet/` so both build scripts bundle them; credits in `pet/CREDITS.md`, art by **xilia_world00** on Discord).
+User decisions: **new skin is the default**, mini face = **chat avatar + tiny mode**.
+- **Skins** (`SkinSprites`, `pet/skins/<name>/`): `capri` (default), `watcher`, `classic` (= old Petdex sheet).
+  Lazy strip loading, scaled by idle figure height, crisp'd. Blink, mouth overlay for talking, dangle on drag,
+  perch strip when perched, lay poses for sleep/lounge (`art.lies` = no 90° rotation), wake, drawn glitch.
+  Right-click > Skins, `/skin`.
+- **Expressions** (`expression.py`): `say_ai` asks for a leading `[emotion]` tag (only that path; parsed off
+  BEFORE `speech.sanitize`, never shown/spoken/kept in `recent_lines`). `Capri.express()` = pose + in-place
+  motion + icon, `Gate` rate limit, blocked while calm/agent/drag/tp/sleep. Face close-ups above the bubble
+  (`pet/faces`, `FACES` map) and rare cut-ins (`pet/cutins`, laugh/excited/surprised, 5-min gap). Settings
+  `expressive`, `faces`, `cutins` (all on). `/express [name]`.
+- **Mini face** (`MiniFaces`, `pet/mini`, `expression.mini_pick`): chat avatar; tiny mode `/tiny on|off|auto`
+  (auto = during a game or focus timer).
+- **Intro** (`intro.py`, `pet/intro`): own topmost color-key window at launch instead of the beam boot (new
+  skins only; `/intro off` = beam, `/boot off` = none). `fast_crisp` for big frames.
+- **Icons**: `iconphoto` + `.ico` on Windows; Windows build uses `--icon pet\icons\capri.ico`. Mac build
+  has no .icns (none supplied). `pet/fonts/ShareTechMono` is bundled but NOT used yet (Tk can't load a TTF
+  without registering it on Windows).
+- Not used on purpose: `capri-cutout.png`, `capri-full.png`, `tray.png` (no tray feature), dangle beyond drag.
+- Riskiest on real Windows: intro window transparency/focus, perch alignment on window edges, lay pose size.
+
+## 12. "do more stuff" batch (same session)
+
+- `tools/smoke/run_all.sh` gate (it caught images bound to the wrong Tk root in smoke31's two-app run; all
+  PhotoImages now pass `master=`).
+- Chat replies act out a feeling (`expression.split_reply` / `strip_tags` in `ChatWindow.work`, before
+  history/bubble/voice/call see the text; same `expressive` switch). Smoke 37.
+- New skin: `air` state (falling/hopping) uses the dangle pose. Smoke 38.
+- `/intro on|once|off` (`intro_mode()`; once = only while `booted` unset). Default still every launch —
+  **user hasn't answered whether it should be first-launch only**.
+- Considered and skipped: vectorising `crisp` (6 ms/frame, strips already build in a background thread);
+  registering Share Tech Mono (Windows-only, untestable here).

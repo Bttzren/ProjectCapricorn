@@ -11,7 +11,8 @@ ROAST_RULES = {
               "hate, threats or anything sexual."),
 }
 STYLE = ("Reply with exactly ONE short sentence, at most 18 words. Plain text only: no emoji, no markdown, "
-         "no quotation marks, no hashtags. Sound like a person, not a bot.")
+         "no quotation marks, no hashtags. Sound like a person, not a bot or a mascot: dry and specific beats "
+         "loud and generic, and slang is optional.")
 
 REFUSALS = ("as an ai", "i'm sorry", "i am sorry", "i cannot", "i can't", "i can not", "sorry,", "i'm unable")
 
@@ -27,7 +28,7 @@ def _recent(recent):
     return " Don't repeat or closely paraphrase these recent lines of yours: " + " | ".join(recent[-6:])
 
 
-def user_prompt(kind, facts, recent=()):
+def user_prompt(kind, facts, recent=(), tags=False):
     """The message that asks the AI for one line, for each kind of moment."""
     f = facts or {}
     if kind == "poke":
@@ -60,6 +61,9 @@ def user_prompt(kind, facts, recent=()):
         text = f"Right now: {f.get('situation', 'something happened')}. React out loud in one short sentence."
     else:
         text = "Say one short thing."
+    if tags:                                             # only for her own speech-bubble lines (say_ai)
+        import expression
+        text += expression.TAG_INSTRUCTION
     return text + _recent(list(recent))
 
 

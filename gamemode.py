@@ -28,17 +28,17 @@ MIN_GAP = 3.0                                             # seconds between ordi
 KILL = ["Clean! Nova.", "Preem shot, choom!", "Delete him.", "Easy money.", "One down.",
         "Crisp. Do it again.", "That's the aim I like to see."]
 MULTI = {2: "Double kill! Keep going!", 3: "TRIPLE! Choom is cooking!", 4: "QUAD! Don't choke now!"}
-KILL_STREAK = ["{n} kills in a row. You're on fire, choom.", "Streak of {n}. Don't get cocky.",
+KILL_STREAK = ["{n} kills in a row. You're on fire.", "Streak of {n}. Don't get cocky.",
                "{n} straight. Somebody stop this person."]
 GOOD_KD = ["{k}/{d}. Carrying the whole lobby.", "{k} and {d}. Menace behavior, choom."]
 ACE = ["ACE!! Absolute legend. Screenshot that.", "FIVE! Is this even fair?!"]
 CLUTCH = ["CLUTCH! Ice in your veins, choom!", "That clutch was preem. I screamed. Silently."]
-ROUND_WIN = ["Round! Keep it rolling.", "W. Next one.", "Nova round, choom."]
+ROUND_WIN = ["Round! Keep it rolling.", "W. Next one.", "Nova round."]
 MATCH_WIN = ["GG! Victory! Preem work.", "WIN! Go touch grass. Briefly. Then queue again."]
 
 DEATH = {
-    "off": ["Shake it off, choom. Next round.", "Happens to everyone. Reset.", "They got lucky. Go again."],
-    "mild": ["Ouch. That was tragic, choom.", "You got flatlined. Rest in pixels.",
+    "off": ["Shake it off. Next round.", "Happens to everyone. Reset.", "They got lucky. Go again."],
+    "mild": ["Ouch. That was tragic.", "You got flatlined. Rest in pixels.",
              "Bro walked straight into that, gonk.", "Peek smarter, not harder.", "Skill issue? ...Kidding. Mostly."],
     "spicy": ["Bro, that was ass.", "You died to THAT? Embarrassing.", "Absolute ass round. Wow.",
               "Did you even have your monitor on?", "My guy, that aim was ass."],
@@ -50,17 +50,17 @@ DEATH_STREAK = {
 }
 BAD_KD = {
     "off": ["{k}/{d}, but you're still trying. Respect."],
-    "mild": ["{k}/{d}... the team is carrying you, choom."],
+    "mild": ["{k}/{d}... the team is carrying you."],
     "spicy": ["{k}/{d}. A bot lobby would be too hard for you."],
 }
 ROUND_LOSS = {
     "off": ["Shake it off. Next round."],
-    "mild": ["Lost it. Tighten up, choom.", "Round gone. Focus."],
+    "mild": ["Lost it. Tighten up.", "Round gone. Focus."],
     "spicy": ["Embarrassing round. Do better.", "That round was ass."],
 }
 MATCH_LOSS = {
     "off": ["GG. We learn and go again."],
-    "mild": ["That one hurt. Queue again, choom?", "Loss. It happens. Hydrate."],
+    "mild": ["That one hurt. Queue again?", "Loss. It happens. Hydrate."],
     "spicy": ["Wow. That loss was ass. Queue again, coward.", "Brutal. Blame the team. And yourself."],
 }
 START = ["{game}? Don't int, choom.", "{game} time. I'll stay small and quiet. And judge.",
@@ -69,7 +69,7 @@ VERDICT = {
     "great": ["Absolute menace.", "Carried. Legendary."],
     "good": ["Solid. Respect.", "Preem session."],
     "mid": ["Mid. It happens.", "Not bad, not great."],
-    "bad": {"off": ["Tough one. Shake it off."], "mild": ["Rough one, choom."],
+    "bad": {"off": ["Tough one. Shake it off."], "mild": ["Rough one."],
             "spicy": ["That was ass. Queue again?"]},
 }
 

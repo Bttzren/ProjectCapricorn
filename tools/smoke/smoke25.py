@@ -5,7 +5,7 @@ import capri
 from PIL import ImageGrab
 capri.read_api_key = lambda: "sk-ant-x"
 capri.llm_reply = lambda m, p, max_tokens=None, model=None: (time.sleep(0.6), "Yo choom, all good here.")[1]
-p = capri.Capri(); p.boot = None; p.root.update()
+p = capri.Capri(); p.boot = None; p.cancel_intro(); p.root.update()
 p.open_chat(); c = p.chat; c.win.geometry("420x520+10+10")
 c.submit("hey capri how are you")
 for _ in range(8): c.win.update(); time.sleep(0.05)

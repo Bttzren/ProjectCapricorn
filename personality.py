@@ -11,68 +11,70 @@ MOODS = ("sleepy", "lonely", "sassy", "playful", "content")
 
 LINES = {
     "idle": {
-        "sleepy": ["*yawns in static*", "Battery's low, choom. Brain's buffering.", "Five more minutes, then I flatline for real.",
-                   "So tired. Even my chrome's yawning."],
-        "lonely": ["Hello? Anybody jacked in?", "You're deep in the biz. It's fine. It's fine.",
-                   "I counted your tabs. Twice. That's a lot, choom.", "Poke me, choom. Please."],
-        "sassy": ["Ignoring me? Real preem, choom.", "I'm not mad. I'm just glitching. Aggressively.",
-                  "Cool cool cool. Ghost in your machine, over here.", "Some of us got feelings, gonk."],
-        "playful": ["Race you to the edge of the screen, choom!", "Feeling nova. Let's cause some trouble.",
-                    "Bet I can delta outta here faster than you can blink.", "Ooh, what's the gig?",
-                    "*does a little chrome-powered hop*"],
-        "content": ["...", "*glitches*", "Just vibin' in Night City.", "Tiny step, choom. You got this.",
-                    "Still here. Still preem.", "Nice tabs. Corpo-level organized."],
+        "sleepy": ["*yawns in static*", "Running on fumes over here.", "If I blink too long, assume I'm defragging.",
+                   "Low power mode. Talk slow.", "Everything's fine. I'm just horizontal on the inside."],
+        "lonely": ["Hello? Anybody jacked in?", "I counted your tabs. Twice. It didn't help.",
+                   "You're busy. I get it. I'm also busy. Sitting.", "Poke me if you need anything. Or nothing.",
+                   "Quiet in here. Suspiciously quiet."],
+        "sassy": ["Ignoring me? Bold strategy.", "I'm not mad. I'm just glitching. Aggressively.",
+                  "Cool. Love being wallpaper. Very corpo of you.", "Some of us have feelings, gonk.", "Noted. Filed under 'rude'."],
+        "playful": ["Race you to the edge of the screen.", "I could reorganize your desktop. I won't. Probably.",
+                    "Bet I can delta out of here before you blink.", "Feeling nova. What are we breaking today?",
+                    "*does a little hop*", "Got a gig for me? Small one's fine."],
+        "content": ["...", "*glitches*", "Just vibing in Night City.", "Still here. Still preem.",
+                    "Nice tabs. Very organized. Kind of.", "One thing at a time. You've got this.",
+                    "This is a good spot. I'm keeping it."],
     },
     "poke": {
-        "sleepy": ["Mmf. Five more minutes, choom.", "...hm? Boop.", "Rude. I was recharging."],
-        "lonely": ["You noticed me, choom!", "Hi hi hi!", "Yay, a poke!"],
-        "sassy": ["Poke me again. I dare you, gonk.", "Rude. Also, hi.", "Hands off the chrome."],
-        "playful": ["Boop! Again, choom!", "Hehe, nova!", "Catch me if you can!"],
-        "content": ["Hey, choom!", "Boop.", "Yeah? What's the biz?", "Preem poke.", "Poke accepted."],
+        "sleepy": ["Mmf. Five more minutes.", "...hm? Boop.", "Rude. I was recharging."],
+        "lonely": ["Oh! Hi.", "Finally, some attention.", "Hi hi hi."],
+        "sassy": ["Poke me again. I dare you.", "Rude. Also, hi.", "Hands off the chrome."],
+        "playful": ["Boop. Again.", "Hehe. Missed me.", "Catch me if you can."],
+        "content": ["Hey.", "Boop.", "Yeah? What's up?", "Poke accepted.", "Present."],
     },
     "wake": {
-        "sleepy": ["...hm? Oh. Hey, choom.", "Dreamt in neon. Was preem."],
-        "lonely": ["You came back, choom!", "Oh! Hey!"],
+        "sleepy": ["...hm? Oh. Hey.", "Dreamt in neon. Was nice."],
+        "lonely": ["You came back.", "Oh! Hey!"],
         "sassy": ["Oh, NOW you want me."],
-        "playful": ["Up up up! Night City's waiting!"],
+        "playful": ["Up up up. The city's waiting."],
         "content": ["Wake up, samurai. Kidding. Hey.", "Hm? Hey, choom."],
     },
     "checkin": [
-        "Water break, choom. Chrome don't run on thirst.",
-        "Shoulders down. Unclench the jaw. Even netrunners relax.",
-        "Stand up and stretch. Flatlining at a desk ain't preem.",
-        "What's the gig right now?",
+        "Water break. Chrome doesn't run on thirst.",
+        "Shoulders down. Unclench the jaw.",
+        "Stand up and stretch. Flatlining at a desk isn't preem.",
+        "What's the gig right now? Say it in one line.",
         "Look away from the screen for 20 seconds. Eyes need a reboot.",
         "Eaten lately? Even edgerunners eat.",
     ],
-    "late": ["It's real late, choom. Sleep is the best cyberware.", "Bed. Go. I'll keep watch over the pixels.",
-             "Whatever it is, it'll still be there after you recharge."],
+    "late": ["It's really late. Sleep is the best cyberware.", "Bed. Go. I'll keep watch over the pixels.",
+             "Whatever it is, it'll still be there after you sleep."],
 }
 
 GREET = {
-    "morning": ["Mornin', choom! Brain online?", "Good morning. Coffee first, then take on the city.", "Up already? Preem."],
-    "afternoon": ["Afternoon, choom. Hydrate.", "Hey. Halfway through the day. Keep it nova.", "Welcome back to the grid."],
-    "evening": ["Evenin', choom. Wind down soon?", "Hey. Long day in the city?", "Good evening. Neon's glowing."],
-    "night": ["It's late, choom... still on the gig?", "Night owl mode. Preem. Kinda.", "Shouldn't you be asleep, choom?"],
+    "morning": ["Morning. Brain online yet?", "Good morning. Coffee first, then the city.", "Up already? Respect."],
+    "afternoon": ["Afternoon. Drink some water.", "Halfway through the day. Keep going.", "Welcome back to the grid."],
+    "evening": ["Evening. Winding down soon?", "Hey. Long day?", "Good evening. Neon's on."],
+    "night": ["It's late... still at it?", "Night owl mode. Bold.", "Shouldn't you be asleep, choom?"],
 }
 
 OFFLINE = [
-    (("hello", "hi ", "hey", "yo"), ["Hey, choom. Good to see you.", "Hi hi. What's the biz?", "Hello hello, choom."]),
-    (("thank",), ["Anytime, choom.", "No sweat. I'm preem like that.", "Aw. Stop. Keep going."]),
-    (("stuck", "help"), ["Pick the smallest next step, choom, and do only that. What is it?",
-                         "Write one sentence about the gig. Then one tiny action. Delta."]),
-    (("tired", "sleep"), ["Then recharge, choom. I'll keep watch.", "A nap is a valid strategy. Even samurai sleep."]),
-    (("bored",), ["Want me to dance? Right-click me, choom.", "Go get water, then pick a gig. Boredom hates movement."]),
+    (("hello", "hi ", "hey", "yo"), ["Hey. Good to see you.", "Hi. What's up?", "Hello hello."]),
+    (("thank",), ["Anytime.", "No sweat, choom.", "Aw. Stop. Keep going."]),
+    (("stuck", "help"), ["Pick the smallest next step and do only that. What is it?",
+                         "Write one sentence about the problem. Then one tiny action."]),
+    (("tired", "sleep"), ["Then recharge. I'll keep watch.", "A nap is a valid strategy. Even samurai sleep."]),
+    (("bored",), ["Want me to dance? Right-click me.", "Get water, then pick one thing. Boredom hates movement."]),
     (("joke",), ["I tried to catch a bug. It glitched away. Classic.",
-                 "Why was the netrunner calm? No ICE in sight. Get it? Ice? ...I'll see myself out."]),
-    (("love", "cute"), ["...glitches happily.", "Don't make me blush in five colors, choom."]),
+                 "Why was the netrunner calm? No ICE in sight. ...I'll see myself out."]),
+    (("love", "cute"), ["...glitches happily.", "Don't make me blush in five colors."]),
 ]
 OFFLINE_FALLBACK = {
     "sleepy": ["Mm. Tell me more, I'm half asleep.", "...yeah. Sure. Zzz."],
-    "lonely": ["I like it when you talk to me, choom.", "Keep going, I'm listening."],
-    "sassy": ["Mhm. Riveting, choom.", "Say more. Or don't."],
-    "playful": ["Ooh! Go on, choom!", "Wait, really? Spill it."],
-    "content": ["Hm. Tell me more, choom.", "I'm listening.", "Go on."],
+    "lonely": ["I like it when you talk to me.", "Keep going, I'm listening."],
+    "sassy": ["Mhm. Riveting.", "Say more. Or don't."],
+    "playful": ["Ooh. Go on.", "Wait, really? Spill it."],
+    "content": ["Hm. Tell me more.", "I'm listening.", "Go on."],
 }
 
 SLANG = ("choom", "preem", "nova", "gonk", "eddies", "chrome", "delta", "flatline", "gig", "biz", "corpo", "netrunner")
@@ -180,16 +182,34 @@ class Mind:
             out.append(("sleep", bias["sleep"]))     # a sleepy Capri can nap even if she hasn't been idle long
         return out
 
+    def pick(self, key, pool):
+        """Random line from `pool` without repeats: every line is used once before any comes back, and the
+        last one isn't the first of the next round."""
+        bags = self.__dict__.setdefault("_bags", {})
+        bag = bags.get(key)
+        if not bag or not set(bag) <= set(pool):
+            last = self.__dict__.setdefault("_last", {}).get(key)
+            bag = list(pool)
+            self.rng.shuffle(bag)
+            if len(bag) > 1 and bag[-1] == last:
+                bag[0], bag[-1] = bag[-1], bag[0]
+            bags[key] = bag
+        choice = bag.pop()
+        self.__dict__.setdefault("_last", {})[key] = choice
+        return choice
+
     def line(self, kind, now):
-        pool = LINES[kind]
+        pool, key = LINES[kind], kind
         if isinstance(pool, dict):
+            key = f"{kind}:{self.mood(now)}"
             pool = pool.get(self.mood(now)) or pool["content"]
         if kind == "checkin" and hour_of(now) < 5:
-            pool = LINES["late"]
-        return self.rng.choice(pool)
+            pool, key = LINES["late"], "late"
+        return self.pick(key, pool)
 
     def greeting(self, now):
-        text = self.rng.choice(GREET[part_of_day(hour_of(now))])
+        part = part_of_day(hour_of(now))
+        text = self.pick("greet:" + part, GREET[part])
         name = self.user_name
         if name:
             text = text.rstrip(".!?") + f", {name}."
@@ -201,8 +221,9 @@ class Mind:
         low = " " + text.lower() + " "
         for keys, replies in OFFLINE:
             if any(k in low for k in keys):
-                return self.rng.choice(replies) + " (No API key set, so I'm in offline mode.)"
-        return self.rng.choice(OFFLINE_FALLBACK[self.mood(now)]) + " (Offline mode: add a key to chat for real.)"
+                return self.pick("offline:" + keys[0], replies) + " (No API key set, so I'm in offline mode.)"
+        mood = self.mood(now)
+        return self.pick("fallback:" + mood, OFFLINE_FALLBACK[mood]) + " (Offline mode: add a key to chat for real.)"
 
     def context(self, now, doing="", activity=""):
         """Extra system-prompt text so LLM replies match her current state."""

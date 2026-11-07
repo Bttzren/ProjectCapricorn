@@ -126,6 +126,33 @@ CONTROLS = [
 FILLER = re.compile(r"^(can you|could you|please|would you|go ahead and|just|for me)\s+", re.I)
 
 
+_ABOUT = r"(?:\s+(?:about|on|for|regarding|with))?"
+NOTE_FIND = [
+    r"(?:what|which)(?: notes?)? (?:did|have) i (?:note|noted|write down|wrote down|written down|jot down|jotted down|"
+    r"save|saved)(?: down)?" + _ABOUT + r"\s*(.*)",
+    r"(?:read|show|list|check|find|search|open)(?: me)? (?:my|the) notes?" + _ABOUT + r"\s*(.*)",
+    r"(?:do i have|have i got|is there|are there)(?: any| a)? notes?" + _ABOUT + r"\s+(.+)",
+    r"(?:what are|what were|what's in|whats in) my notes" + _ABOUT + r"\s*(.*)",
+    r"my notes" + _ABOUT + r"\s*(.*)",
+]
+NOTE_ADD = r"(?:(?:take|make|save|add|leave)(?: a| me a)? note(?: that| of| to self| saying)?|note to self|" \
+           r"note(?: that| down)?|(?:write|jot|put)(?: this| that| it)? down(?: that)?)\b[\s:,-]*(.*)"
+
+
+def note_intent(t):
+    """('notes', query) for 'what did I note about X' / 'read my notes', ('note', text) for 'note that X' /
+    'take a note: X', or None. Checked on the cleaned phrase, so 'open notepad' is not a note."""
+    low = t.lower().strip(" .!?")
+    for pat in NOTE_FIND:
+        m = re.fullmatch(pat, low)
+        if m:
+            return ("notes", m.group(1).strip(" .!?"))
+    m = re.fullmatch(NOTE_ADD, t.strip(" ."), re.I | re.S)
+    if m:
+        return ("note", m.group(1).strip(" .!?"))
+    return None
+
+
 def intent(text):
     """What did the user say? ('stop',) | ('task', text) | ('chat', text) | ('none', ''). 'Hey Capri' is optional.
 
@@ -152,6 +179,9 @@ def intent(text):
         return ("brief", "")
     if re.match(r"(start|begin|do)( a| an)? (focus|pomodoro)( timer| session| mode)?$", low):
         return ("focus", "")
+    note = note_intent(t)
+    if note:
+        return note
     for action, pat in CONTROLS:
         if re.fullmatch(pat, low):
             return ("control", action)

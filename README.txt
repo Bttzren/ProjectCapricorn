@@ -37,8 +37,8 @@ SETTINGS & HANDS
   HANDS decides what she may do on your computer. It is enforced in code, not just in the menu:
     Visual only  (default) - she mimes typing along while you're busy; sends nothing to your computer
     Media keys   - on request: /pause /next /prev /volup /voldown /mute /shot (screenshot) /lock
-    Full control - also /press ctrl+s, /type hello there, /click [right|double]. Turning this on asks
-                   for confirmation. These wait 5 seconds so you can click where you want the input
+    Full control - also /press ctrl+s, /type hello there, /click [right|double]. Turning this on explains
+                   itself once (first time only). These wait 5 seconds so you can click where you want the input
                    to go; click her to cancel.
   Optional REFLEXES (Full control only, off by default): lock the screen after 15 minutes away; pause
   video/music after 5 minutes away. She announces them 10 seconds ahead; click her or touch the
@@ -70,6 +70,46 @@ MORE STUFF
   SPECIAL DAYS: she greets you on holidays (New Year, Valentine's, Pi Day, Halloween, Night City Day,
     Christmas) and on YOUR birthday: /birthday 03-27.
   BATTERY (Windows laptops): she warns you at 20% and cheers when you plug in.
+
+EXPRESSIONS (Settings > Size & look > "Act out how she feels", on by default)
+  When the AI writes one of her lines it also picks how she feels (happy, laugh, smug, sad, angry, surprised,
+  thinking, embarrassed, sleepy...). She acts it out in place: a pose from her skin, a small hop/shake/tilt and
+  sometimes an icon. Not every line (she'd look corny), never while she's calm, in a call/game or doing a task.
+  The feeling word is never shown or spoken. /express lists them, /express smug previews one.
+  Chat replies too: when she answers you in the chat window she acts out how she feels about it (same switch).
+  FACES: a close-up of her face (smug, laughing, wide-eyed...) pops up on top of her speech bubble while she
+    feels something. Settings > Size & look to turn off.
+  CUT-INS: for big moments only (laughing, hyped, shocked) an anime-style panel slides across her for about a
+    second, at most once every 5 minutes. Settings > Size & look to turn off.
+
+SKINS (right-click her > Skins, or /skin <name>)
+  capri    her new look, drawn by xilia_world00 (default): blinks, grins, glitches for real, talks with a
+           moving mouth, sits on window edges, dangles when you pick her up, lies down to nap.
+  watcher  the Watcher, a secret skin by xilia_world00.
+  classic  the original Petdex sprite sheet (her old look).
+  Your own skin: a folder in pet/skins/ (or %USERPROFILE%\.capri\pet\skins\) with the same strip names and
+  frame sizes as pet/skins/capri/ - see pet/CREDITS.md.
+
+LAUNCH INTRO (/intro to replay; /intro on = every launch (default), /intro once = first launch only,
+  /intro off = the old beam animation, /boot off = none)
+  When she starts she climbs up into your screen, grabs the edges, says hi, grins and waves, then drops away
+  and appears as usual (about 3.6 s, click it to skip). Not with the classic skin. Her icon (pet/icons) is
+  on her windows, and the Windows .exe build uses capri.ico.
+
+TINY MODE (right-click > Tiny mode, or /tiny on | off | auto)
+  Just her floating visor face (mini art by xilia_world00): it blinks, talks, glances around and gets annoyed.
+  'auto' (default) = tiny while a game is in front or a focus timer runs, full size otherwise. The same face is
+  her avatar in the chat window.
+
+QUIET IN CALLS AND MEETINGS (Windows, on by default; Settings > Gaming to turn off)
+  She goes calm (no chatter, stays put) while you're in a call or meeting, and goes back to normal
+  about 45 seconds after it ends. She notices it two ways, both on your PC only:
+  - a Zoom / Google Meet / Teams call / Webex window is in front (only while Awareness is on), or
+  - a CALL app has your microphone open right now: Discord, Zoom, Teams, Skype, Webex, Slack, WhatsApp,
+    Telegram, Signal, or a browser (Google Meet etc.). Windows already tracks this for its mic icon; she
+    reads only which app and whether it's in use. Apps that hold the mic all the time (OBS, NVIDIA
+    Broadcast, Voicemeeter, Sonar, Krisp...) and her own mic use don't count.
+  Replies to you and reminders still speak. Untested on real Windows so far.
 
 GAME MODE (she hypes your kills and roasts your deaths)
   When a supported game is in front (Valorant, CS2, Apex, Overwatch, Fortnite, League, Rocket League,
@@ -114,7 +154,7 @@ TALKING TO HER (voice input)
 TALKING TO YOUR FRIENDS IN A DISCORD CALL (call mode)
   She listens to the call through your PC's audio, understands what your friends say, and answers OUT LOUD
   in the call when someone says "Capri". Start: /call on (you're already in the call) or /call join (she opens
-  Discord and joins the voice channel herself, needs Full control + a Claude key), or say "join Discord and
+  Discord and joins the voice channel herself, needs Full control + a Claude or Gemini key), or say "join Discord and
   talk to my friends". Stop: /call off or "leave the call". /call status shows what's missing.
   One-time setup (Windows), because a call only hears your microphone:
     1. Install the free VB-Audio Virtual Cable (vb-audio.com/Cable) and restart. (Mac: BlackHole, but call mode
@@ -188,8 +228,9 @@ ONE-CLICK PRESETS (Settings -> QUICK SETUP, or /preset none | some | full, /powe
         sending to AI, no clicking for you.
   FULL  Full control (keys, typing, clicking, /do tasks), 'Hey Capri' always-listen, AI sees your screen.
         If voice input isn't installed yet, FULL installs it for you. Tasks and AI screen-watching still
-        need a Claude key (Settings), and everything she types for you still asks first.
-  Choosing a preset sets all the switches at once; one confirmation dialog lists everything that turns ON.
+        need a Claude or Gemini key (Settings), and what she types shows in the chat as she types it.
+  Choosing a preset sets all the switches at once; the first time you pick it, one dialog lists everything that
+  turns ON (never again after that).
   Every switch can still be flipped on its own afterwards (the label then says CUSTOM). Reflexes (auto-lock,
   auto-pause when you walk away) are never part of a preset. Saying "Capri, privacy mode" (or "turn
   everything off") switches to NONE by voice. Nothing can switch you UP to FULL by voice or by AI: only
@@ -220,8 +261,8 @@ HEY CAPRI / CHOOM (hands-free)
     immediately: never saved, logged or sent anywhere. Turn it off any time (right-click her).
   * She ignores the mic while she is talking, so she can't wake herself.
   * Voice commands don't pop her chat window open over your game: she answers with her voice and a bubble.
-  * Tasks heard this way still show the confirmation dialog first. While she is doing a task only "Capri,
-    stop" is accepted. Say a wrong name (Whisper mishears sometimes) and she just doesn't wake.
+  * Tasks heard this way start right away (no "are you sure?" popup). Move the mouse to stop her. While
+    she is doing a task only "Capri, stop" is accepted. Say a wrong name (Whisper mishears sometimes) and she just doesn't wake.
   * Careful in calls: if you say "choom" at the start of a sentence to your friends she WILL wake up.
     Turn it off for calls. It also uses some CPU whenever someone talks near the mic (max 15 phrases a
     minute are processed).
@@ -236,21 +277,24 @@ BUILT-IN LOCAL AI (no key, works offline)
   /brain cloud  always your Claude/Gemini key      /brain local  always the local AI
   /getbrain remove deletes it. Honest limits: a small model is dumber than Claude (simple replies, sometimes
   odd), uses 1-3 GB of RAM while running, and is slow on old PCs. It is text only: screen watching (/watch,
-  the AI Spotter) and tasks (/do) still need a Claude key.
+  the AI Spotter) and tasks (/do) still need a Claude or Gemini key.
 
 DOING TASKS FOR YOU (/do)
   Tell her what you want done and she operates the computer: she looks at your screen, then clicks, types
   and presses keys, one step at a time, until it's finished. Example:
       /do open Discord, join the voice channel my friends are in and tell them I'll be on in 15 minutes
-  Set up once:  1) Settings -> Full control   2) a Claude key (sk-ant...)   3) type /agent on and agree.
+  Set up once:  1) Settings -> Full control   2) a Claude key (sk-ant...) or a Gemini key   3) type /agent on
+  and agree. Claude aims more reliably; Gemini works too but may miss small buttons more often (untested
+  on real hardware so far - tell me how it does).
   How it stays safe:
-    * only starts when you type /do and confirm that exact task
-    * you must approve every piece of text she is about to type
+    * NO "are you sure?" popups: she starts right away and every text she types is shown in the chat
+    * the first time you turn tasks on, one dialog explains all this (once, ever)
     * stops the second you move the mouse, click her, use the right-click menu "STOP the task", or /stop
     * stops on banking / password / private windows; 20 steps max per task; 250 steps a day
     * never enters passwords or payments; Alt+F4, Win+R and Ctrl+Alt+Del stay blocked
-  Cost/privacy: each step sends a screenshot (1280 px wide) to Claude with your key, about a cent or two
-  per step with the default model (CAPRI_AGENT_MODEL changes it). Nothing is saved. The AI can misread a
+  Cost/privacy: each step sends a screenshot (1280 px wide) to the AI provider of your key (Anthropic for a
+  Claude key, Google for a Gemini key), about a cent or two per step with the default Claude model
+  (CAPRI_AGENT_MODEL changes it). Nothing is saved. The AI can misread a
   screen, so don't hand her anything you can't undo.
 
 AI-WRITTEN LINES (everything she says out loud)
@@ -281,8 +325,12 @@ SCREEN LEDGES (she sits on boxes on your screen)  - OFF by default, needs your O
 SHE KNOWS YOU
   MEMORY: /remember my favorite game is Minecraft, /facts, /forget 1. She brings facts up now and
     then, and they're added to her chat instructions (only what you told her to remember). Local only.
-  HABITS: /habit add drink water, /habit, /did 1 (check off), /habit rm 2. Streaks, with a
-    confetti celebration at 7 and 30 days, a gentle reminder at 8pm for anything left.
+  NOTES: say "Capri, note that the wifi password is on the router" (or "take a note: ...", "write this
+    down ...", or type /note <text>). Later: "what did I note about the wifi?" / "read my notes" or
+    /notes wifi. /notes rm 3 deletes one. Only the text of the note is kept, in settings.json on your PC
+    (audio is never saved) and notes are never sent to the AI. Up to 200; the oldest goes first.
+  HABITS: /habit add drink water, /habit, /did 1 (check off), /habit rm 2. A plain daily
+    checklist (no streaks), with a gentle reminder at 8pm for anything left.
   JOURNAL: around 8:30pm she asks how today was. /feel 4 good day, /journal for the last week.
   DAILY RECAP (Windows): /day shows time per KIND of app (coding 2h, videos 45m...), with an evening
     recap. Only category totals are kept for 14 days. Never window titles. Settings > Track time.
@@ -348,6 +396,6 @@ DEVELOPING
         voice.py  speech: Fish Audio + system voice (no Tk)
   hands.py        key presses / clicks with safety rails (no Tk)
   breach.py  hacking puzzle   sfx.py  sound effects   world.py  holidays, radio, battery (all no Tk)
-  gamemode.py  game commentary   reactor.py  screen-patch detectors   speech.py  vision.py  AI lines + spotter   ledges.py  screen box detection   simon.py  habits.py  memory.py  journal.py  daylog.py  autostart.py
+  gamemode.py  game commentary   reactor.py  screen-patch detectors   speech.py  vision.py  AI lines + spotter   ledges.py  screen box detection   simon.py  habits.py  memory.py  notes.py  journal.py  daylog.py  autostart.py
   fun.py  dice, to-dos, horoscope
   Tests:  python -m unittest discover -s tests

@@ -36,6 +36,7 @@ import expression
 import fun
 import gamemode
 import habits
+import intro
 import hands
 import hearing
 import journal
@@ -919,6 +920,21 @@ class SkinSprites:
         return (name, i), img
 
 
+def fast_crisp(img, cut=170):
+    """crisp() for big images, using only PIL point ops: hard alpha, and no pixel left on the exact key colour.
+    (Edge pixels keep their own colour, which is fine for the one-off intro.)"""
+    img = img.convert("RGBA")
+    r, g, b, a = img.split()
+    a = a.point(lambda v: 255 if v >= cut else 0)
+    key = ImageChops.multiply(ImageChops.multiply(r.point(lambda v: 255 if v == 255 else 0),
+                                                  g.point(lambda v: 255 if v == 0 else 0)),
+                              b.point(lambda v: 255 if v == 255 else 0))
+    out = Image.merge("RGBA", (r, g, b, a))
+    if key.getbbox():
+        out.paste((254, 0, 255, 255), mask=ImageChops.multiply(key, a))
+    return out
+
+
 class MiniFaces:
     """Her visor face (pet/mini/*.png, 2048px canvases): cropped to one shared box so faces don't jump, kept
     downscaled in memory, then sized per use (soft edges on a solid background for the chat, crisp hard
@@ -1497,7 +1513,7 @@ class ChatWindow:
                              "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
                              "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /tp  /dance  "
                              "/sleep  /calm  /watch  /look  /ailines  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /note  /notes  /remember  /facts  /feel  "
-                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /size  /skin  /tiny  /express  /neon  /boot  /hear  /call  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
+                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /size  /skin  /tiny  /intro  /express  /neon  /boot  /hear  /call  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
@@ -1870,6 +1886,17 @@ class ChatWindow:
                 self.system_line("Launch animation: " + arg)
             else:
                 p.start_boot(first=arg == "first", greet=False)
+        elif cmd == "/intro":
+            arg = parts[1].lower() if len(parts) > 1 else ""
+            if arg in ("on", "off"):
+                p.settings["intro"] = arg == "on"
+                p.save_settings()
+                self.system_line("Launch intro: " + arg + ("" if arg == "on" else " (the beam animation plays instead; "
+                                                                               "/boot off for none)"))
+            elif p.intro_ok():
+                p.start_intro(greet=False)
+            else:
+                self.system_line("The intro is off or its art is missing. /intro on", err=True)
         elif cmd == "/neon":
             arg = parts[1].lower() if len(parts) > 1 else ""
             if arg == "outline":
@@ -2786,6 +2813,7 @@ class Capri:
         self.canvas = tk.Canvas(self.root, width=self.Wd, height=self.Hd, highlightthickness=0, bd=0)
         self.canvas.pack()
         self.setup_transparency()
+        self.set_app_icon()
         self.win32 = Win32()
         self.sw, self.sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
 
@@ -2858,6 +2886,7 @@ class Capri:
         self.pc_events, self.hear_install_events = queue.Queue(), queue.Queue()
         self.music_talk_at, self.pending_hear, self.hear_installing = 0.0, False, False
         self.boot = None
+        self.intro = None
         self.mono = pick_font(self.root, "Consolas", "Menlo", "DejaVu Sans Mono", "Courier New")
         self.trail = collections.deque(maxlen=40)
         self.pil_cache, self.ghost_cache, self._last_ck = {}, {}, None
@@ -3691,6 +3720,7 @@ class Capri:
         self.update_busy(now)
         self.update_twitch(now)
         self.update_boot(now)
+        self.update_intro(now)
         self.update_particles(dt)
         self.scheduled(now)
         self.place()
@@ -5714,8 +5744,108 @@ class Capri:
         self.say_ai("greeting", {"away": f"They were away about {self.mind.away_hours:.0f} hours." if self.mind.away_hours >= 3 else ""},
                     self.mind.greeting(now), 7)
 
+    def set_app_icon(self):
+        """Her icon on every window and the taskbar (pet/icons)."""
+        for d in pet_asset_dirs("icons"):
+            try:
+                png = os.path.join(d, "capri.png")
+                if os.path.isfile(png):
+                    self._icon = ImageTk.PhotoImage(Image.open(png).convert("RGBA"), master=self.root)
+                    self.root.iconphoto(True, self._icon)          # True: default for every later window too
+                ico = os.path.join(d, "capri.ico")
+                if IS_WIN and os.path.isfile(ico):
+                    self.root.iconbitmap(default=ico)
+            except Exception:
+                log("icon failed: " + traceback.format_exc())
+            return
+
+    def intro_ok(self):
+        return (bool(self.settings.get("intro", True)) and self.settings.get("skin", "capri") != "classic"
+                and all(any(os.path.isfile(os.path.join(d, st + ".webp")) for d in pet_asset_dirs("intro"))
+                        for st in intro.STEMS))
+
+    def start_intro(self, greet=True):
+        """She climbs up into the screen, says hi, grins and waves, then drops away and the pet appears."""
+        wa = self.work_area()
+        W, H = intro.size(wa[2] - wa[0], wa[3] - wa[1])
+        frames = {}
+        try:
+            d = pet_asset_dirs("intro")[0]
+            for st in intro.STEMS:
+                im = Image.open(os.path.join(d, st + ".webp")).convert("RGBA").resize((W, H), Image.LANCZOS)
+                frames[st] = ImageTk.PhotoImage(fast_crisp(im))
+        except Exception:
+            log("intro failed, using the beam animation: " + traceback.format_exc())
+            return False
+        win = tk.Toplevel(self.root)
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+        bg = KEY if IS_WIN else ("systemTransparent" if IS_MAC else "#101018")
+        lbl = tk.Label(win, bd=0, highlightthickness=0, bg=bg)
+        lbl.pack()
+        win.config(bg=bg)
+        if IS_WIN:
+            win.attributes("-transparentcolor", KEY)
+        elif IS_MAC:
+            win.attributes("-transparent", True)
+        lbl.bind("<Button-1>", lambda e: self.finish_intro(skipped=True))
+        x, yup = int((wa[0] + wa[2]) / 2 - W / 2), int(wa[3] - H)
+        win.geometry(f"{W}x{H}+{x}+{wa[3] + 10}")
+        self.intro = {"t0": time.time(), "win": win, "lbl": lbl, "frames": frames, "greet": greet, "W": W, "H": H,
+                      "x": x, "yup": yup, "stem": None, "happy": False}
+        self.bubble, self.surf = "", None
+        self.go("idle", intro.DURATION + 5)
+        self.sfx.play("blip")
+        return True
+
+    def update_intro(self, now):
+        it = self.intro
+        if not it:
+            return
+        r = intro.at(now - it["t0"])
+        if r is None:
+            return self.finish_intro()
+        stem, drop = r
+        try:
+            if stem != it["stem"]:
+                it["stem"] = stem
+                it["lbl"].config(image=it["frames"][stem])
+                if stem == "intro-happy" and not it["happy"]:
+                    it["happy"] = True
+                    self.sfx.play("success")
+            it["win"].geometry(f"{it['W']}x{it['H']}+{it['x']}+{int(it['yup'] + drop * (it['H'] + 40))}")
+        except tk.TclError:
+            self.finish_intro(skipped=True)
+
+    def cancel_intro(self):
+        """Close the intro without greeting (tests, or when something more important starts)."""
+        it, self.intro = self.intro, None
+        if it:
+            try:
+                it["win"].destroy()
+            except tk.TclError:
+                pass
+
+    def finish_intro(self, skipped=False):
+        it, self.intro = self.intro, None
+        if not it:
+            return
+        try:
+            it["win"].destroy()
+        except tk.TclError:
+            pass
+        self.settings["booted"] = True
+        self.save_settings()
+        self.go("idle", 2.0)
+        if not skipped:
+            self.react("happy")
+        if it["greet"]:
+            self.greet()
+
     def start_boot(self, first=None, greet=True):
-        if self.boot:
+        if self.boot or self.intro:
+            return
+        if self.intro_ok() and self.start_intro(greet):
             return
         first = (not self.settings.get("booted")) if first is None else first
         D = boot.duration(first)
@@ -5850,6 +5980,8 @@ class Capri:
     def draw(self, now):
         c = self.canvas
         c.delete("all")
+        if self.intro:                                    # the big intro window is playing; the pet appears after
+            return
         photo, ax, ay, w, h = self.sprite_image(now)
         self.cur_img = photo
         lfx, lfy = self.Wd / 2.0, self.Hd - 8 + self.hop_y

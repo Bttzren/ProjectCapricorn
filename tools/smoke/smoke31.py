@@ -7,7 +7,7 @@ dialogs = []
 messagebox.askyesno = lambda title, msg, **k: (dialogs.append(title), True)[1]
 import capri, agent
 capri.read_api_key = lambda: "sk-ant-x"
-p = capri.Capri(); p.boot = None; p.root.update()
+p = capri.Capri(); p.boot = None; p.cancel_intro(); p.root.update()
 p.hands.level = "full"; p.settings["hands"] = "full"
 print("enable tasks 1st:", p.enable_agent(), dialogs[-1:]); n = len(dialogs)
 p.settings["agent"] = False; print("enable tasks 2nd:", p.enable_agent(), "| new dialogs:", dialogs[n:])

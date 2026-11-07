@@ -13,7 +13,7 @@ opened = []
 launcher.opener = lambda kind, target, *a, **k: (lambda: opened.append((kind, target)))
 said = []
 capri.Capri.say_moment = lambda self, sit, fb, *a, **k: said.append((sit, fb))
-p = capri.Capri(); p.root.update()
+p = capri.Capri(); p.cancel_intro(); p.root.update()
 p.open_chat(); lines = []
 p.chat.system_line = lambda t, err=False: lines.append(t)
 p.hands.set_level("media")

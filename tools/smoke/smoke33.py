@@ -7,7 +7,7 @@ from PIL import Image, ImageDraw
 capri.read_api_key = lambda: "sk-ant-x"
 prompts = []
 capri.llm_reply = lambda msgs, system, **k: (prompts.append(msgs[-1]["content"]), "[laugh] lol that's tragic")[1]
-p = capri.Capri(); p.boot = None; p.choose_next = lambda: None; p.go("idle", 99)
+p = capri.Capri(); p.boot = None; p.cancel_intro(); p.choose_next = lambda: None; p.go("idle", 99)
 spoken = []
 p.speaker.speak = lambda text, priority=False: spoken.append(text) or True
 p.ai_enabled = lambda: True

@@ -9,7 +9,7 @@ def fake_http(req, timeout=25):
     sent.append((req.full_url, json.loads(req.data)))
     return {"candidates": [{"content": {"parts": [{"text": '{"action": "done", "summary": "ok"}'}]}}]}
 capri.http_json = fake_http
-p = capri.Capri(); p.boot = None
+p = capri.Capri(); p.boot = None; p.cancel_intro()
 print("provider:", capri.detect_provider(capri.read_api_key()))
 p.hands.level = "full"; p.settings["agent"] = True
 print("ready:", p.agent_ready())

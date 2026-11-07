@@ -4,7 +4,7 @@ home = tempfile.mkdtemp(); os.environ["HOME"] = home; os.environ["APPDATA"] = ho
 sys.path.insert(0, "/home/user/ProjectCapricorn")
 import capri
 capri.read_api_key = lambda: ""
-p = capri.Capri(); p.boot = None; p.root.update()
+p = capri.Capri(); p.boot = None; p.cancel_intro(); p.root.update()
 p.choose_next = lambda: None
 lo, hi = p.bounds()
 dt = 0.04

@@ -6,7 +6,7 @@ import capri
 from PIL import Image, ImageDraw
 capri.read_api_key = lambda: ""
 t0 = time.time(); p = capri.Capri(); print("startup s:", round(time.time() - t0, 2), "kind:", p.art.kind, "w,h:", p.art.w, p.art.h)
-p.boot = None; p.choose_next = lambda: None
+p.boot = None; p.cancel_intro(); p.choose_next = lambda: None
 shots = []
 def grab(label, setup):
     setup(); p.clear_sprite_caches()

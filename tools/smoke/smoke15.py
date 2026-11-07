@@ -18,7 +18,7 @@ script = iter([json.dumps(d) for d in [
     {"action": "done", "summary": "Told your friends."}]])
 capri.vision_ask = lambda system, mt, b64, prompt, mx=120, model=None: next(script)
 capri.Capri.say_moment = lambda self, sit, fb, *a, **k: said.append((sit, fb))
-p = capri.Capri()
+p = capri.Capri(); p.cancel_intro()
 p.open_chat()
 lines = []
 p.chat.system_line = lambda t, err=False: lines.append(t)

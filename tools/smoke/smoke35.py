@@ -5,7 +5,7 @@ sys.path.insert(0, "/home/user/ProjectCapricorn")
 import capri
 from PIL import ImageGrab, Image
 capri.read_api_key = lambda: ""
-p = capri.Capri(); p.boot = None; p.choose_next = lambda: None
+p = capri.Capri(); p.boot = None; p.cancel_intro(); p.choose_next = lambda: None
 p.fx, p.fy = 400.0, float(p.ground()); p.go("idle", 99)
 def pump(secs):
     t0 = time.time()

@@ -4,7 +4,7 @@ home = tempfile.mkdtemp(); os.environ["HOME"] = home; os.environ["APPDATA"] = ho
 sys.path.insert(0, "/home/user/ProjectCapricorn")
 import capri, listen
 capri.read_api_key = lambda: ""
-p = capri.Capri(); p.boot = None
+p = capri.Capri(); p.boot = None; p.cancel_intro()
 p.open_chat()
 lines = []
 orig = p.chat.system_line

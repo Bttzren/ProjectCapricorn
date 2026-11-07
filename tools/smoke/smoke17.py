@@ -28,7 +28,7 @@ class Model:
     def transcribe(self, audio, **kw):
         s = Seg(); s.text = next(texts); return [s], None
 listen.Whisper._load = lambda self: Model()
-p = capri.Capri()
+p = capri.Capri(); p.cancel_intro()
 spoken = []
 p.speaker.speak = lambda text, priority=False: spoken.append(text) or True
 p.chat = None

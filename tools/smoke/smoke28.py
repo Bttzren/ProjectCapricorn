@@ -4,7 +4,7 @@ home = tempfile.mkdtemp(); os.environ["HOME"] = home; os.environ["APPDATA"] = ho
 sys.path.insert(0, "/home/user/ProjectCapricorn")
 import capri, meeting
 capri.read_api_key = lambda: ""
-p = capri.Capri(); p.boot = None; p.root.update()
+p = capri.Capri(); p.boot = None; p.cancel_intro(); p.root.update()
 spoken = []
 p.speaker.speak = lambda text, priority=False: spoken.append((text, priority)) or True
 mic = [[]]

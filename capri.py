@@ -5717,7 +5717,7 @@ class Capri:
         else:
             anim = self.anim
         if skin:                                             # the new skin has drawn poses for these
-            if self.state == "drag":
+            if self.state in ("drag", "air"):                  # picked up, or falling / hopping: legs tucked
                 anim = "dangle"
             elif self.state == "lounge" and now < self.talk_until:
                 anim = "lay-talk"

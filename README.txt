@@ -37,8 +37,8 @@ SETTINGS & HANDS
   HANDS decides what she may do on your computer. It is enforced in code, not just in the menu:
     Visual only  (default) - she mimes typing along while you're busy; sends nothing to your computer
     Media keys   - on request: /pause /next /prev /volup /voldown /mute /shot (screenshot) /lock
-    Full control - also /press ctrl+s, /type hello there, /click [right|double]. Turning this on asks
-                   for confirmation. These wait 5 seconds so you can click where you want the input
+    Full control - also /press ctrl+s, /type hello there, /click [right|double]. Turning this on explains
+                   itself once (first time only). These wait 5 seconds so you can click where you want the input
                    to go; click her to cancel.
   Optional REFLEXES (Full control only, off by default): lock the screen after 15 minutes away; pause
   video/music after 5 minutes away. She announces them 10 seconds ahead; click her or touch the
@@ -198,8 +198,9 @@ ONE-CLICK PRESETS (Settings -> QUICK SETUP, or /preset none | some | full, /powe
         sending to AI, no clicking for you.
   FULL  Full control (keys, typing, clicking, /do tasks), 'Hey Capri' always-listen, AI sees your screen.
         If voice input isn't installed yet, FULL installs it for you. Tasks and AI screen-watching still
-        need a Claude or Gemini key (Settings), and everything she types for you still asks first.
-  Choosing a preset sets all the switches at once; one confirmation dialog lists everything that turns ON.
+        need a Claude or Gemini key (Settings), and what she types shows in the chat as she types it.
+  Choosing a preset sets all the switches at once; the first time you pick it, one dialog lists everything that
+  turns ON (never again after that).
   Every switch can still be flipped on its own afterwards (the label then says CUSTOM). Reflexes (auto-lock,
   auto-pause when you walk away) are never part of a preset. Saying "Capri, privacy mode" (or "turn
   everything off") switches to NONE by voice. Nothing can switch you UP to FULL by voice or by AI: only
@@ -230,8 +231,8 @@ HEY CAPRI / CHOOM (hands-free)
     immediately: never saved, logged or sent anywhere. Turn it off any time (right-click her).
   * She ignores the mic while she is talking, so she can't wake herself.
   * Voice commands don't pop her chat window open over your game: she answers with her voice and a bubble.
-  * Tasks heard this way still show the confirmation dialog first. While she is doing a task only "Capri,
-    stop" is accepted. Say a wrong name (Whisper mishears sometimes) and she just doesn't wake.
+  * Tasks heard this way start right away (no "are you sure?" popup). Move the mouse to stop her. While
+    she is doing a task only "Capri, stop" is accepted. Say a wrong name (Whisper mishears sometimes) and she just doesn't wake.
   * Careful in calls: if you say "choom" at the start of a sentence to your friends she WILL wake up.
     Turn it off for calls. It also uses some CPU whenever someone talks near the mic (max 15 phrases a
     minute are processed).
@@ -256,8 +257,8 @@ DOING TASKS FOR YOU (/do)
   and agree. Claude aims more reliably; Gemini works too but may miss small buttons more often (untested
   on real hardware so far - tell me how it does).
   How it stays safe:
-    * only starts when you type /do and confirm that exact task
-    * you must approve every piece of text she is about to type
+    * NO "are you sure?" popups: she starts right away and every text she types is shown in the chat
+    * the first time you turn tasks on, one dialog explains all this (once, ever)
     * stops the second you move the mouse, click her, use the right-click menu "STOP the task", or /stop
     * stops on banking / password / private windows; 20 steps max per task; 250 steps a day
     * never enters passwords or payments; Alt+F4, Win+R and Ctrl+Alt+Del stay blocked

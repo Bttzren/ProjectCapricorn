@@ -1912,13 +1912,12 @@ class SettingsWindow:
     def pick_hands(self):
         value = self.hands_var.get()
         if value == "full" and self.pet.hands.level != "full":
-            from tkinter import messagebox
-            ok = messagebox.askyesno(
-                "Turn on Full control?",
+            ok = self.pet.ask_once(
+                "full", "Turn on Full control?",
                 "Full control lets Capri press any keys, type text and click in ANY app when you tell her to, "
                 "and run any reflexes you switch on.\n\nA wrong command can send a message, close something or "
                 "lose work. She never acts because of what the AI says, and you can lower this at any time.\n\n"
-                "Turn on Full control?", parent=self.win, default="no", icon="warning")
+                "Turn on Full control?", parent=self.win)
             if not ok:
                 self.hands_var.set(self.pet.hands.level)
                 return
@@ -2491,6 +2490,12 @@ class Capri:
         self.habits = habits.Habits(self.settings.setdefault("habits", []))
         self.memory = memory.Memory(self.settings.setdefault("memory", []))
         self.notes = notes.Notes(self.settings.setdefault("notes", []))
+        done = self.settings.setdefault("consented", {})              # already switched on = already agreed
+        for key, on in (("ledges", self.settings.get("ledges")), ("vision", self.settings.get("ai_vision")),
+                        ("hear", self.settings.get("hear")), ("wake", self.settings.get("wake")),
+                        ("agent", self.settings.get("agent")), ("full", self.settings.get("hands") == "full")):
+            if on:
+                done[key] = True
         self.daylog = daylog.DayLog(self.settings.setdefault("daylog", {}))
         self.journal = journal.Journal(self.settings.setdefault("journal", []))
         self.msgs = []
@@ -3376,16 +3381,14 @@ class Capri:
     def enable_ledges(self, parent=None, ask=True):
         """Switch screen ledges on, but only after the user agrees to what it does. Returns True if on."""
         if ask:
-            from tkinter import messagebox
-            if not messagebox.askyesno(
-                    "Let Capri look at your screen?",
+            if not self.ask_once(
+                    "ledges", "Let Capri look at your screen?",
                     "To find boxes to sit on, Capri takes a screenshot every few seconds and looks for box "
                     "edges, entirely on your computer.\n\n* The screenshot lives in memory for a moment, then "
                     "it's thrown away.\n* Nothing is saved to disk or sent anywhere.\n* She pauses on pages "
                     "that look private (banking, passwords, private browsing).\n\nAnything on your screen is "
                     "briefly visible to her code, so only turn this on if you're comfortable with that. You can "
-                    "switch it off any time.\n\nTurn on screen ledges?",
-                    parent=parent, default="no", icon="warning"):
+                    "switch it off any time.\n\nTurn on screen ledges?", parent=parent):
                 return False
         self.settings["ledges"] = True
         self.ledge_next = 0.0
@@ -3510,9 +3513,8 @@ class Capri:
     def enable_vision(self, parent=None, ask=True):
         """Switch the AI spotter on, but only after the user agrees to what it does. Returns True if on."""
         if ask:
-            from tkinter import messagebox
-            if not messagebox.askyesno(
-                    "Let Capri watch your screen with AI?",
+            if not self.ask_once(
+                    "vision", "Let Capri watch your screen with AI?",
                     "While she's watching, Capri takes a small shrunken screenshot every few seconds (only when the "
                     "screen changed) and SENDS it to your AI provider (Claude or Gemini, whichever key you use) so "
                     "the AI can see what's happening and react.\n\n* It can include ANYTHING visible on your "
@@ -3521,7 +3523,7 @@ class Capri:
                     "and while you're away.\n* It uses your API credits: very roughly $1-3 an hour with Claude "
                     "(there is a daily limit).\n* It starts by itself when a game is in front. /watch on works "
                     "for anything else.\n\nOnly turn this on if you're comfortable with that. You can switch it "
-                    "off any time. Turn on AI screen watching?", parent=parent, default="no", icon="warning"):
+                    "off any time. Turn on AI screen watching?", parent=parent):
                 return False
         self.settings["ai_vision"] = True
         self.save_settings()
@@ -3529,6 +3531,20 @@ class Capri:
         return True
 
     # ---- local AI and voice input
+    def ask_once(self, key, title, text, parent=None):
+        """No nagging: a feature that opens your mic or screen explains itself ONCE, the first time ever.
+        After a yes it never asks again. Per-action 'are you sure?' popups don't exist anymore."""
+        done = self.settings.setdefault("consented", {})
+        if done.get(key):
+            return True
+        from tkinter import messagebox
+        if not messagebox.askyesno(title, text + "\n\n(You'll only see this once.)", parent=parent, default="no",
+                                   icon="warning"):
+            return False
+        done[key] = True
+        self.save_settings()
+        return True
+
     def add_note(self, text):
         """Save a note (typed or dictated). Text only, kept in settings.json on this PC; never sent to the AI."""
         saved = self.notes.add(text, time.strftime("%m-%d %H:%M"))
@@ -3654,20 +3670,19 @@ class Capri:
 
     # ---- hearing the PC's own audio
     def enable_hear(self, parent=None, ask=True):
-        from tkinter import messagebox
         if sys.platform == "darwin":
             self.notify("macOS can't share its audio without a helper (like BlackHole), so I can't hear your Mac.",
                         err=True)
             return False
-        if ask and not messagebox.askyesno(
-                "Let Capri hear your PC?",
+        if ask and not self.ask_once(
+                "hear", "Let Capri hear your PC?",
                 "While this is on, Capri listens to whatever your PC is PLAYING (music, videos, game sound, voice "
                 "calls).\n\n* The audio is kept only in memory (the last minute), never saved to disk.\n* It's "
                 "turned into text on your computer, only when you ask (\"what did they just say\", \"summarize "
                 "this\"). Nothing is sent anywhere unless you ask for a summary, which sends the TEXT to your AI.\n"
                 "* A call can include other people's voices: tell them if that matters.\n* She uses the beat to dance "
                 "to music. She pauses on banking/password windows and while she's talking.\n\nTurn on hearing your PC?",
-                parent=parent, default="no", icon="warning"):
+                parent=parent):
             return False
         self.settings["hear"] = True
         self.save_settings()
@@ -3839,17 +3854,15 @@ class Capri:
             return True
         local = BRAIN["mode"] == "local" or (BRAIN["mode"] == "auto" and not read_api_key())
         if ask:
-            from tkinter import messagebox
-            if not messagebox.askyesno(
-                    "Let Capri talk in your call?",
+            if not self.ask_once(
+                    "call", "Let Capri talk in your call?",
                     "Capri will listen to your voice call through your PC's audio and answer your friends OUT LOUD in "
                     "the call.\n\n* Your friends' voices are turned into text on your PC and never saved.\n* "
                     + ("The local AI writes her answers, so nothing leaves your PC.\n" if local else
                        "The recent TEXT of the conversation is sent to your AI provider to write her answers.\n")
                     + "* She answers only when someone says her name, a few times a minute at most.\n* She "
                     "announces herself to the call when she starts: tell your friends first.\n* Stop her any time "
-                    "with /call off or by saying 'leave the call'.\n\nStart call mode?",
-                    parent=parent, default="no", icon="warning"):
+                    "with /call off or by saying 'leave the call'.\n\nStart call mode?", parent=parent):
                 return False
         if join:
             okj, whyj = self.agent_ready()
@@ -3991,13 +4004,12 @@ class Capri:
             return False
         lines = presets.risky(name, self.settings)
         if ask and lines:
-            from tkinter import messagebox
-            if not messagebox.askyesno(
-                    f"Switch to {presets.LABELS[name]}?",
+            if not self.ask_once(
+                    "preset_" + name, f"Switch to {presets.LABELS[name]}?",
                     "This turns ON:\n\n* " + "\n* ".join(lines) + "\n\nThings she hears or sees can be misread by "
-                    "the AI, so don't hand her anything you can't undo. Tasks still ask before she types, she "
-                    "stops when you move the mouse, and you can flip any single switch afterwards in Settings.\n\n"
-                    f"Switch to {presets.LABELS[name]}?", parent=parent, default="no", icon="warning"):
+                    "the AI, so don't hand her anything you can't undo. She stops the moment you move the mouse, "
+                    "and you can flip any single switch afterwards in Settings.\n\n"
+                    f"Switch to {presets.LABELS[name]}?", parent=parent):
                 return False
         cfg = presets.PRESETS[name]
         self.hands.set_level(cfg["hands"])
@@ -4091,19 +4103,18 @@ class Capri:
             self.say(text[:220], 14, speak="priority")
 
     def enable_wake(self, parent=None):
-        from tkinter import messagebox
         if not listen.installed():
             self.notify("I need ears first. Type /getears and I'll install voice input.", err=True)
             return False
-        if not messagebox.askyesno(
-                "Let Capri listen for \"Hey Capri\" and \"Choom\"?",
+        if not self.ask_once(
+                "wake", "Let Capri listen for \"Hey Capri\" and \"Choom\"?",
                 "While this is on, your MICROPHONE stays open all the time (Windows shows its mic indicator).\n\n"
                 "* Everything you say is turned into text ON YOUR COMPUTER. Nothing is sent anywhere and "
                 "nothing is saved.\n* Anything that doesn't START with \"Hey Capri\", \"Capri\", \"Hey Choom\" or "
                 "\"Choom\" is thrown away immediately.\n* If you chat with friends and say \"choom\" at the start of a "
                 "sentence she WILL wake up and answer. Turn this off (right-click her) in calls.\n* It uses some "
-                "CPU whenever someone talks near the mic.\n* Tasks she hears still ask for your OK first.\n\n"
-                "Turn on wake word listening?", parent=parent, default="no", icon="warning"):
+                "CPU whenever someone talks near the mic.\n* Tasks she hears start right away (move the mouse to stop "
+                "her).\n\nTurn on wake word listening?", parent=parent):
             return False
         self.settings["wake"] = True
         self.save_settings()
@@ -4276,16 +4287,16 @@ class Capri:
         return True, ""
 
     def enable_agent(self, parent=None):
-        from tkinter import messagebox
-        if not messagebox.askyesno(
-                "Let Capri do tasks for you?",
-                "When you type /do <task>, Capri will LOOK at your screen (a screenshot is sent to the AI provider of "
-                "your key: Anthropic for a Claude key, Google for a Gemini key, using your credits), then click, type and press keys in your apps to get it done, for up to 20 steps.\n\n"
-                "* She can click and type in ANY app, including sending messages.\n* Every text she wants to type "
-                "is shown to you for approval first.\n* She stops the moment you move the mouse, click her, or type "
-                "/stop. She also stops on banking/password windows.\n* She never enters passwords or payments.\n"
-                "* AI can misread a screen and click the wrong thing. Don't use it for anything you can't undo.\n\n"
-                "Turn on tasks?", parent=parent, default="no", icon="warning"):
+        if not self.ask_once(
+                "agent", "Let Capri do tasks for you?",
+                "When you ask her to do something (/do <task>, or say it), Capri will LOOK at your screen (a "
+                "screenshot is sent to the AI provider of your key: Anthropic for a Claude key, Google for a Gemini "
+                "key, using your credits), then click, type and press keys in your apps to get it done, for up to "
+                "20 steps.\n\n* She starts RIGHT AWAY, no 'are you sure?' popups. What she types shows in the chat.\n"
+                "* She can click and type in ANY app, including sending messages.\n* She stops the moment you move "
+                "the mouse, click her, or type /stop. She also stops on banking/password windows.\n* She never "
+                "enters passwords or payments.\n* AI can misread a screen and click the wrong thing. Don't use it "
+                "for anything you can't undo.\n\nTurn on tasks?", parent=parent):
             return False
         self.settings["agent"] = True
         self.save_settings()
@@ -4298,16 +4309,11 @@ class Capri:
         task = " ".join((task or "").split())[:300]
         if not task:
             return False, "Tell me what to do: /do open Discord and tell my friends I'll be on in 15"
-        from tkinter import messagebox
-        if not messagebox.askyesno(
-                "Do this task?",
-                f"Capri will try to do this by clicking and typing on your screen:\n\n  {task}\n\n"
-                "Move the mouse, click her, or type /stop to take over at any time.", default="no"):
-            return False, "Okay, cancelled."
+        self.notify(f"On it: {task[:120]}  (move the mouse, click me or /stop to stop)", secs=6)
         h = hands.Hands(level=self.hands.level, threaded=False, log=log, per_min=120)
         ag = agent.Agent(
             ledges.capture, self._agent_ask, h,
-            title=self.win32.foreground_title, pointer=self.win32.cursor_pos, approve=self._agent_approve,
+            title=self.win32.foreground_title, pointer=self.win32.cursor_pos, approve=self._agent_typing,
             blocked=self._agent_blocked, note=lambda t: self.agent_events.put(("note", t)), budget=self.agent_budget)
         self.agent = ag
         if self.chat and self.chat.alive():
@@ -4338,6 +4344,11 @@ class Capri:
     def _agent_blocked(self, x, y):
         """True when (x, y) is on top of Capri herself or her bubble."""
         return (self.fx - self.fw * 0.8 <= x <= self.fx + self.fw * 0.8 and self.fy - self.fh * 1.8 <= y <= self.fy + 20)
+
+    def _agent_typing(self, kind, detail):
+        """No popup per text anymore: just show what she types in the chat as she types it."""
+        self.agent_events.put(("note", f"Typing: {detail[:200]}"))
+        return True
 
     def _agent_approve(self, kind, detail):
         """Called on the agent's thread: ask the user on the main thread and wait for the answer."""

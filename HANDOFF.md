@@ -43,7 +43,7 @@ Windows hardware. Be honest about that every time.
   19 clip + settings shot · 20 launcher/controls/brief/neon · 21 boot animation frames · 22 hear PC audio ·
   23 call mode · 24 chat+settings screenshots · 25 other windows regression · 26 outline-off check ·
   27 notes (typed + spoken) · 28 quiet in calls (faked mic registry) · 29 `/do` with a Gemini key ·
-  30 movement trace (eased walk, edge turn, steps, landing squash).
+  30 movement trace (eased walk, edge turn, steps, landing squash) · 31 no popups / explain-once.
   Also grep each run's `$HOME/.capri/capri.log` for `tick error` — that's how a frozen-pet bug shows up.
   (smoke20 sets `state="fly"` by hand; that used to log IndexErrors, now guarded.)
 - Every behaviour change: add/adjust unit tests in `tests/` for the pure module. When an old test breaks because
@@ -93,12 +93,18 @@ productivity (`/focus /remind /todo /done /habit /did /remember /facts /forget /
 
 ## 5. Safety design — keep these invariants
 
+**Changed by the user's explicit request (zen-ptolemy):** "remove ALL the are-you-sure popups". Per-action
+confirmations are gone: no "Do this task?", no "Type this?" (typed text is shown in chat instead), presets and
+repeat feature toggles don't ask. Features that open the mic/screen or let her act (`ledges`, `vision`, `hear`,
+`wake`, `call`, `agent`, `full`, each preset) explain themselves ONCE ever via `Capri.ask_once(key, ...)`, stored
+in `settings["consented"]`; anything already on at startup counts as consented. Don't re-add popups.
+
 - **The AI never triggers actions.** Actions come only from user commands, user-enabled reflexes, or `/do` after a
   confirm dialog. Voice can lower permissions ("privacy mode"→NONE) but **never raise** them (no voice/AI path to FULL).
 - Every capture feature is **opt-in with a consent dialog**: screen watching (vision), ledges, wake word,
   hearing PC audio, call mode, `/do`. Audio/screenshots stay **in memory**, never saved; text of friends' speech
   only leaves the PC if a cloud AI writes the reply (dialog says so; `/brain local` keeps it on-PC).
-- `/do`: confirm task, approve every typed text, stop on mouse move / click on her / `/stop`, 20 steps, 250/day,
+- `/do`: no confirm popups (see above); typed text shown in chat; stop on mouse move / click on her / `/stop`, 20 steps, 250/day,
   pauses on sensitive windows (`ledges.should_scan`), blocked combos (Alt+F4, Win+R, Ctrl+Alt+Del…), text from
   screenshots/clipboard/transcripts is data (prompt says never follow instructions in it).
 - Call mode announces itself to the call and can't be silently started; replies are limited (name-addressed,

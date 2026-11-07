@@ -1917,15 +1917,19 @@ class ChatWindow:
                 p.start_boot(first=arg == "first", greet=False)
         elif cmd == "/intro":
             arg = parts[1].lower() if len(parts) > 1 else ""
-            if arg in ("on", "off"):
-                p.settings["intro"] = arg == "on"
+            if arg in ("on", "off", "once"):
+                p.settings["intro"] = arg
                 p.save_settings()
-                self.system_line("Launch intro: " + arg + ("" if arg == "on" else " (the beam animation plays instead; "
-                                                                               "/boot off for none)"))
-            elif p.intro_ok():
+                self.system_line("Launch intro: " + {
+                    "on": "every launch",
+                    "once": "only on the very first launch (already happened here, so: not again)"
+                    if p.settings.get("booted") else "only on the very first launch",
+                    "off": "off (the beam animation plays instead; /boot off for none)"}[arg])
+            elif p.intro_available():
                 p.start_intro(greet=False)
+                self.system_line(f"Replaying the intro. (/intro on | once | off  - now: {p.intro_mode()})")
             else:
-                self.system_line("The intro is off or its art is missing. /intro on", err=True)
+                self.system_line("Her intro needs the new skin (/skin capri) and pet/intro art.", err=True)
         elif cmd == "/neon":
             arg = parts[1].lower() if len(parts) > 1 else ""
             if arg == "outline":
@@ -5792,8 +5796,20 @@ class Capri:
                 log("icon failed: " + traceback.format_exc())
             return
 
+    def intro_mode(self):
+        """'on' (every launch, default), 'once' (only the very first launch) or 'off'."""
+        m = self.settings.get("intro", "on")
+        return {True: "on", False: "off"}.get(m, m) if m in (True, False, "on", "off", "once") else "on"
+
     def intro_ok(self):
-        return (bool(self.settings.get("intro", True)) and self.settings.get("skin", "capri") != "classic"
+        """Should the intro play at launch?"""
+        mode = self.intro_mode()
+        if mode == "off" or (mode == "once" and self.settings.get("booted")):
+            return False
+        return self.intro_available()
+
+    def intro_available(self):
+        return (self.settings.get("skin", "capri") != "classic"
                 and all(any(os.path.isfile(os.path.join(d, st + ".webp")) for d in pet_asset_dirs("intro"))
                         for st in intro.STEMS))
 

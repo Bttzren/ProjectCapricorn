@@ -23,3 +23,9 @@ print("finished:", p.intro is None, "| greeted:", len(greets), "| booted:", p.se
 p.settings["skin"] = "classic"; print("classic skin -> intro_ok:", p.intro_ok())
 p.settings["skin"] = "capri"; p.settings["intro"] = False; print("intro off -> intro_ok:", p.intro_ok())
 print("ok")
+# /intro once: plays only while 'booted' is unset; replay still works
+p.settings["intro"] = "once"; p.settings["booted"] = True; print("once + booted -> intro_ok:", p.intro_ok())
+p.settings["booted"] = False; print("once + first launch -> intro_ok:", p.intro_ok())
+p.settings["intro"] = True; print("legacy True -> mode:", p.intro_mode())
+p.settings["intro"] = "once"; p.settings["booted"] = True; p.open_chat(); p.chat.submit("/intro"); print("replay with once+booted:", bool(p.intro))
+p.cancel_intro(); print("ok2")

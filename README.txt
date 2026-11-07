@@ -90,7 +90,8 @@ SKINS (right-click her > Skins, or /skin <name>)
   Your own skin: a folder in pet/skins/ (or %USERPROFILE%\.capri\pet\skins\) with the same strip names and
   frame sizes as pet/skins/capri/ - see pet/CREDITS.md.
 
-LAUNCH INTRO (/intro to replay, /intro off for the old beam animation, /boot off for none)
+LAUNCH INTRO (/intro to replay; /intro on = every launch (default), /intro once = first launch only,
+  /intro off = the old beam animation, /boot off = none)
   When she starts she climbs up into your screen, grabs the edges, says hi, grins and waves, then drops away
   and appears as usual (about 3.6 s, click it to skip). Not with the classic skin. Her icon (pet/icons) is
   on her windows, and the Windows .exe build uses capri.ico.

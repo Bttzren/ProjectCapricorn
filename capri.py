@@ -2531,7 +2531,7 @@ class Capri:
         self.glitch = 0.0
         self.hop_y = 0.0
         self.step_ph, self.walk_k, self.turn_until = 0.0, 1.0, 0.0     # walking: step clock, pace, turn pause
-        self.seen_dir, self.turn_squash = 1, 0.0                     # quick squash when she turns around
+        self.facing, self.turn_squash = None, 0.0                    # quick squash when she visibly turns
         self.surf = None            # (id, left_at_last_seen) when standing on a window
         self.surfaces = []
         self.surf_check = 0.0
@@ -3271,8 +3271,6 @@ class Capri:
         # smoothing
         self.angle += (self.angle_t - self.angle) * min(1.0, 0.22 * dt * 25)
         self.land_squash = max(0.0, self.land_squash - dt * 5)
-        if self.dir != self.seen_dir:
-            self.seen_dir, self.turn_squash = self.dir, 1.0
         self.turn_squash = max(0.0, self.turn_squash - dt * 8)
         self.sy = 1.0 - 0.16 * self.land_squash
         self.sx = (1.0 + 0.12 * self.land_squash) * (1.0 - 0.3 * motion.smoothstep(self.turn_squash))
@@ -4281,8 +4279,8 @@ class Capri:
         from tkinter import messagebox
         if not messagebox.askyesno(
                 "Let Capri do tasks for you?",
-                "When you type /do <task>, Capri will LOOK at your screen (a screenshot is sent to Claude, using your "
-                "key and credits), then click, type and press keys in your apps to get it done, for up to 20 steps.\n\n"
+                "When you type /do <task>, Capri will LOOK at your screen (a screenshot is sent to the AI provider of "
+                "your key: Anthropic for a Claude key, Google for a Gemini key, using your credits), then click, type and press keys in your apps to get it done, for up to 20 steps.\n\n"
                 "* She can click and type in ANY app, including sending messages.\n* Every text she wants to type "
                 "is shown to you for approval first.\n* She stops the moment you move the mouse, click her, or type "
                 "/stop. She also stops on banking/password windows.\n* She never enters passwords or payments.\n"
@@ -5222,6 +5220,13 @@ class Capri:
         key, frame = self.art.frame(anim, now - self.t_start, self.dir, self.step_ph if anim == "walk" else None)
         flip = self.art.flip_dir and self.dir < 0
         dim = self.state == "sleep"
+        # what she visibly faces: the left/right run row, or a mirrored sprite. Squash only when THAT changes,
+        # not when self.dir flips while the drawn picture stays the same (the sheet's idle doesn't mirror).
+        facing = key[0] if str(key[0]).startswith("running-") else (flip if self.art.flip_dir else None)
+        if facing is not None:
+            if self.facing is not None and facing != self.facing:
+                self.turn_squash = 1.0
+            self.facing = facing
         if self.glitch > 0.02:
             img, ax, ay = pose(frame, self.angle, self.sx, self.sy, flip, dim, self.glitch, self.rng)
             if self.outline_on():

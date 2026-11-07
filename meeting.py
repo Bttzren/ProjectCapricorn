@@ -3,9 +3,10 @@
 Two signals, both local:
 - the TITLE of the front window looks like a meeting (Zoom Meeting, Google Meet, a Teams call, Webex...).
   Only used while Awareness is on; the title is not stored.
-- Windows says another app is USING THE MICROPHONE right now (Discord voice, Zoom, Teams, Meet in a browser).
+- Windows says a CALL APP is using the microphone right now (Discord voice, Zoom, Teams, Meet in a browser).
   Windows keeps this in the registry for its own mic-privacy icon; we only read app names + "in use or not".
-  Capri's own mic use (push-to-talk, wake word, call mode) is ignored.
+  Only known call apps count (an allow-list): OBS, NVIDIA Broadcast, Voicemeeter, Sonar, Krisp etc. hold the
+  mic all day and must not make her go quiet forever. Capri's own mic use is never on the list.
 Nothing here records audio or is sent anywhere.
 """
 import re
@@ -16,8 +17,12 @@ TITLE_PATTERNS = [
     r"\bmicrosoft teams\b.*\b(meeting|call)\b", r"\b(meeting|call)\b.*\bmicrosoft teams\b",
     r"\bwebex\b", r"\bgotomeeting\b", r"\bskype\b.*\bcall\b",
 ]
-OWN = ("python", "pythonw", "py", "capri")             # Capri itself (source or built exe)
+CALL_APPS = ("discord", "discordptb", "discordcanary", "zoom", "teams", "msteams", "ms-teams", "skype", "webex",
+             "ciscocollabhost", "slack", "whatsapp", "telegram", "signal", "facetime",
+             # browsers: Google Meet / Teams web / Discord web. A browser only holds the mic while a site uses it.
+             "chrome", "msedge", "firefox", "brave", "opera", "vivaldi", "arc")
 GRACE = 45.0                                            # seconds without a signal before she talks again
+MIC_MAX = 4 * 3600.0     # a mic held this long with no meeting window is probably a stale entry: stop trusting it
 
 MIC_KEY = r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone"
 
@@ -37,13 +42,13 @@ def app_name(key_name):
     return last.lower()
 
 
-def mic_users(entries, own=OWN):
-    """Apps using the mic right now, from [(key_name, last_used_start, last_used_stop)].
+def mic_users(entries, apps=CALL_APPS):
+    """Call apps using the mic right now, from [(key_name, last_used_start, last_used_stop)].
     Windows sets stop to 0 while the app still has the mic open."""
     out = []
     for key, start, stop in entries:
         name = app_name(key)
-        if start and not stop and name and name not in own and name not in out:
+        if start and not stop and name in apps and name not in out:
             out.append(name)
     return out
 
@@ -87,10 +92,20 @@ class Detector:
     """Turns the signals into 'start' / 'end' events, with a grace period so alt-tabbing out of a Zoom
     window or a short mute doesn't make her chatty mid-meeting."""
 
-    def __init__(self, grace=GRACE):
+    def __init__(self, grace=GRACE, mic_max=MIC_MAX):
         self.grace, self.active, self.last_seen, self.why = grace, False, 0.0, ""
+        self.mic_max, self.mic_since, self.mic_ignored = mic_max, None, ()
 
     def update(self, now, title="", mic=()):
+        mic = tuple(mic or ())
+        if not mic:
+            self.mic_since, self.mic_ignored = None, ()          # signal cleared: trust the mic again
+        elif self.mic_since is None:
+            self.mic_since = now
+        if mic and mic == self.mic_ignored:
+            mic = ()
+        elif mic and now - self.mic_since >= self.mic_max:
+            self.mic_ignored, mic = mic, ()                      # stuck for hours: ignore until it changes
         why = ""
         if title_is_meeting(title):
             why = "a meeting window"

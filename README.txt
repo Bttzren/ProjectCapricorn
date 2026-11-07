@@ -75,9 +75,10 @@ QUIET IN CALLS AND MEETINGS (Windows, on by default; Settings > Gaming to turn o
   She goes calm (no chatter, stays put) while you're in a call or meeting, and goes back to normal
   about 45 seconds after it ends. She notices it two ways, both on your PC only:
   - a Zoom / Google Meet / Teams call / Webex window is in front (only while Awareness is on), or
-  - another app has your microphone open right now (Discord voice, Zoom, Teams, Meet in a browser...).
-    Windows already tracks this for its mic icon; she reads only which app and whether it's in use.
-    Her own mic use (talk, wake word, call mode) doesn't count.
+  - a CALL app has your microphone open right now: Discord, Zoom, Teams, Skype, Webex, Slack, WhatsApp,
+    Telegram, Signal, or a browser (Google Meet etc.). Windows already tracks this for its mic icon; she
+    reads only which app and whether it's in use. Apps that hold the mic all the time (OBS, NVIDIA
+    Broadcast, Voicemeeter, Sonar, Krisp...) and her own mic use don't count.
   Replies to you and reminders still speak. Untested on real Windows so far.
 
 GAME MODE (she hypes your kills and roasts your deaths)
@@ -260,8 +261,9 @@ DOING TASKS FOR YOU (/do)
     * stops the second you move the mouse, click her, use the right-click menu "STOP the task", or /stop
     * stops on banking / password / private windows; 20 steps max per task; 250 steps a day
     * never enters passwords or payments; Alt+F4, Win+R and Ctrl+Alt+Del stay blocked
-  Cost/privacy: each step sends a screenshot (1280 px wide) to Claude with your key, about a cent or two
-  per step with the default model (CAPRI_AGENT_MODEL changes it). Nothing is saved. The AI can misread a
+  Cost/privacy: each step sends a screenshot (1280 px wide) to the AI provider of your key (Anthropic for a
+  Claude key, Google for a Gemini key), about a cent or two per step with the default Claude model
+  (CAPRI_AGENT_MODEL changes it). Nothing is saved. The AI can misread a
   screen, so don't hand her anything you can't undo.
 
 AI-WRITTEN LINES (everything she says out loud)

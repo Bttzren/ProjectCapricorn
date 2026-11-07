@@ -99,5 +99,27 @@ class ArtTests(unittest.TestCase):
         self.assertIsNone(E.cutin_slide(-0.1))
 
 
+class MiniTests(unittest.TestCase):
+    def test_mini_faces(self):
+        seen = {E.mini_pick(i / 20.0) for i in range(20 * 60)}
+        self.assertTrue({"idle", "blink", "look_left", "look_right", "glitch"} <= seen)
+        self.assertEqual(sum(E.mini_pick(i / 20.0) == "idle" for i in range(1200)) > 900, True)   # mostly calm
+        talk = {E.mini_pick(i / 20.0, talking=True) for i in range(40)}
+        self.assertTrue({"talk", "talk2"} <= talk)
+        self.assertEqual({E.mini_pick(i / 20.0, thinking=True) for i in range(5, 80) if i % 20 > 3} - {"look_left", "look_right"}, set())
+        self.assertTrue(E.mini_pick(1.0, angry=True).startswith("annoyed"))
+        self.assertIn(E.mini_pick(1.0, talking=True, angry=True), ("annoyed", "annoyed_talk"))
+        self.assertEqual(E.mini_pick(1.0, watcher=True), "watcher")
+        self.assertEqual(E.mini_pick(0.05, watcher=True), "blink")
+        self.assertEqual(E.mini_pick(1.0, emotion="angry"), "annoyed")
+
+    def test_mini_files_exist(self):
+        root = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pet", "mini")
+        for name in E.MINI:
+            self.assertTrue(os.path.isfile(os.path.join(root, name + ".png")), name)
+        for v in E.MINI_FOR.values():
+            self.assertIn(v, E.MINI)
+
+
 if __name__ == "__main__":
     unittest.main()

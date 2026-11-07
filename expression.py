@@ -174,3 +174,33 @@ def cutin_slide(age, dur=CUTIN_SECS, edge=0.15):
         x = (age - (dur - edge)) / edge
         return x * x * (3 - 2 * x)
     return 0.0
+
+
+# ------------------------------------------------------------------ mini face (her visor: chat avatar, tiny mode)
+MINI = ("idle", "blink", "talk", "talk2", "look_left", "look_right", "annoyed", "annoyed_talk", "glitch", "watcher")
+MINI_FOR = {"angry": "annoyed", "scared": "glitch", "sleepy": "blink", "confused": "look_left",
+            "curious": "look_right", "embarrassed": "look_left", "thinking": "look_right"}
+
+
+def mini_pick(t, talking=False, thinking=False, angry=False, watcher=False, emotion=None):
+    """Which mini face to show at time t (seconds). Deterministic in t so it's testable:
+    talking -> mouth shapes, thinking -> glances side to side, angry -> annoyed, otherwise idle with a blink
+    every ~4.3 s, an occasional sideways look and a rare glitch. The Watcher has one face (+ blink)."""
+    cyc, ph = int(t // 4.3), t % 4.3
+    if watcher:
+        return "blink" if ph < 0.15 else "watcher"
+    if angry or emotion == "angry":
+        return "annoyed_talk" if talking and int(t * 6) % 2 else "annoyed"
+    if talking:
+        return ("talk", "talk2", "talk", "idle")[int(t * 7) % 4]
+    if emotion in MINI_FOR:
+        return MINI_FOR[emotion]
+    if thinking:
+        return "look_left" if int(t / 0.9) % 2 else "look_right"
+    if ph < 0.15:
+        return "blink"
+    if cyc % 9 == 4 and 2.0 <= ph < 2.25:
+        return "glitch"
+    if cyc % 5 == 2 and 1.0 <= ph < 2.0:
+        return "look_left" if cyc % 2 else "look_right"
+    return "idle"

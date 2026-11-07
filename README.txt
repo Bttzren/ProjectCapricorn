@@ -89,6 +89,11 @@ SKINS (right-click her > Skins, or /skin <name>)
   Your own skin: a folder in pet/skins/ (or %USERPROFILE%\.capri\pet\skins\) with the same strip names and
   frame sizes as pet/skins/capri/ - see pet/CREDITS.md.
 
+TINY MODE (right-click > Tiny mode, or /tiny on | off | auto)
+  Just her floating visor face (mini art by xilia_world00): it blinks, talks, glances around and gets annoyed.
+  'auto' (default) = tiny while a game is in front or a focus timer runs, full size otherwise. The same face is
+  her avatar in the chat window.
+
 QUIET IN CALLS AND MEETINGS (Windows, on by default; Settings > Gaming to turn off)
   She goes calm (no chatter, stays put) while you're in a call or meeting, and goes back to normal
   about 45 seconds after it ends. She notices it two ways, both on your PC only:

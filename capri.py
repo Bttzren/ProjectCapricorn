@@ -919,6 +919,59 @@ class SkinSprites:
         return (name, i), img
 
 
+class MiniFaces:
+    """Her visor face (pet/mini/*.png, 2048px canvases): cropped to one shared box so faces don't jump, kept
+    downscaled in memory, then sized per use (soft edges on a solid background for the chat, crisp hard
+    edges for the color-keyed desktop window)."""
+
+    def __init__(self):
+        self.src, self.cache, self.tried = {}, {}, False
+
+    def load(self):
+        if self.tried:
+            return bool(self.src)
+        self.tried = True
+        dirs = pet_asset_dirs("mini")
+        if not dirs:
+            return False
+        imgs = {}
+        for name in expression.MINI:
+            path = os.path.join(dirs[0], name + ".png")
+            if os.path.isfile(path):
+                try:
+                    im = Image.open(path).convert("RGBA")
+                    imgs[name] = im.reduce(4) if im.width >= 1024 else im
+                except Exception:
+                    log(f"mini face {name} failed: " + traceback.format_exc())
+        boxes = [b for b in (i.getchannel("A").getbbox() for i in imgs.values()) if b]
+        if "idle" not in imgs or not boxes:
+            return False
+        box = (min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes))
+        self.src = {n: i.crop(box) for n, i in imgs.items()}
+        return True
+
+    def get(self, name, h, hard=False, bg=None):
+        if not self.load():
+            return None
+        key = (name, h, hard, bg)
+        if key not in self.cache:
+            im = self.src.get(name) or self.src["idle"]
+            im = im.resize((max(1, round(im.width * h / im.height)), h), Image.LANCZOS)
+            if hard:
+                im = crisp(im)
+            elif bg:
+                back = Image.new("RGBA", im.size, bg)
+                back.alpha_composite(im)
+                im = back.convert("RGB")
+            if len(self.cache) > 80:
+                self.cache.clear()
+            self.cache[key] = im
+        return self.cache[key]
+
+
+MINI_FACES = MiniFaces()
+
+
 def find_pet_dir():
     home = os.path.expanduser("~")
     cands = [os.environ.get("CAPRI_PET_DIR"), os.path.join(app_dir(), "pet"),
@@ -1281,6 +1334,21 @@ class ChatWindow:
     def tick_avatar(self):
         if not self.alive():
             return
+        pet = self.pet
+        now = time.time()
+        if MINI_FACES.load():                                     # her visor face: blinks, talks, glances, gets mad
+            name = expression.mini_pick(now, talking=now < pet.talk_until, thinking=self.busy,
+                                        angry=self.face_override == "angry",
+                                        watcher=pet.settings.get("skin", "capri") == "watcher",
+                                        emotion=pet.expr[0] if pet.expr else None)
+            k = ("mini", name)
+            if k not in self.images:
+                img = MINI_FACES.get(name, 56, bg=C_PANEL)
+                self.images[k] = ImageTk.PhotoImage(img) if img else None
+            if self.images[k]:
+                self.portrait.config(image=self.images[k])
+            self.win.after(80, self.tick_avatar)
+            return
         av = getattr(self.pet.art, "avatar", None)
         if av and not self.face_override:
             key = "talk" if (self.busy or time.time() < self.pet.talk_until) else "idle"
@@ -1429,7 +1497,7 @@ class ChatWindow:
                              "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
                              "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /tp  /dance  "
                              "/sleep  /calm  /watch  /look  /ailines  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /note  /notes  /remember  /facts  /feel  "
-                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /size  /skin  /express  /neon  /boot  /hear  /call  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
+                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /size  /skin  /tiny  /express  /neon  /boot  /hear  /call  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
@@ -1840,6 +1908,14 @@ class ChatWindow:
                 self.system_line("Expressions: " + ", ".join(expression.EMOTIONS) + "   /express <name> to preview. "
                                  "Her AI lines pick one by themselves" + ("" if p.expressive() else
                                                                           " (off: Settings > Size & look)") + ".")
+        elif cmd == "/tiny":
+            mode = parts[1].lower() if len(parts) > 1 else ""
+            if mode in ("on", "off", "auto"):
+                p.set_tiny(mode)
+                self.system_line(f"Tiny mode: {mode}")
+            else:
+                self.system_line(f"Tiny mode: {p.settings.get('tiny', 'auto')}   /tiny on | off | auto  (auto = just her "
+                                 "face while you game or run a focus timer)")
         elif cmd == "/skin":
             name = parts[1].lower() if len(parts) > 1 else ""
             if name and p.set_skin(name):
@@ -2967,6 +3043,20 @@ class Capri:
         self._geo = None
         self.place()
         return True
+
+    def tiny_on(self):
+        """Tiny mode: only her visor face. 'on' always, 'auto' (default) while a game or focus timer runs."""
+        mode = self.settings.get("tiny", "auto")
+        if mode == "on":
+            return True
+        return mode == "auto" and (bool(self.game) or (self.timer_mode == "focus" and bool(self.timer_end)))
+
+    def set_tiny(self, mode):
+        self.settings["tiny"] = mode
+        self.save_settings()
+        self.clear_sprite_caches()
+        self.say({"on": "Tiny mode.", "off": "Full size again.", "auto": "Tiny while you game or focus."}[mode], 3,
+                 speak=None)
 
     def available_skins(self):
         return [k for k in SKINS if k == "classic" or find_skin_dir(k)]
@@ -5511,6 +5601,12 @@ class Capri:
             sk.add_command(label=("* " if cur_skin == key else "   ") + SKIN_LABELS.get(key, key),
                            command=lambda k=key: self.set_skin(k))
         m.add_cascade(label="Skins", menu=sk)
+        tm = tk.Menu(m, tearoff=0, bg=C_PANEL, fg=C_TEXT, activebackground=C_GREEN, activeforeground=C_BLACK,
+                     bd=0, relief="flat", font=(self.font_family, 10))
+        cur_tiny = self.settings.get("tiny", "auto")
+        for key, label in (("auto", "Auto (while gaming or focusing)"), ("on", "Always"), ("off", "Never")):
+            tm.add_command(label=("* " if cur_tiny == key else "   ") + label, command=lambda k=key: self.set_tiny(k))
+        m.add_cascade(label="Tiny mode (just her face)", menu=tm)
         m.add_command(label=f"Calm mode: {'on' if self.calm else 'off'}", command=self.toggle_calm)
         m.add_command(label=f"Check-ins: {'on' if self.checkins else 'off'}", command=self.toggle_checkins)
         if self.win32.ok:
@@ -5572,7 +5668,18 @@ class Capri:
             elif self.state == "perch" and anim in ("idle", "talk"):
                 anim = "perch"
         key, frame = self.art.frame(anim, now - self.t_start, self.dir, self.step_ph if anim == "walk" else None)
-        flip = self.art.flip_dir and self.dir < 0
+        tiny = self.tiny_on()
+        if tiny:                                                  # just her floating visor face
+            name = expression.mini_pick(now, talking=now < self.talk_until, thinking=self.ai_inflight > 0,
+                                        watcher=self.settings.get("skin", "capri") == "watcher",
+                                        emotion=self.expr[0] if self.expr else None)
+            h = max(24, int(self.fh * 0.36))
+            img = MINI_FACES.get(name, h, hard=True)
+            if img is not None:
+                key, frame = ("mini", name, h), img
+            else:
+                tiny = False
+        flip = self.art.flip_dir and self.dir < 0 and not tiny
         dim = self.state == "sleep"
         # what she visibly faces: the left/right run row, or a mirrored sprite. Squash only when THAT changes,
         # not when self.dir flips while the drawn picture stays the same (the sheet's idle doesn't mirror).

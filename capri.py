@@ -1432,8 +1432,11 @@ class ChatWindow:
         persona = (self.persona + " " + mind.context(now, self.pet.doing(), self.pet.activity_phrase())
                    + " " + self.pet.memory.context()).strip()
         offline = None if ai_available() else mind.offline_reply(text, now)
+        tags = self.pet.expressive() and not offline
+        if tags:                                       # her body acts out the reply; the tag is stripped in work()
+            persona += expression.TAG_INSTRUCTION
         snapshot = [{"role": m["role"], "content": m["content"]} for m in self.history[-20:]]
-        threading.Thread(target=self.work, args=(snapshot, persona, offline), daemon=True).start()
+        threading.Thread(target=self.work, args=(snapshot, persona, offline, tags), daemon=True).start()
         self.win.after(100, self.poll)
 
     def show_typing(self):
@@ -1463,17 +1466,21 @@ class ChatWindow:
                 self.bubbles.remove(self.typing_row)
         self.typing_row, self.typing_job = None, None
 
-    def work(self, msgs, persona, offline=None):
+    def work(self, msgs, persona, offline=None, tags=False):
         try:
             if offline:
                 time.sleep(0.6)
-            self.q.put(("ok", offline or llm_reply(msgs, persona)))
+            reply, emo = offline or llm_reply(msgs, persona), None
+            if tags:          # strip BEFORE anything sees it: history, saved json, bubble, voice, a call
+                emo, clean = expression.split_reply(reply)
+                reply = clean or expression.strip_tags(reply) or "..."
+            self.q.put(("ok", reply, emo))
         except Exception as exc:
-            self.q.put(("err", str(exc) or type(exc).__name__))
+            self.q.put(("err", str(exc) or type(exc).__name__, None))
 
     def poll(self):
         try:
-            kind, text = self.q.get_nowait()
+            kind, text, emo = self.q.get_nowait()
         except queue.Empty:
             if self.alive():
                 self.win.after(100, self.poll)
@@ -1487,7 +1494,9 @@ class ChatWindow:
             self.save_history()
             lbl = self.add_bubble("assistant", text, animate=True)
             self.typewrite(lbl, text, 0)
-            self.pet.react("happy")
+            self.pet.icon = None                                   # clear the "?" from react("think")
+            if not (emo and self.pet.express(emo)):
+                self.pet.react("happy")
             self.pet.speak(text, priority=True, call=self.pet.take_route())
             try:
                 if self.win.state() != "normal":                  # a voice command: show it above her instead

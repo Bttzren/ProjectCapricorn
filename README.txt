@@ -76,6 +76,7 @@ EXPRESSIONS (Settings > Size & look > "Act out how she feels", on by default)
   thinking, embarrassed, sleepy...). She acts it out in place: a pose from her skin, a small hop/shake/tilt and
   sometimes an icon. Not every line (she'd look corny), never while she's calm, in a call/game or doing a task.
   The feeling word is never shown or spoken. /express lists them, /express smug previews one.
+  Chat replies too: when she answers you in the chat window she acts out how she feels about it (same switch).
   FACES: a close-up of her face (smug, laughing, wide-eyed...) pops up on top of her speech bubble while she
     feels something. Settings > Size & look to turn off.
   CUT-INS: for big moments only (laughing, hyped, shocked) an anime-style panel slides across her for about a

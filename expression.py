@@ -204,3 +204,22 @@ def mini_pick(t, talking=False, thinking=False, angry=False, watcher=False, emot
     if cyc % 5 == 2 and 1.0 <= ph < 2.0:
         return "look_left" if cyc % 2 else "look_right"
     return "idle"
+
+
+_ANY_TAG = re.compile(r"\s*[\[(<{]\s*([A-Za-z][A-Za-z \-]{0,18})\s*[\])>}]\s*")
+
+
+def strip_tags(text):
+    """Remove every bracketed emotion word ([smug], (laugh), [neutral]...) anywhere in a reply. Other brackets
+    stay. Used on chat replies, which aren't run through speech.sanitize, so no tag reaches the bubble, the
+    voice, the saved history or a call."""
+    def drop(m):
+        return " " if canonical(m.group(1)) is not None else m.group(0)
+    out = _ANY_TAG.sub(drop, text or "")
+    return re.sub(r"[ \t]{2,}", " ", out).replace(" \n", "\n").strip()
+
+
+def split_reply(raw):
+    """(emotion or None, clean text) for a multi-line chat reply."""
+    emo, rest = parse_tag(raw)
+    return emo, strip_tags(rest)

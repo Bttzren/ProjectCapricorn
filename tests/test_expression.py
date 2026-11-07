@@ -121,5 +121,16 @@ class MiniTests(unittest.TestCase):
             self.assertIn(v, E.MINI)
 
 
+class ChatTagTests(unittest.TestCase):
+    def test_split_reply(self):
+        self.assertEqual(E.split_reply("[smug] Nice.\nSecond line."), ("smug", "Nice.\nSecond line."))
+        self.assertEqual(E.split_reply("Nice. [laugh] lol"), (None, "Nice. lol"))
+        self.assertEqual(E.split_reply("[happy] Sure (see the README) [neutral] ok"), ("happy", "Sure (see the README) ok"))
+        self.assertEqual(E.split_reply("Use [Ctrl] + [S]."), (None, "Use [Ctrl] + [S]."))
+        self.assertEqual(E.split_reply("plain"), (None, "plain"))
+        for raw in ("[smug] a [laugh] b (sad) c", "[SURPRISED]\nwhat"):
+            self.assertFalse(any(w in E.split_reply(raw)[1].lower() for w in ("smug", "laugh", "sad", "surprised")))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -71,6 +71,12 @@ MORE STUFF
     Christmas) and on YOUR birthday: /birthday 03-27.
   BATTERY (Windows laptops): she warns you at 20% and cheers when you plug in.
 
+EXPRESSIONS (Settings > Size & look > "Act out how she feels", on by default)
+  When the AI writes one of her lines it also picks how she feels (happy, laugh, smug, sad, angry, surprised,
+  thinking, embarrassed, sleepy...). She acts it out in place: a pose from her skin, a small hop/shake/tilt and
+  sometimes an icon. Not every line (she'd look corny), never while she's calm, in a call/game or doing a task.
+  The feeling word is never shown or spoken. /express lists them, /express smug previews one.
+
 SKINS (right-click her > Skins, or /skin <name>)
   capri    her new look, drawn by xilia_world00 (default): blinks, grins, glitches for real, talks with a
            moving mouth, sits on window edges, dangles when you pick her up, lies down to nap.

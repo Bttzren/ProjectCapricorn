@@ -28,7 +28,7 @@ def _recent(recent):
     return " Don't repeat or closely paraphrase these recent lines of yours: " + " | ".join(recent[-6:])
 
 
-def user_prompt(kind, facts, recent=()):
+def user_prompt(kind, facts, recent=(), tags=False):
     """The message that asks the AI for one line, for each kind of moment."""
     f = facts or {}
     if kind == "poke":
@@ -61,6 +61,9 @@ def user_prompt(kind, facts, recent=()):
         text = f"Right now: {f.get('situation', 'something happened')}. React out loud in one short sentence."
     else:
         text = "Say one short thing."
+    if tags:                                             # only for her own speech-bubble lines (say_ai)
+        import expression
+        text += expression.TAG_INSTRUCTION
     return text + _recent(list(recent))
 
 

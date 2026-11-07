@@ -32,6 +32,7 @@ import brief
 import call as calls
 import clip
 import daylog
+import expression
 import fun
 import gamemode
 import habits
@@ -641,6 +642,7 @@ class SheetSprites:
         "talk": ["waving", "idle"],
         "look-a": ["look-a", "idle"], "look-b": ["look-b", "idle"], "type": ["waving", "idle"],
     }
+    FALLBACK.update({name: [name] + chain + ["idle"] for name, (chain, _m, _i) in expression.EMOTIONS.items()})
 
     def __init__(self, folder, target_h):
         path = next((os.path.join(folder, n) for n in ("spritesheet.webp", "spritesheet.png")
@@ -1427,7 +1429,7 @@ class ChatWindow:
                              "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
                              "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /tp  /dance  "
                              "/sleep  /calm  /watch  /look  /ailines  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /note  /notes  /remember  /facts  /feel  "
-                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /size  /skin  /neon  /boot  /hear  /call  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
+                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /size  /skin  /express  /neon  /boot  /hear  /call  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
@@ -1828,6 +1830,16 @@ class ChatWindow:
         elif cmd == "/powers":
             for line in presets.table(p.settings):
                 self.system_line(line)
+        elif cmd == "/express":
+            name = expression.canonical(parts[1]) if len(parts) > 1 else None
+            if name:
+                ok = p.express(name, forced=True)
+                self.system_line(f"{name}" if ok else "She can't act it out right now (busy, moving or asleep).",
+                                 err=not ok)
+            else:
+                self.system_line("Expressions: " + ", ".join(expression.EMOTIONS) + "   /express <name> to preview. "
+                                 "Her AI lines pick one by themselves" + ("" if p.expressive() else
+                                                                          " (off: Settings > Size & look)") + ".")
         elif cmd == "/skin":
             name = parts[1].lower() if len(parts) > 1 else ""
             if name and p.set_skin(name):
@@ -2229,6 +2241,8 @@ class SettingsWindow:
                 ui.NeonRadio(nrow, text=name.title(), variable=self.neon_var, value=name, font=(self.fam, 8),
                              swatch=None if name == "off" else neon.hex_of(neon.COLORS[name]),
                              command=lambda n=name: pet.set_neon(n)).pack(side="left", padx=(0, 10))
+        self.check(box, "Act out how she feels (poses, little moves and icons that match what she says)",
+                   "expressive", True)
         self.check(box, "Glowing outline around her (off by default; needs a neon colour above)", "outline", False,
                    lambda v: pet.clear_sprite_caches())
         tk.Frame(box, bg=C_PANEL, height=4).pack()
@@ -2749,6 +2763,7 @@ class Capri:
         self.ai_results, self.ai_pending, self.ai_seq, self.ai_inflight = queue.Queue(), {}, 0, 0
         self.ai_fails, self.ai_pause_until = 0, 0.0
         self.recent_lines = collections.deque(maxlen=8)
+        self.expr, self.expr_gate = None, expression.Gate()
         self.agent = None
         self.agent_events = queue.Queue()
         self.brain_events, self.ears_events = queue.Queue(), queue.Queue()
@@ -3061,6 +3076,42 @@ class Capri:
             self.set_emote("angry", 2.0)
             self.set_icon("anger", 2.0)
             self.anim = "fail"
+
+    def expressive(self):
+        return bool(self.settings.get("expressive", True))
+
+    def express(self, name, forced=False, secs=2.2):
+        """Act out a feeling in place: a pose, a small motion, maybe an icon. Never moves her across the screen,
+        and stays still while she's calm (calls, games), doing a task, being dragged, teleporting or asleep."""
+        if not name or name not in expression.EMOTIONS or not (forced or self.expressive()):
+            return False
+        if self.agent is not None or self.state not in ("idle", "perch", "walk", "curious"):
+            return False
+        if self.calm and not forced:
+            return False
+        now = time.time()
+        if not self.expr_gate.allow(now, name, forced):
+            return False
+        if self.state in ("walk", "curious"):
+            self.go("perch" if self.surf else "idle", secs + 0.5)
+        self.expr = (name, now, now + secs)
+        icon = expression.EMOTIONS[name][2]
+        if icon:
+            self.set_icon(icon, min(secs, 1.8))
+        return True
+
+    def update_expression(self, now):
+        if not self.expr:
+            return
+        name, t0, t1 = self.expr
+        if now >= t1 or self.state not in ("idle", "perch"):
+            self.expr = None
+            self.hop_y, self.angle_t = 0.0, 0.0
+            return
+        dy, ang, sx, sy = expression.motion(expression.EMOTIONS[name][1], now - t0, t1 - t0, self.dpi, self.dir)
+        self.hop_y, self.angle_t = dy, ang
+        self.sx *= sx
+        self.sy *= sy
 
     def set_emote(self, name, secs):
         if name in self.art.emotes:
@@ -3477,6 +3528,7 @@ class Capri:
         if self.state in ("tp_out", "tp_in"):
             self.sx = max(0.12, 1.0 - 0.9 * self.glitch ** 1.5)
             self.sy = 1.0 + 0.12 * self.glitch
+        self.update_expression(now)
         self.update_busy(now)
         self.update_twitch(now)
         self.update_boot(now)
@@ -3652,21 +3704,22 @@ class Capri:
                                 "expired": False}
         self.ai_inflight += 1
         system = self.ai_system(now)
-        user = speech.user_prompt(kind, facts, list(self.recent_lines))
-        threading.Thread(target=self._ai_worker, args=(rid, system, user), daemon=True).start()
+        tags = self.expressive()
+        user = speech.user_prompt(kind, facts, list(self.recent_lines), tags=tags)
+        threading.Thread(target=self._ai_worker, args=(rid, system, user, tags), daemon=True).start()
 
-    def _ai_worker(self, rid, system, user):
+    def _ai_worker(self, rid, system, user, tags=False):
         try:
-            text = speech.sanitize(llm_reply([{"role": "user", "content": user}], system, max_tokens=80,
-                                             model=LINE_MODEL))
-            self.ai_results.put((rid, text, ""))
+            raw = llm_reply([{"role": "user", "content": user}], system, max_tokens=80, model=LINE_MODEL)
+            emo, raw = expression.parse_tag(raw) if tags else (None, raw)   # the tag is never shown or spoken
+            self.ai_results.put((rid, speech.sanitize(raw), "", emo))
         except Exception as exc:
-            self.ai_results.put((rid, "", str(exc) or type(exc).__name__))
+            self.ai_results.put((rid, "", str(exc) or type(exc).__name__, None))
 
     def drain_ai(self, now):
         while True:
             try:
-                rid, text, err = self.ai_results.get_nowait()
+                rid, text, err, emo = self.ai_results.get_nowait()
             except queue.Empty:
                 break
             self.ai_inflight = max(0, self.ai_inflight - 1)
@@ -3685,6 +3738,7 @@ class Capri:
             line = text or p["fallback"]
             if line:
                 self.say(line, p["secs"], speak=p["speak"])
+                self.express(emo if text else expression.for_mood(self.mind.mood(now)))
             if text:
                 self.recent_lines.append(text)
         for p in self.ai_pending.values():
@@ -3692,6 +3746,7 @@ class Capri:
                 p["expired"] = True
                 if p["fallback"]:
                     self.say(p["fallback"], p["secs"], speak=p["speak"])
+                    self.express(expression.for_mood(self.mind.mood(now)))
         while True:
             try:
                 text, err = self.look_results.get_nowait()
@@ -5426,7 +5481,9 @@ class Capri:
     def sprite_image(self, now):
         skin = getattr(self.art, "kind", "") == "skin"
         glitch = self.glitch
-        if now < self.talk_until and self.state in ("idle", "perch"):
+        if self.expr and self.state in ("idle", "perch"):
+            anim = self.expr[0]                               # the feeling wins over the talking mouth
+        elif now < self.talk_until and self.state in ("idle", "perch"):
             anim = "talk"
         elif self.typing_along and self.state in ("idle", "perch"):
             anim = "type"
@@ -5443,7 +5500,7 @@ class Capri:
                 anim = "wake"
             elif glitch > 0.02 and self.state in ("idle", "perch", "lounge"):
                 anim, glitch = ("perch-glitch" if self.state == "perch" else "glitch"), 0.0   # drawn glitch, not the fx
-            elif self.state == "perch" and anim == "idle":
+            elif self.state == "perch" and anim in ("idle", "talk"):
                 anim = "perch"
         key, frame = self.art.frame(anim, now - self.t_start, self.dir, self.step_ph if anim == "walk" else None)
         flip = self.art.flip_dir and self.dir < 0

@@ -9,7 +9,7 @@ import capri, ledges
 from PIL import Image, ImageGrab
 capri.read_api_key = lambda: "sk-ant-x"
 asked = []
-capri.vision_ask = lambda system, mt, b64, q, n=120, model=None, room=1: (asked.append(q), "DOING: watching a Minecraft speedrun on YouTube SAY: Speedrunners scare me.")[1]
+capri.vision_ask = lambda system, mt, b64, q, n=120, model=None, room=1, **k: (asked.append(q), "DOING: watching a Minecraft speedrun on YouTube SAY: Those runners are unreal.")[1]
 capri.llm_reply = lambda *a, **k: "Nice."
 ledges.capture = lambda: Image.new("RGB", (800, 450), (20, 20, 30))
 p = capri.Capri(); p.boot = None; p.cancel_intro(); p.choose_next = lambda: None; p.go("idle", 99)
@@ -35,7 +35,7 @@ p.glance_gate.last -= 11; p.glance_tick(time.time()); pump(0.6)
 print("periodic look, same activity -> spoke:", said, "| looks so far:", len(asked))
 p.glance_gate.last -= 11; p.glance_tick(time.time()); pump(0.6)
 print("same screen again -> sent to AI:", len(asked), "(2 = unchanged screen skipped)")
-capri.vision_ask = lambda system, mt, b64, q, n=120, model=None, room=1: (asked.append(q), "DOING: coding a Python desktop pet in VS Code SAY: Is that me in there?")[1]
+capri.vision_ask = lambda system, mt, b64, q, n=120, model=None, room=1, **k: (asked.append(q), "DOING: coding a Python desktop pet in VS Code SAY: Is that me in there?")[1]
 ledges.capture = lambda: Image.new("RGB", (800, 450), (200, 200, 230))
 p.glance_gate.last -= 11; p.glance_tick(time.time()); pump(0.6)
 print("activity changed -> spoke:", said[-1:], "| activity:", p.activity_phrase())

@@ -219,3 +219,16 @@ User decisions: **new skin is the default**, mini face = **chat avatar + tiny mo
   **user hasn't answered whether it should be first-launch only**.
 - Considered and skipped: vectorising `crisp` (6 ms/frame, strips already build in a background thread);
   registering Share Tech Mono (Windows-only, untestable here).
+
+## 13. Feedback from the first real Windows run + local vision
+
+- Fixed: Settings didn't scroll on Windows (wheel went to the focused pet window) → `install_wheel` router by
+  pointer position; intro now full screen (frames built in a thread); browser/site titles never count as gaming.
+- `/see on` (+ Settings button): awareness + ledges + timed screen looks. Looks every `vision_interval` s
+  (1-90, default 10, `/see every N`, Settings > AI slider), NO daily limit (user's call), unchanged screens not
+  sent, speaks only when the activity changes.
+- Local vision: `/getbrain see` (ggml-org/Qwen2.5-VL-3B-Instruct-GGUF) or `see-fast` (SmolVLM2-2.2B). Files are
+  picked from the HF API listing at install time (`localai.pick_vision_files`, manifest `models/<which>/files.json`),
+  engine re-downloaded if `--help` lacks `--mmproj`. Served with `--mmproj`, OpenAI `image_url` data URI. The
+  vision model also chats. Routing: glances and /look use it unless `/brain cloud`; `/do` and the game spotter
+  are cloud-only on purpose. NOT downloadable/runnable in this sandbox (HF blocked) — verified with fakes only.

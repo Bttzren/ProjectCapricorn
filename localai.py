@@ -5,7 +5,11 @@ chat model (GGUF) into ~/.capri/localai, starts the server on 127.0.0.1 only (ne
 computers) and talks to it with the OpenAI-style /v1/chat/completions API. If you already run Ollama or
 LM Studio she uses that instead (set CAPRI_LOCAL_URL to point at any OpenAI-compatible server).
 
-Nothing here sends your chats anywhere: the model and the server both run locally. Text only (no vision).
+Nothing here sends your chats anywhere: the model and the server both run locally.
+
+Vision ("/getbrain see"): a small model that can SEE (Qwen 2.5 VL 3B, or SmolVLM2 2.2B with "see-fast") plus its
+image encoder (the "mmproj" file). The file names are looked up on Hugging Face at install time. The same model
+also chats, so only one local AI program runs. Screenshots for it never leave the computer.
 """
 import atexit
 import json
@@ -16,6 +20,7 @@ import socket
 import subprocess
 import sys
 import tarfile
+import urllib.parse
 import threading
 import time
 import urllib.error
@@ -33,7 +38,72 @@ MODELS = {
     "big": ("https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf",
             "qwen2.5-3b-instruct-q4_k_m.gguf", 2100, "Qwen 2.5 3B: smarter, slower, wants 4 GB free RAM"),
 }
+# vision models: name -> (Hugging Face repo, approximate total MB, what it is). Files are picked at install time.
+VISION_MODELS = {
+    "see": ("ggml-org/Qwen2.5-VL-3B-Instruct-GGUF", 3000,
+            "Qwen 2.5 VL 3B: sees your screen and reads text on it well; wants about 6 GB free RAM"),
+    "see-fast": ("ggml-org/SmolVLM2-2.2B-Instruct-GGUF", 2000,
+                 "SmolVLM2 2.2B: sees your screen, faster on older laptops but rougher"),
+}
+HF_API = "https://huggingface.co/api/models/"
+HF_HOST = "https://huggingface.co/"
 OLLAMA_URL = "http://127.0.0.1:11434"
+OLLAMA_VISION = ("llava", "bakllava", "vl", "vision", "moondream", "gemma3", "gemma4", "minicpm-v", "granite3.2-vision")
+
+
+def is_vision(which):
+    return which in VISION_MODELS
+
+
+def all_models():
+    """Every name /getbrain accepts."""
+    return list(MODELS) + list(VISION_MODELS)
+
+
+def _clean_name(n):
+    return isinstance(n, str) and n and "/" not in n and "\\" not in n and ".." not in n
+
+
+def pick_vision_files(names):
+    """(model file, mmproj file) from a Hugging Face repo's file list, or None. The list is outside data, so
+    names with path parts are refused. Model: a .gguf that isn't the projector and isn't split, preferring
+    Q4_K_M. Projector: 'mmproj*', preferring Q8_0, then f16."""
+    ggufs = [n for n in names if _clean_name(n) and n.lower().endswith(".gguf")]
+    proj = [n for n in ggufs if n.lower().startswith("mmproj")]
+    main = [n for n in ggufs if not n.lower().startswith("mmproj") and not re.search(r"-\d{5}-of-\d{5}", n)]
+
+    def best(cands, prefs):
+        for p in prefs:
+            for n in sorted(cands):
+                if p in n.lower():
+                    return n
+        return sorted(cands)[0] if cands else None
+    m = best(main, ["q4_k_m", "q4_k_s", "q4_0", "q5_k_m", "q8_0"])
+    pj = best(proj, ["q8_0", "f16", "bf16"])
+    return (m, pj) if m and pj else None
+
+
+def hf_file_url(repo, name):
+    return HF_HOST + repo + "/resolve/main/" + urllib.parse.quote(name)
+
+
+def vision_body(system, media_type, b64, prompt, max_tokens=160, model="local"):
+    """OpenAI-style request with one image (llama-server accepts data: URIs in image_url)."""
+    msgs = [{"role": "system", "content": system}] if system else []
+    msgs.append({"role": "user", "content": [
+        {"type": "text", "text": prompt},
+        {"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{b64}"}}]})
+    return {"model": model, "messages": msgs, "max_tokens": int(max_tokens), "temperature": 0.3, "stream": False}
+
+
+def supports_mmproj(binary, run=subprocess.run):
+    """Older llama-server builds can't load a vision projector. Ask the program itself."""
+    try:
+        r = run([binary, "--help"], capture_output=True, text=True, timeout=30,
+                creationflags=CREATE_NO_WINDOW if sys.platform.startswith("win") else 0)
+        return "--mmproj" in ((r.stdout or "") + (r.stderr or ""))
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 def default_dir():
@@ -91,9 +161,12 @@ def find_server(folder):
     return None
 
 
-def server_argv(binary, model, port, threads=None):
+def server_argv(binary, model, port, threads=None, mmproj=None):
     threads = threads or max(2, (os.cpu_count() or 4) - 1)
-    return [binary, "-m", model, "--host", "127.0.0.1", "--port", str(port), "-c", "4096", "-t", str(threads)]
+    argv = [binary, "-m", model, "--host", "127.0.0.1", "--port", str(port), "-c", "4096", "-t", str(threads)]
+    if mmproj:
+        argv += ["--mmproj", mmproj]
+    return argv
 
 
 def free_port():
@@ -149,18 +222,38 @@ def download(url, dest, progress=None, opener=urllib.request.urlopen, min_bytes=
 class Install:
     """Fetches the server and a model. run() blocks: call it on a background thread."""
 
-    def __init__(self, folder=None, opener=urllib.request.urlopen, progress=None, platform=None, machine=None):
+    def __init__(self, folder=None, opener=urllib.request.urlopen, progress=None, platform=None, machine=None,
+                 check_mmproj=supports_mmproj):
         self.folder = folder or default_dir()
         self.opener, self.progress = opener, progress or (lambda msg: None)
-        self.platform, self.machine = platform, machine
+        self.platform, self.machine, self.check_mmproj = platform, machine, check_mmproj
 
     def binary(self):
         return find_server(os.path.join(self.folder, "bin"))
 
+    def manifest(self, which):
+        p = os.path.join(self.folder, "models", which, "files.json")
+        try:
+            with open(p, encoding="utf-8") as f:
+                d = json.load(f)
+            return d if _clean_name(d.get("model")) and _clean_name(d.get("mmproj")) else {}
+        except (OSError, ValueError, AttributeError):
+            return {}
+
     def model_path(self, which):
+        if is_vision(which):
+            m = self.manifest(which).get("model")
+            return os.path.join(self.folder, "models", which, m) if m else ""
         return os.path.join(self.folder, "models", MODELS[which][1])
 
+    def mmproj_path(self, which):
+        m = self.manifest(which).get("mmproj") if is_vision(which) else None
+        return os.path.join(self.folder, "models", which, m) if m else ""
+
     def installed(self, which="small"):
+        if is_vision(which):
+            mp, pp = self.model_path(which), self.mmproj_path(which)
+            return bool(self.binary() and mp and pp and os.path.isfile(mp) and os.path.isfile(pp))
         return bool(self.binary() and os.path.isfile(self.model_path(which)))
 
     def _pct(self, label):
@@ -174,10 +267,54 @@ class Install:
                     self.progress(f"{label}: {p}%")
         return cb
 
-    def run(self, which="small", release=None):
+    def run(self, which="small", release=None, listing=None):
+        if is_vision(which):
+            return self.run_vision(which, release, listing)
         if which not in MODELS:
             raise RuntimeError("unknown model")
-        if not self.binary():
+        self.ensure_engine(release)
+        url, fname, mb, _what = MODELS[which]
+        path = self.model_path(which)
+        if not os.path.isfile(path):
+            self.progress(f"Downloading the AI model (about {mb} MB)...")
+            download(url, path, self._pct("AI model"), self.opener, min_bytes=mb * 400_000)
+        return self.binary(), path
+
+    def run_vision(self, which, release=None, listing=None):
+        """Engine (one that can load an image encoder), then the vision model + its mmproj from Hugging Face."""
+        self.ensure_engine(release, need_vision=True)
+        repo, mb, _what = VISION_MODELS[which]
+        if listing is None:
+            self.progress("Looking up the vision model files...")
+            req = urllib.request.Request(HF_API + repo, headers={"User-Agent": "capri-desktop"})
+            try:
+                with self.opener(req, timeout=30) as r:
+                    listing = [x.get("rfilename", "") for x in json.loads(r.read().decode("utf-8")).get("siblings", [])]
+            except (urllib.error.URLError, ValueError, AttributeError) as exc:
+                raise RuntimeError(f"couldn't look up the vision model ({getattr(exc, 'reason', exc)})")
+        files = pick_vision_files(listing)
+        if not files:
+            raise RuntimeError("the vision model's files weren't where I expected. Try /getbrain see-fast")
+        model, proj = files
+        folder = os.path.join(self.folder, "models", which)
+        for i, name in enumerate((model, proj)):
+            path = os.path.join(folder, name)
+            if not os.path.isfile(path):
+                self.progress(("Downloading the vision model" if i == 0 else "Downloading its image encoder")
+                              + (f" (about {mb} MB in total)..." if i == 0 else "..."))
+                download(hf_file_url(repo, name), path, self._pct("vision model" if i == 0 else "image encoder"),
+                         self.opener, min_bytes=1_000_000)
+        with open(os.path.join(folder, "files.json"), "w", encoding="utf-8") as f:
+            json.dump({"model": model, "mmproj": proj, "repo": repo}, f)
+        return self.binary(), os.path.join(folder, model)
+
+    def ensure_engine(self, release=None, need_vision=False):
+        exe = self.binary()
+        if exe and need_vision and not self.check_mmproj(exe):
+            self.progress("Your AI engine is too old to see. Updating it...")
+            shutil.rmtree(os.path.join(self.folder, "bin"), ignore_errors=True)
+            exe = None
+        if not exe:
             self.progress("Finding the AI engine (llama.cpp)...")
             if release is None:
                 req = urllib.request.Request(RELEASE_API, headers={"User-Agent": "capri-desktop",
@@ -201,12 +338,7 @@ class Install:
                 raise RuntimeError("the AI engine download didn't contain llama-server")
             if not sys.platform.startswith("win"):
                 os.chmod(exe, 0o755)
-        url, fname, mb, _what = MODELS[which]
-        path = self.model_path(which)
-        if not os.path.isfile(path):
-            self.progress(f"Downloading the AI model (about {mb} MB)...")
-            download(url, path, self._pct("AI model"), self.opener, min_bytes=mb * 400_000)
-        return self.binary(), path
+        return self.binary()
 
 
 # ------------------------------------------------------------------ talking to a server
@@ -256,6 +388,20 @@ def ollama_model(base=OLLAMA_URL, opener=urllib.request.urlopen):
         return ""
 
 
+def ollama_vision_model(base=OLLAMA_URL, opener=urllib.request.urlopen):
+    """Name of an Ollama model that can see images (llava, qwen2.5vl, moondream, gemma3...), or ''."""
+    try:
+        with opener(base + "/api/tags", timeout=2) as r:
+            models = json.loads(r.read().decode("utf-8")).get("models") or []
+        for m in models:
+            n = (m.get("name") or "").lower()
+            if any(k in n for k in OLLAMA_VISION):
+                return m.get("name")
+    except Exception:
+        pass
+    return ""
+
+
 class LocalAI:
     """The thing llm_reply() calls. reply() starts the engine on first use and is safe from any thread."""
 
@@ -273,6 +419,7 @@ class LocalAI:
 
     def refresh(self):
         self._seen = (0.0, "")
+        self._see_cache = (0.0, False)
 
     # what's available without starting anything
     def where(self, max_age=30.0):
@@ -313,7 +460,9 @@ class LocalAI:
                 self.base, self.model_name = OLLAMA_URL, ollama_model(opener=self.opener) or "local"
             elif w == "builtin":
                 port = free_port()
-                argv = self.argv_builder(self.install.binary(), self.install.model_path(self.which), port)
+                mm = self.install.mmproj_path(self.which) if is_vision(self.which) else ""
+                argv = self.argv_builder(self.install.binary(), self.install.model_path(self.which), port,
+                                         **({"mmproj": mm} if mm else {}))
                 flags = CREATE_NO_WINDOW if sys.platform.startswith("win") else 0
                 try:
                     self.proc = self.popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
@@ -339,6 +488,35 @@ class LocalAI:
         base = self.start()
         text = post_chat(base, chat_body(messages, persona, max_tokens, self.model_name), self.opener)
         return text or "(the local AI sent nothing, try again)"
+
+    def can_see(self, max_age=30.0):
+        """Is there a LOCAL model that can look at a screenshot? (cached: asked every tick)"""
+        at, val = self.__dict__.get("_see_cache", (0.0, False))
+        if time.time() - at < max_age:
+            return val
+        val = self._can_see()
+        self._see_cache = (time.time(), val)
+        return val
+
+    def _can_see(self):
+        w = self.where()
+        if w == "builtin":
+            return is_vision(self.which)
+        if w == "ollama":
+            return bool(ollama_vision_model(opener=self.opener))
+        if w == "url":
+            return os.environ.get("CAPRI_LOCAL_VISION", "") == "1"
+        return False
+
+    def see(self, system, media_type, b64, prompt, max_tokens=160):
+        """Ask the local vision model about one screenshot. The image never leaves this computer."""
+        base = self.start()
+        model = self.model_name
+        if self.where() == "ollama":
+            model = ollama_vision_model(opener=self.opener) or model
+        text = post_chat(base, vision_body(system, media_type, b64, prompt, max_tokens, model), self.opener,
+                         timeout=180)
+        return text
 
     def stop(self):
         p, self.proc = self.proc, None

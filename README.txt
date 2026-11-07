@@ -71,6 +71,14 @@ MORE STUFF
     Christmas) and on YOUR birthday: /birthday 03-27.
   BATTERY (Windows laptops): she warns you at 20% and cheers when you plug in.
 
+SKINS (right-click her > Skins, or /skin <name>)
+  capri    her new look, drawn by xilia_world00 (default): blinks, grins, glitches for real, talks with a
+           moving mouth, sits on window edges, dangles when you pick her up, lies down to nap.
+  watcher  the Watcher, a secret skin by xilia_world00.
+  classic  the original Petdex sprite sheet (her old look).
+  Your own skin: a folder in pet/skins/ (or %USERPROFILE%\.capri\pet\skins\) with the same strip names and
+  frame sizes as pet/skins/capri/ - see pet/CREDITS.md.
+
 QUIET IN CALLS AND MEETINGS (Windows, on by default; Settings > Gaming to turn off)
   She goes calm (no chatter, stays put) while you're in a call or meeting, and goes back to normal
   about 45 seconds after it ends. She notices it two ways, both on your PC only:

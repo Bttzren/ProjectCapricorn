@@ -756,6 +756,167 @@ class PlaceholderSprites:
         return ("p",), self.idle
 
 
+SKINS = ("capri", "watcher", "classic")        # "classic" = the original Petdex sprite sheet
+SKIN_LABELS = {"capri": "Capri (new look)", "watcher": "The Watcher", "classic": "Classic sprite sheet"}
+
+
+def pet_asset_dirs(*sub):
+    """Where bundled art lives: next to the app, inside the built exe, or in the data folder (user-added)."""
+    out = []
+    for base in (app_dir(), getattr(sys, "_MEIPASS", None), data_dir()):
+        if base:
+            p = os.path.join(base, "pet", *sub)
+            if os.path.isdir(p) and p not in out:
+                out.append(p)
+    return out
+
+
+def find_skin_dir(name):
+    for d in pet_asset_dirs("skins", name):
+        if os.path.isfile(os.path.join(d, "idle.png")):
+            return d
+    return None
+
+
+class SkinSprites:
+    """A skin drawn as separate strips (pet/skins/<name>/idle.png, grin.png, ...): 240x384 standing frames,
+    384x384 perch frames, single big lay_* poses. Strips load on first use. Blinking and talking mouths are
+    handled here, so the app just asks for 'idle' or 'talk'."""
+    kind = "skin"
+    flip_dir = True
+    lies = True                     # she has lying-down art: don't rotate her 90 degrees to sleep
+    STRIPS = {"idle": 240, "blink": 240, "blink_glitch": 240, "glitch": 240, "grin": 240, "sleep": 240,
+              "wake": 240, "dangle": 240, "mouth": 240, "perch": 384, "perch_blink": 384,
+              "perch_blink_glitch": 384, "perch_glitch": 384}
+    FPS = {"idle": 10, "grin": 12, "sleep": 6, "glitch": 24, "perch_glitch": 24, "wake": 14, "dangle": 14,
+           "perch": 9, "blink": 16, "perch_blink": 16}
+    # app animation / sheet row / emotion name -> strip (first one this skin has wins)
+    ANIM = {
+        "idle": ["idle"], "walk": ["idle"], "run": ["idle"], "talk": ["idle"], "look-a": ["idle"],
+        "look-b": ["idle"], "wait": ["idle"], "think": ["idle"], "review": ["idle"], "waiting": ["idle"],
+        "wave": ["grin"], "waving": ["grin"], "dance": ["grin"], "type": ["grin"], "jump": ["grin"],
+        "jumping": ["grin"], "startle": ["glitch"], "fail": ["glitch"], "failed": ["glitch"],
+        "glitch": ["glitch"], "perch": ["perch", "idle"], "perch-glitch": ["perch_glitch", "glitch"],
+        "dangle": ["dangle", "idle"], "doze": ["sleep", "idle"], "wake": ["wake", "idle"],
+        "sleep": ["@lay", "sleep"], "lounge": ["@lay_awake", "@lay", "idle"], "lay-talk": ["@lay_talk", "@lay_awake"],
+        "happy": ["grin"], "laugh": ["grin"], "excited": ["grin"], "love": ["grin"], "proud": ["grin"],
+        "smug": ["grin"], "singing": ["grin"], "sad": ["sleep", "idle"], "sleepy": ["sleep", "idle"],
+        "bored": ["sleep", "idle"], "angry": ["glitch"], "scared": ["glitch"], "surprised": ["wake", "glitch"],
+        "embarrassed": ["blink", "idle"], "thinking": ["idle"], "confused": ["idle"], "curious": ["idle"],
+    }
+
+    def __init__(self, folder, target_h, name="capri"):
+        self.folder, self.target_h, self.name = folder, target_h, name
+        idle = Image.open(os.path.join(folder, "idle.png")).convert("RGBA")
+        bb = idle.getchannel("A").point(lambda v: 255 if v > 127 else 0).getbbox()
+        if not bb:
+            raise ValueError("empty idle strip")
+        self.top, self.bottom = bb[1], bb[3]                  # the figure's rows inside a 384-high frame
+        self.k = target_h / float(self.bottom - self.top)
+        self.strips, self.lays = {}, {}
+        first = self.strip("idle")[0]
+        self.w, self.h = first.size
+        self.emotes = {}
+        self.portraits = {"idle": head_portrait(first)}
+        g = self.strip("grin")
+        if g:
+            self.portraits["talk"] = head_portrait(g[len(g) // 2])
+        gl = self.strip("glitch")
+        if gl:
+            self.portraits["angry"] = head_portrait(gl[len(gl) // 2])
+        self.avatar = {"idle": head_portraits(self.strip("idle")[::2])}
+        if g:
+            self.avatar["talk"] = head_portraits(g[::2])
+
+    def has(self, name):
+        return bool(self.lay(name[1:]) if name.startswith("@") else self.strip(name))
+
+    def strip(self, name):
+        if name in self.strips:
+            return self.strips[name]
+        frames = []
+        path = os.path.join(self.folder, name + ".png")
+        if name in self.STRIPS and os.path.isfile(path):
+            try:
+                im = Image.open(path).convert("RGBA")
+                fw = self.STRIPS[name]
+                n = max(1, im.width // fw)
+                sub = im.crop((0, 0, n * fw, im.height)).getchannel("A").point(lambda v: 255 if v > 127 else 0).getbbox()
+                bottom = max(self.bottom, sub[3]) if sub else self.bottom
+                h = max(2, round((bottom - self.top) * self.k))
+                for i in range(n):
+                    cell = im.crop((i * fw, self.top, (i + 1) * fw, bottom))
+                    if name == "mouth" or cell.getchannel("A").getbbox():
+                        frames.append(scale_to(cell, h))
+            except Exception:
+                log(f"skin strip {name} failed: " + traceback.format_exc())
+                frames = []
+        self.strips[name] = frames
+        return frames
+
+    def lay(self, name):
+        """A lying-down pose, scaled so her body is about as long as she is tall standing."""
+        if name in self.lays:
+            return self.lays[name]
+        img = None
+        path = os.path.join(self.folder, name + ".png")
+        if os.path.isfile(path):
+            try:
+                im = Image.open(path).convert("RGBA")
+                bb = im.getchannel("A").point(lambda v: 255 if v > 127 else 0).getbbox()
+                if bb:
+                    im = im.crop(bb)
+                    k = self.target_h * 1.15 / im.width
+                    img = scale_to(im, max(2, round(im.height * k)))
+            except Exception:
+                log(f"skin pose {name} failed: " + traceback.format_exc())
+        self.lays[name] = img
+        return img
+
+    def _blinking(self, t):
+        """A blink every 3.5-6 s (varies by cycle so it doesn't look mechanical); True for ~0.25 s."""
+        cyc = int(t / 4.6)
+        start = cyc * 4.6 + ((cyc * 7919) % 13) / 10.0
+        return 0 <= t - start < 0.25, t - start
+
+    def pick(self, anim):
+        for name in self.ANIM.get(anim, [anim]) + ["idle"]:
+            if self.has(name):
+                return name
+        return "idle"
+
+    def frame(self, anim, t, d, phase=None):
+        name = self.pick(anim)
+        if name.startswith("@"):
+            return (name,), self.lay(name[1:])
+        frames = self.strip(name)
+        fps = self.FPS.get(name, 10)
+        if phase is not None and anim in ("walk", "run"):
+            i = int(phase * 4) % len(frames)                      # breathing loop sped up by her steps
+        else:
+            i = int(t * fps) % len(frames)
+        if name in ("idle", "perch") and anim not in ("talk",):
+            blink, bt = self._blinking(t)
+            bname = "blink" if name == "idle" else "perch_blink"
+            b = self.strip(bname) if blink else None
+            if b:
+                j = min(len(b) - 1, int(bt * self.FPS.get(bname, 16)))
+                return (bname, j), b[j]
+        img = frames[i]
+        if anim == "talk":
+            m = self.strip("mouth")
+            if m:
+                j = (int(t * 9) * 7) % len(m)                         # mouth shapes in a speech-like jumble
+                key = ("talk", i, j)
+                cache = self.__dict__.setdefault("_talk", {})
+                if key not in cache:
+                    base = img.copy()
+                    base.alpha_composite(m[j], (0, 0)) if m[j].size == base.size else None
+                    cache[key] = base
+                return key, cache[key]
+        return (name, i), img
+
+
 def find_pet_dir():
     home = os.path.expanduser("~")
     cands = [os.environ.get("CAPRI_PET_DIR"), os.path.join(app_dir(), "pet"),
@@ -770,8 +931,17 @@ def find_pet_dir():
     return None
 
 
-def load_art(dpi):
+def load_art(dpi, skin="capri"):
     target = int(SPRITE_HEIGHT * dpi)
+    if skin != "classic":
+        d = find_skin_dir(skin) or find_skin_dir("capri")
+        if d:
+            try:
+                art = SkinSprites(d, target, os.path.basename(d))
+                log(f"loaded skin {os.path.basename(d)} from {d}")
+                return art
+            except Exception:
+                log("skin failed, using the classic sheet: " + traceback.format_exc())
     folder = find_pet_dir()
     if folder:
         try:
@@ -1257,7 +1427,7 @@ class ChatWindow:
                              "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
                              "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /tp  /dance  "
                              "/sleep  /calm  /watch  /look  /ailines  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /note  /notes  /remember  /facts  /feel  "
-                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /size  /neon  /boot  /hear  /call  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
+                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /size  /skin  /neon  /boot  /hear  /call  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
@@ -1658,6 +1828,13 @@ class ChatWindow:
         elif cmd == "/powers":
             for line in presets.table(p.settings):
                 self.system_line(line)
+        elif cmd == "/skin":
+            name = parts[1].lower() if len(parts) > 1 else ""
+            if name and p.set_skin(name):
+                self.system_line(f"Skin: {SKIN_LABELS.get(name, name)}")
+            else:
+                self.system_line("Skins: " + ", ".join(p.available_skins()) + f"  (now: {p.settings.get('skin', 'capri')})"
+                                 + "   /skin <name>  or right-click me > Skins", err=bool(name))
         elif cmd == "/size":
             arg = " ".join(parts[1:]).lower() if len(parts) > 1 else ""
             if arg in ("auto on", "auto off", "auto"):
@@ -2702,10 +2879,10 @@ class Capri:
         if state in ("idle", "perch"):
             self.angle_t, self.anim = 0.0, "idle"
         elif state == "sleep":
-            self.angle_t, self.anim = 90.0 * self.dir, "sleep"
+            self.angle_t, self.anim = (0.0 if getattr(self.art, "lies", False) else 90.0 * self.dir), "sleep"
             self.say("zzz...", 2)
         elif state == "lounge":
-            self.angle_t, self.anim = 90.0 * self.dir, "lounge"
+            self.angle_t, self.anim = (0.0 if getattr(self.art, "lies", False) else 90.0 * self.dir), "lounge"
         elif state == "walk":
             self.anim = "walk"
             self.angle_t = 0.0
@@ -2747,7 +2924,7 @@ class Capri:
         if scale not in self.art_cache:
             if len(self.art_cache) >= 5:
                 self.art_cache.pop(next(iter(self.art_cache)))
-            self.art_cache[scale] = load_art(self.dpi * scale)
+            self.art_cache[scale] = load_art(self.dpi * scale, self.settings.get("skin", "capri"))
         return self.art_cache[scale]
 
     def size_factor(self, now):
@@ -2770,6 +2947,22 @@ class Capri:
         self.parts = []
         self._geo = None
         self.place()
+        return True
+
+    def available_skins(self):
+        return [k for k in SKINS if k == "classic" or find_skin_dir(k)]
+
+    def set_skin(self, name, announce=True):
+        if name not in self.available_skins():
+            return False
+        self.settings["skin"] = name
+        self.save_settings()
+        self.art_cache.clear()
+        self.angle_t = 0.0 if self.state in ("sleep", "lounge") and name != "classic" else self.angle_t
+        self.apply_size(force=True)
+        if announce:
+            self.say({"capri": "New look. Like it?", "watcher": "...watching.",
+                      "classic": "Old school. Okay."}.get(name, "New look."), 4, speak=None)
         return True
 
     def set_size(self, scale, announce=True):
@@ -2796,6 +2989,8 @@ class Capri:
         self.last_active = time.time()
         if self.state in ("sleep", "lounge"):
             self.angle_t = 0.0
+            if self.state == "sleep":
+                self.wake_until = time.time() + 0.9                  # skins with a wake-up stretch play it
             self.go("idle", 2.0)
 
     def hop(self, power=9.0):
@@ -5185,6 +5380,13 @@ class Capri:
             m.add_cascade(label="Voice", menu=vm)
         else:
             m.add_command(label="Voice: no speech engine found", state="disabled")
+        sk = tk.Menu(m, tearoff=0, bg=C_PANEL, fg=C_TEXT, activebackground=C_GREEN, activeforeground=C_BLACK,
+                     bd=0, relief="flat", font=(self.font_family, 10))
+        cur_skin = self.settings.get("skin", "capri")
+        for key in self.available_skins():
+            sk.add_command(label=("* " if cur_skin == key else "   ") + SKIN_LABELS.get(key, key),
+                           command=lambda k=key: self.set_skin(k))
+        m.add_cascade(label="Skins", menu=sk)
         m.add_command(label=f"Calm mode: {'on' if self.calm else 'off'}", command=self.toggle_calm)
         m.add_command(label=f"Check-ins: {'on' if self.checkins else 'off'}", command=self.toggle_checkins)
         if self.win32.ok:
@@ -5222,12 +5424,27 @@ class Capri:
             self._geo = g
 
     def sprite_image(self, now):
+        skin = getattr(self.art, "kind", "") == "skin"
+        glitch = self.glitch
         if now < self.talk_until and self.state in ("idle", "perch"):
             anim = "talk"
         elif self.typing_along and self.state in ("idle", "perch"):
             anim = "type"
         else:
             anim = self.anim
+        if skin:                                             # the new skin has drawn poses for these
+            if self.state == "drag":
+                anim = "dangle"
+            elif self.state == "lounge" and now < self.talk_until:
+                anim = "lay-talk"
+            elif self.state in ("sleep", "lounge"):
+                anim = self.state
+            elif self.state in ("idle", "perch") and now < getattr(self, "wake_until", 0):
+                anim = "wake"
+            elif glitch > 0.02 and self.state in ("idle", "perch", "lounge"):
+                anim, glitch = ("perch-glitch" if self.state == "perch" else "glitch"), 0.0   # drawn glitch, not the fx
+            elif self.state == "perch" and anim == "idle":
+                anim = "perch"
         key, frame = self.art.frame(anim, now - self.t_start, self.dir, self.step_ph if anim == "walk" else None)
         flip = self.art.flip_dir and self.dir < 0
         dim = self.state == "sleep"
@@ -5238,8 +5455,8 @@ class Capri:
             if self.facing is not None and facing != self.facing:
                 self.turn_squash = 1.0
             self.facing = facing
-        if self.glitch > 0.02:
-            img, ax, ay = pose(frame, self.angle, self.sx, self.sy, flip, dim, self.glitch, self.rng)
+        if glitch > 0.02:
+            img, ax, ay = pose(frame, self.angle, self.sx, self.sy, flip, dim, glitch, self.rng)
             if self.outline_on():
                 img = neon.outline(img, neon.COLORS[self.neon_name], self.neon_px())
             self._last_ck = None

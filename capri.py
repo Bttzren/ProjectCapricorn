@@ -44,6 +44,7 @@ import listen
 import localai
 import memory
 import meeting
+import motion
 import neon
 import notes
 import personality
@@ -716,7 +717,8 @@ class SheetSprites:
         i = self.map.get(name)
         return self.rows[i] if i is not None and 0 <= i < len(self.rows) and self.rows[i] else None
 
-    def frame(self, anim, t, d):
+    def frame(self, anim, t, d, phase=None):
+        """phase: walking step clock (1 per step). Run frames then follow distance walked, not time."""
         if anim == "walk":
             order = ["running-right", "running", "idle"] if d > 0 else ["running-left", "running", "idle"]
         else:
@@ -724,7 +726,10 @@ class SheetSprites:
         for name in order + ["idle"]:
             fr = self.row_frames(name)
             if fr:
-                i = int(t * (5 if name == "idle" else 9)) % len(fr)
+                if phase is not None and name != "idle":
+                    i = int(phase * len(fr) / 2) % len(fr)      # one run cycle = two steps
+                else:
+                    i = int(t * (5 if name == "idle" else 9)) % len(fr)
                 return (name, i), fr[i]
         fr = next(r for r in self.rows if r)
         return ("any", 0), fr[0]
@@ -747,7 +752,7 @@ class PlaceholderSprites:
         self.w, self.h = self.idle.size
         self.emotes, self.portraits = {}, {"idle": thumb(self.idle, 56)}
 
-    def frame(self, anim, t, d):
+    def frame(self, anim, t, d, phase=None):
         return ("p",), self.idle
 
 
@@ -2525,6 +2530,7 @@ class Capri:
         self.sx = self.sy = self.sxt = self.syt = 1.0
         self.glitch = 0.0
         self.hop_y = 0.0
+        self.step_ph, self.walk_k, self.turn_until = 0.0, 1.0, 0.0     # walking: step clock, pace, turn pause
         self.surf = None            # (id, left_at_last_seen) when standing on a window
         self.surfaces = []
         self.surf_check = 0.0
@@ -2697,6 +2703,8 @@ class Capri:
         elif state == "walk":
             self.anim = "walk"
             self.angle_t = 0.0
+            self.walk_k = self.rng.uniform(0.85, 1.15)              # some walks are strolls, some are brisk
+            self.turn_until = 0.0
         elif state == "dance":
             self.anim = "dance"
             self.angle_t = 0.0
@@ -3033,10 +3041,14 @@ class Capri:
         self.angle = self.angle_t = 0.0
         self.go("tp_in", 0.5)
 
+    def stride(self):
+        """Pixels per step, in proportion to her size, so steps match her speed at any size."""
+        return max(8.0, self.fw * 0.3)
+
     def land(self, surface=None):
+        self.land_squash = motion.landing_squash(self.vy, self.dpi)    # a long fall lands harder than a hop
         self.vy = 0.0
         self.vx *= 0.2
-        self.land_squash = 1.0
         if surface:
             self.surf = (surface[4], surface[0])
             self.fy = surface[1]
@@ -3058,11 +3070,22 @@ class Capri:
                 self.anim = "idle"
                 self.choose_next()
         elif st == "walk":
-            self.fx += self.dir * sp
-            if self.fx < lo or self.fx > hi:
+            if now < self.turn_until:                           # stopped at an edge, turning around
+                self.anim, f = "idle", 0.0
+            else:
+                self.anim = "walk"
+                f = motion.walk_factor(age, self.state_dur) * motion.edge_slow(self.fx, lo, hi, self.dir, self.fw * 0.6)
+                if self.turn_until:
+                    f *= motion.smoothstep((now - self.turn_until) / motion.RAMP)     # speed up again after turning
+            d = self.dir * sp * self.walk_k * f
+            self.fx += d
+            if (self.fx >= hi and self.dir > 0) or (self.fx <= lo and self.dir < 0):     # walked into an edge
                 self.fx = min(max(self.fx, lo), hi)
                 self.dir *= -1
-            self.hop_y = -abs(math.sin(now * 9)) * 3 * self.dpi
+                self.turn_until = now + motion.TURN_PAUSE
+            self.fx = min(max(self.fx, lo), hi)
+            self.step_ph = motion.step_phase(self.step_ph, d, self.stride())
+            self.hop_y = motion.bob(self.step_ph, 3 * self.dpi)
             if age > self.state_dur:
                 self.hop_y = 0
                 self.go("perch" if self.surf else "idle", self.rng.uniform(2, 5))
@@ -3078,9 +3101,12 @@ class Capri:
             target = mx + (-1 if self.fx > mx else 1) * self.fw * 0.9
             if abs(target - self.fx) > 20:
                 self.dir = 1 if target > self.fx else -1
-                self.fx = min(max(self.fx + self.dir * sp * 1.8, lo), hi)
+                d = self.dir * sp * 1.8 * min(1.0, abs(target - self.fx) / (self.fw * 0.8) + 0.3)   # ease in
+                nx = min(max(self.fx + d, lo), hi)
+                self.step_ph = motion.step_phase(self.step_ph, nx - self.fx, self.stride())
+                self.fx = nx
                 self.anim = "walk"
-                self.hop_y = -abs(math.sin(now * 12)) * 3 * self.dpi
+                self.hop_y = motion.bob(self.step_ph, 3 * self.dpi)
             else:
                 self.hop_y = 0
                 self.anim = "idle"
@@ -3154,6 +3180,8 @@ class Capri:
                 tx = mx + math.cos(self.orbit_a) * 170 * self.dpi
                 ty = my + math.sin(self.orbit_a) * 90 * self.dpi - self.fh * 0.4
                 done = age > (self.state_dur or 5.5)
+            elif not self.fly_pts:                               # nowhere to go (shouldn't happen): just drop
+                return self.go("air")
             else:
                 tx, ty = self.fly_pts[0]
             dx, dy = tx - self.fx, ty - self.fy
@@ -5187,7 +5215,7 @@ class Capri:
             anim = "type"
         else:
             anim = self.anim
-        key, frame = self.art.frame(anim, now - self.t_start, self.dir)
+        key, frame = self.art.frame(anim, now - self.t_start, self.dir, self.step_ph if anim == "walk" else None)
         flip = self.art.flip_dir and self.dir < 0
         dim = self.state == "sleep"
         if self.glitch > 0.02:

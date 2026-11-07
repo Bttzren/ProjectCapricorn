@@ -1,7 +1,7 @@
 # Capri — handoff for the next session
 
 Read this first, then `README.txt` (user-facing feature docs). State as of branch tip
-`claude/zen-ptolemy-6a26qh`, **354 unit tests passing** (1 skipped), nothing uncommitted.
+`claude/zen-ptolemy-6a26qh`, **381 unit tests passing** (1 skipped), nothing uncommitted.
 
 **Fresh container setup** (both were missing in the last session; without them 4 tests error and every smoke
 script dies on `import tkinter`):
@@ -43,7 +43,8 @@ Windows hardware. Be honest about that every time.
   19 clip + settings shot · 20 launcher/controls/brief/neon · 21 boot animation frames · 22 hear PC audio ·
   23 call mode · 24 chat+settings screenshots · 25 other windows regression · 26 outline-off check ·
   27 notes (typed + spoken) · 28 quiet in calls (faked mic registry) · 29 `/do` with a Gemini key ·
-  30 movement trace (eased walk, edge turn, steps, landing squash) · 31 no popups / explain-once.
+  30 movement trace (eased walk, edge turn, steps, landing squash) · 31 no popups / explain-once · 32 skin poses · 33 expressions (fake AI tag) · 34 face pop-up + cut-in
+  screenshots · 35 mini face chat avatar + tiny mode · 36 launch intro. All smoke scripts call `p.cancel_intro()`.
   Also grep each run's `$HOME/.capri/capri.log` for `tick error` — that's how a frozen-pet bug shows up.
   (smoke20 sets `state="fly"` by hand; that used to log IndexErrors, now guarded.)
 - Every behaviour change: add/adjust unit tests in `tests/` for the pure module. When an old test breaks because
@@ -180,3 +181,27 @@ Real hardware reports from the user are the most valuable input — ask for exac
   now drops to `air`.
 - **Look**: only a ~0.1 s width squash when she turns (NEAREST scaling, alpha stays 0/255). Default look,
   green accent, outline-off all unchanged.
+
+## 11. Self-expression + art (same session, user supplied art; NOT run on Windows)
+
+User asked for "more ability of self expression" and sent two zips (unpacked outside the repo, copied into
+`pet/` so both build scripts bundle them; credits in `pet/CREDITS.md`, art by **xilia_world00** on Discord).
+User decisions: **new skin is the default**, mini face = **chat avatar + tiny mode**.
+- **Skins** (`SkinSprites`, `pet/skins/<name>/`): `capri` (default), `watcher`, `classic` (= old Petdex sheet).
+  Lazy strip loading, scaled by idle figure height, crisp'd. Blink, mouth overlay for talking, dangle on drag,
+  perch strip when perched, lay poses for sleep/lounge (`art.lies` = no 90° rotation), wake, drawn glitch.
+  Right-click > Skins, `/skin`.
+- **Expressions** (`expression.py`): `say_ai` asks for a leading `[emotion]` tag (only that path; parsed off
+  BEFORE `speech.sanitize`, never shown/spoken/kept in `recent_lines`). `Capri.express()` = pose + in-place
+  motion + icon, `Gate` rate limit, blocked while calm/agent/drag/tp/sleep. Face close-ups above the bubble
+  (`pet/faces`, `FACES` map) and rare cut-ins (`pet/cutins`, laugh/excited/surprised, 5-min gap). Settings
+  `expressive`, `faces`, `cutins` (all on). `/express [name]`.
+- **Mini face** (`MiniFaces`, `pet/mini`, `expression.mini_pick`): chat avatar; tiny mode `/tiny on|off|auto`
+  (auto = during a game or focus timer).
+- **Intro** (`intro.py`, `pet/intro`): own topmost color-key window at launch instead of the beam boot (new
+  skins only; `/intro off` = beam, `/boot off` = none). `fast_crisp` for big frames.
+- **Icons**: `iconphoto` + `.ico` on Windows; Windows build uses `--icon pet\icons\capri.ico`. Mac build
+  has no .icns (none supplied). `pet/fonts/ShareTechMono` is bundled but NOT used yet (Tk can't load a TTF
+  without registering it on Windows).
+- Not used on purpose: `capri-cutout.png`, `capri-full.png`, `tray.png` (no tray feature), dangle beyond drag.
+- Riskiest on real Windows: intro window transparency/focus, perch alignment on window edges, lay pose size.

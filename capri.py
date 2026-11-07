@@ -5854,18 +5854,35 @@ class Capri:
                         for st in intro.STEMS))
 
     def start_intro(self, greet=True):
-        """She climbs up into the screen, says hi, grins and waves, then drops away and the pet appears."""
+        """She climbs up into the screen (full screen), says hi, grins and waves, then drops away and the pet
+        appears. The big frames are prepared in a background thread (PIL only) so the app never freezes."""
         wa = self.work_area()
         W, H = intro.size(wa[2] - wa[0], wa[3] - wa[1])
-        frames = {}
-        try:
-            d = pet_asset_dirs("intro")[0]
-            for st in intro.STEMS:
-                im = Image.open(os.path.join(d, st + ".webp")).convert("RGBA").resize((W, H), Image.LANCZOS)
-                frames[st] = ImageTk.PhotoImage(fast_crisp(im), master=self.root)
-        except Exception:
-            log("intro failed, using the beam animation: " + traceback.format_exc())
+        dirs = pet_asset_dirs("intro")
+        if not dirs:
             return False
+        it = {"loading": True, "pil": None, "err": None, "asked": time.time(), "greet": greet, "W": W, "H": H,
+              "x": int((wa[0] + wa[2]) / 2 - W / 2), "yup": int(wa[3] - H), "bottom": wa[3], "stem": None,
+              "happy": False, "win": None}
+
+        def build():
+            try:
+                out = {}
+                for st in intro.STEMS:
+                    im = Image.open(os.path.join(dirs[0], st + ".webp")).convert("RGBA")
+                    out[st] = fast_crisp(im.resize((W, H), Image.LANCZOS))
+                it["pil"] = out
+            except Exception:
+                it["err"] = traceback.format_exc()
+        threading.Thread(target=build, daemon=True).start()
+        self.intro = it
+        self.bubble, self.surf = "", None
+        self.go("idle", intro.DURATION + 15)
+        return True
+
+    def show_intro(self, it):
+        """Frames are ready: make the window and start the clock."""
+        frames = {st: ImageTk.PhotoImage(im, master=self.root) for st, im in it.pop("pil").items()}
         win = tk.Toplevel(self.root)
         win.overrideredirect(True)
         win.attributes("-topmost", True)
@@ -5874,22 +5891,24 @@ class Capri:
         lbl.pack()
         win.config(bg=bg)
         if IS_WIN:
-            win.attributes("-transparentcolor", KEY)
+            win.attributes("-transparentcolor", KEY)        # only her art is solid; clicks pass through the rest
         elif IS_MAC:
             win.attributes("-transparent", True)
         lbl.bind("<Button-1>", lambda e: self.finish_intro(skipped=True))
-        x, yup = int((wa[0] + wa[2]) / 2 - W / 2), int(wa[3] - H)
-        win.geometry(f"{W}x{H}+{x}+{wa[3] + 10}")
-        self.intro = {"t0": time.time(), "win": win, "lbl": lbl, "frames": frames, "greet": greet, "W": W, "H": H,
-                      "x": x, "yup": yup, "stem": None, "happy": False}
-        self.bubble, self.surf = "", None
-        self.go("idle", intro.DURATION + 5)
+        win.geometry(f"{it['W']}x{it['H']}+{it['x']}+{it['bottom'] + 10}")
+        it.update({"win": win, "lbl": lbl, "frames": frames, "t0": time.time(), "loading": False})
         self.sfx.play("blip")
-        return True
 
     def update_intro(self, now):
         it = self.intro
         if not it:
+            return
+        if it["loading"]:
+            if it["err"] or now - it["asked"] > 8:                # broken art or a very slow PC: skip to the greeting
+                log("intro skipped: " + (it["err"] or "frames took too long")[-300:])
+                return self.finish_intro(skipped=True)
+            if it["pil"] is not None:
+                self.show_intro(it)
             return
         r = intro.at(now - it["t0"])
         if r is None:
@@ -5909,7 +5928,7 @@ class Capri:
     def cancel_intro(self):
         """Close the intro without greeting (tests, or when something more important starts)."""
         it, self.intro = self.intro, None
-        if it:
+        if it and it.get("win"):
             try:
                 it["win"].destroy()
             except tk.TclError:
@@ -5919,10 +5938,11 @@ class Capri:
         it, self.intro = self.intro, None
         if not it:
             return
-        try:
-            it["win"].destroy()
-        except tk.TclError:
-            pass
+        if it.get("win"):
+            try:
+                it["win"].destroy()
+            except tk.TclError:
+                pass
         self.settings["booted"] = True
         self.save_settings()
         self.go("idle", 2.0)

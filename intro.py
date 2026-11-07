@@ -1,6 +1,6 @@
 """Launch intro: she climbs up into your screen, grabs the edges, says hi, grins and waves (pure timeline, no Tk).
 
-Frames are pet/intro/<stem>.webp (16:9 art). The window rises from the bottom of the screen, plays the frames,
+Frames are pet/intro/<stem>.webp (16:9 art), shown FULL SCREEN. The window rises from the bottom of the screen, plays the frames,
 then drops away and the normal pet appears. Click to skip. /intro off brings back the old beam animation.
 """
 FRAMES = [("intro-grab", 0.45),
@@ -35,10 +35,8 @@ def at(t):
 
 
 def size(screen_w, screen_h, art_w=1672, art_h=941):
-    """Window size: about half the screen width, never taller than 45% of it."""
-    w = int(min(screen_w * 0.5, 900))
-    h = int(w * art_h / art_w)
-    if h > screen_h * 0.45:
-        h = int(screen_h * 0.45)
-        w = int(h * art_w / art_h)
+    """Full screen: as big as the art can be inside the screen's work area without cropping her."""
+    w, h = int(screen_w), int(screen_w * art_h / art_w)
+    if h > screen_h:
+        h, w = int(screen_h), int(screen_h * art_w / art_h)
     return max(160, w), max(90, h)

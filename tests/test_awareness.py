@@ -27,6 +27,26 @@ class AwarenessTests(unittest.TestCase):
         for title, cat in cases.items():
             self.assertEqual(A.classify(title), cat, title)
 
+    def test_watching_or_reading_about_a_game_is_not_gaming(self):
+        cases = {
+            "Minecraft speedrun WORLD RECORD - YouTube - Google Chrome": "video",
+            "Valorant clips - Twitch - Microsoft Edge": "video",
+            "r/Minecraft - Reddit - Google Chrome": "social",
+            "steam deck review - YouTube": "video",
+            "Cyberpunk: Edgerunners | Netflix": "video",
+            "Among Us but - YouTube": "video",
+            "Minecraft Wiki - Google Chrome": None,
+            "Minecraft 1.21": "game",
+            "Cyberpunk 2077": "cyberpunk",
+            "Steam": "game",
+        }
+        for title, cat in cases.items():
+            self.assertEqual(A.classify(title), cat, title)
+        self.assertTrue(A.is_web("Anything - Mozilla Firefox"))
+        self.assertTrue(A.is_web("Fortnite montage \u2014 YouTube"))
+        self.assertFalse(A.is_web("VALORANT"))
+        self.assertFalse(A.is_web(""))
+
     def test_unknown_and_empty_are_none(self):
         for t in ("", None, "Untitled - Notepad", "Calculator", "New Tab - Google Chrome"):
             self.assertIsNone(A.classify(t), t)

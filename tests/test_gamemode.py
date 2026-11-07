@@ -44,6 +44,9 @@ class GameDetectTests(unittest.TestCase):
         self.assertEqual(G.detect_game("Counter-Strike 2"), "cs2")
         self.assertEqual(G.detect_game("League of Legends (TM) Client"), "league")
         self.assertIsNone(G.detect_game("YouTube - Chrome"))
+        for watching in ("Valorant clips - Twitch - Microsoft Edge", "Fortnite montage - YouTube - Google Chrome",
+                         "Overwatch 2 patch notes - Google Chrome", "League of Legends wiki - Fandom"):
+            self.assertIsNone(G.detect_game(watching), watching)             # watching/reading, not playing
         self.assertIsNone(G.detect_game(""))
         self.assertIsNone(G.detect_game(None))
 

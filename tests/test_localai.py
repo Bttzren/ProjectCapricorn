@@ -23,6 +23,12 @@ FAKE_SERVER = textwrap.dedent('''
         def do_POST(self):
             n = int(self.headers.get("Content-Length", 0)); body = json.loads(self.rfile.read(n))
             last = body["messages"][-1]["content"]
+            if isinstance(last, list):                      # an image request
+                img = [p for p in last if p.get("type") == "image_url"]
+                txt = [p["text"] for p in last if p.get("type") == "text"]
+                last = ("IMAGE " if img and img[0]["image_url"]["url"].startswith("data:image/") else "") + " ".join(txt)
+                if "--mmproj" not in sys.argv:
+                    last = "NO-PROJECTOR " + last
             out = json.dumps({"choices": [{"message": {"content": "echo: " + last}}]}).encode()
             self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers()
             self.wfile.write(out)
@@ -239,6 +245,97 @@ class RunTests(unittest.TestCase):
         a = L.server_argv("/x/llama-server", "/m.gguf", 8123, threads=3)
         self.assertEqual(a[a.index("--host") + 1], "127.0.0.1")
         self.assertEqual(a[a.index("--port") + 1], "8123")
+
+
+class VisionTests(unittest.TestCase):
+    QWEN = ["README.md", "Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf", "Qwen2.5-VL-3B-Instruct-Q8_0.gguf",
+            "Qwen2.5-VL-3B-Instruct-f16.gguf", "mmproj-Qwen2.5-VL-3B-Instruct-Q8_0.gguf",
+            "mmproj-Qwen2.5-VL-3B-Instruct-f16.gguf"]
+    SMOL = ["SmolVLM2-2.2B-Instruct-Q4_K_M.gguf", "mmproj-SmolVLM2-2.2B-Instruct-f16.gguf", ".gitattributes"]
+    GEMMA = ["gemma-3-4b-it-Q4_K_M.gguf", "mmproj-model-f16.gguf"]
+
+    def test_picks_files_in_every_naming_style(self):
+        self.assertEqual(L.pick_vision_files(self.QWEN), ("Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf",
+                                                          "mmproj-Qwen2.5-VL-3B-Instruct-Q8_0.gguf"))
+        self.assertEqual(L.pick_vision_files(self.SMOL), ("SmolVLM2-2.2B-Instruct-Q4_K_M.gguf",
+                                                          "mmproj-SmolVLM2-2.2B-Instruct-f16.gguf"))
+        self.assertEqual(L.pick_vision_files(self.GEMMA), ("gemma-3-4b-it-Q4_K_M.gguf", "mmproj-model-f16.gguf"))
+        self.assertEqual(L.pick_vision_files(["m-Q8_0.gguf", "big-Q4_K_M-00001-of-00002.gguf", "mmproj-x.gguf"]),
+                         ("m-Q8_0.gguf", "mmproj-x.gguf"))                         # split files skipped
+        self.assertIsNone(L.pick_vision_files(["only-model-Q4_K_M.gguf"]))         # no projector: can't see
+        self.assertIsNone(L.pick_vision_files(["../../evil-Q4_K_M.gguf", "sub/mmproj-a.gguf", "mmproj-b.gguf"]))
+        self.assertIn("%20", L.hf_file_url("r/x", "a b.gguf"))
+
+    def test_vision_body_has_the_image(self):
+        b = L.vision_body("sys", "image/jpeg", "QUJD", "what?", 100)
+        part = b["messages"][-1]["content"]
+        self.assertEqual(part[1]["image_url"]["url"], "data:image/jpeg;base64,QUJD")
+        self.assertEqual(b["messages"][0], {"role": "system", "content": "sys"})
+
+    def test_vision_install_updates_an_old_engine_and_writes_a_manifest(self):
+        d = tempfile.mkdtemp()
+        exe = "llama-server.exe" if sys.platform.startswith("win") else "llama-server"
+        os.makedirs(os.path.join(d, "bin"))
+        open(os.path.join(d, "bin", exe), "w").write("old")                       # an engine without --mmproj
+        zbuf = io.BytesIO()
+        with zipfile.ZipFile(zbuf, "w") as f:
+            f.writestr(exe, "n" * 200_000)
+        release = {"assets": [asset("llama-b1-bin-win-cpu-x64.zip")]}
+        urls, msgs = [], []
+
+        def opener(req, timeout=0):
+            url = req if isinstance(req, str) else req.full_url
+            urls.append(url)
+            if url.endswith(".zip"):
+                return Resp(zbuf.getvalue())
+            if url.startswith(L.HF_API):
+                return Resp(json.dumps({"siblings": [{"rfilename": n} for n in self.QWEN]}).encode())
+            return Resp(b"g" * 1_200_000)
+        ins = L.Install(d, opener=opener, progress=msgs.append, platform="win32", machine="AMD64",
+                        check_mmproj=lambda b: open(b).read(3) != "old")
+        self.assertFalse(ins.installed("see"))
+        ins.run("see", release=release)
+        self.assertTrue(ins.installed("see"))
+        self.assertTrue(any("too old" in m for m in msgs))
+        self.assertTrue(ins.mmproj_path("see").endswith("mmproj-Qwen2.5-VL-3B-Instruct-Q8_0.gguf"))
+        self.assertIn(L.HF_HOST + "ggml-org/Qwen2.5-VL-3B-Instruct-GGUF/resolve/main/Qwen2.5-VL-3B-Instruct-Q4_K_M.gguf", urls)
+        self.assertEqual(L.server_argv("b", "m", 1, 2, mmproj="p")[-2:], ["--mmproj", "p"])
+        self.assertNotIn("--mmproj", L.server_argv("b", "m", 1, 2))
+
+    def test_local_server_sees_an_image(self):
+        d = tempfile.mkdtemp()
+        script = os.path.join(d, "fake_server.py")
+        open(script, "w").write(FAKE_SERVER)
+        exe = "llama-server.exe" if sys.platform.startswith("win") else "llama-server"
+        os.makedirs(os.path.join(d, "bin"))
+        open(os.path.join(d, "bin", exe), "w").write("x")
+        md = os.path.join(d, "models", "see")
+        os.makedirs(md)
+        for n in ("m.gguf", "mmproj-m.gguf"):
+            open(os.path.join(md, n), "w").write("x")
+        json.dump({"model": "m.gguf", "mmproj": "mmproj-m.gguf"}, open(os.path.join(md, "files.json"), "w"))
+        seen = []
+
+        def argv(b, m, port, threads=None, mmproj=None):
+            seen.append(mmproj)
+            return [sys.executable, script, "--port", str(port)] + (["--mmproj", mmproj] if mmproj else [])
+        ai = L.LocalAI(L.Install(d), which="see", argv_builder=argv, env_url="", start_timeout=20)
+        try:
+            self.assertTrue(ai.can_see())
+            out = ai.see("sys", "image/jpeg", "QUJD", "DOING?")
+            self.assertEqual(out, "echo: IMAGE DOING?")
+            self.assertTrue(seen[0].endswith("mmproj-m.gguf"))
+            self.assertTrue(ai.reply([{"role": "user", "content": "hi"}], "p").startswith("echo: hi"))  # it chats too
+        finally:
+            ai.stop()
+        text_only = L.LocalAI(L.Install(d), which="small", env_url="")
+        self.assertFalse(text_only.can_see())
+
+    def test_ollama_vision_model(self):
+        def opener(url, timeout=0):
+            return Resp(json.dumps({"models": [{"name": "qwen2.5:3b"}, {"name": "llava:7b"}]}).encode())
+        self.assertEqual(L.ollama_vision_model(opener=opener), "llava:7b")
+        self.assertEqual(L.ollama_vision_model(opener=lambda u, timeout=0: Resp(b'{"models": [{"name": "qwen2.5:3b"}]}')), "")
 
 
 if __name__ == "__main__":

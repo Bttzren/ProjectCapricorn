@@ -373,9 +373,23 @@ GEMINI_AGENT_NOTE = (" Coordinates are PIXELS in the screenshot you were given (
                      "not a 0-1000 scale. Reply with the JSON object only.")
 
 
-def vision_ask(system, media_type, b64, prompt, max_tokens=120, model=None, room=1):
-    """Ask the vision model about ONE shrunken screenshot. The image goes to the AI provider that owns your key.
+def local_sees():
+    """A local vision model is installed and allowed (not /brain cloud): screen looks stay on this PC."""
+    return BRAIN["mode"] != "cloud" and LOCAL_AI.can_see()
+
+
+def can_look():
+    """Can she look at the screen at all (locally, or with a cloud key)?"""
+    return local_sees() or (BRAIN["mode"] != "local" and bool(read_api_key()))
+
+
+def vision_ask(system, media_type, b64, prompt, max_tokens=120, model=None, room=1, local_ok=False):
+    """Ask a vision model about ONE shrunken screenshot. local_ok (glances, /look): the local vision model if one
+    is installed, so the image never leaves the PC. Otherwise it goes to the AI provider that owns your key.
+    /do and game commentary never pass local_ok: a small local model must not drive clicks.
     room: multiplier for Gemini's token cap (its newer models spend output tokens on thinking first)."""
+    if local_ok and local_sees():
+        return LOCAL_AI.see(system, media_type, b64, prompt, max(160, max_tokens))
     key = read_api_key()
     if not key:
         raise RuntimeError("401: no API key")
@@ -1704,7 +1718,8 @@ class ChatWindow:
                 self.system_line(f"Screen: awareness {'on' if p.aware else 'off'}, sitting on boxes "
                                  f"{'on' if p.settings.get('ledges') else 'off'}, glancing "
                                  f"{'on' if p.settings.get('ai_vision') and p.settings.get('glance', True) else 'off'}"
-                                 f" every {p.look_every()} s{'' if read_api_key() else ' (needs an AI key)'}."
+                                 f" every {p.look_every()} s"
+                                 f"{' (local AI, stays on your PC)' if local_sees() else '' if can_look() else ' (needs /getbrain see or a key)'}."
                                  "   /see on | off | every <1-90>")
         elif cmd == "/ledges":
             arg = parts[1].lower() if len(parts) > 1 else ""
@@ -2069,11 +2084,13 @@ class ChatWindow:
             arg = parts[1].lower() if len(parts) > 1 else "small"
             if arg == "remove":
                 p.remove_brain()
-            elif arg in localai.MODELS:
+            elif arg in localai.all_models():
                 p.install_brain(arg)
             else:
-                self.system_line("/getbrain  (small, 1.1 GB)   /getbrain big  (3B, 2.1 GB, smarter)   /getbrain remove\n"
-                                 "Or install Ollama and she'll use it automatically.", err=True)
+                self.system_line("/getbrain  (small, 1.1 GB)   /getbrain big  (3B, 2.1 GB, smarter)\n"
+                                 "/getbrain see  (can SEE your screen, ~3 GB, also chats)   /getbrain see-fast  (~2 GB, "
+                                 "faster, rougher)\n/getbrain remove.  Or install Ollama (a vision model like llava "
+                                 "works too).", err=True)
         elif cmd == "/brain":
             arg = parts[1].lower() if len(parts) > 1 else ""
             if arg in ("auto", "cloud", "local"):
@@ -3005,7 +3022,7 @@ class Capri:
         self.pending_wake = False
         self.clip_events = queue.Queue()
         BRAIN["mode"] = self.settings.get("brain", "auto") if self.settings.get("brain") in ("auto", "cloud", "local") else "auto"
-        LOCAL_AI.which = self.settings.get("brain_model", "small") if self.settings.get("brain_model") in localai.MODELS else "small"
+        LOCAL_AI.which = self.settings.get("brain_model", "small") if self.settings.get("brain_model") in localai.all_models() else "small"
         self.agent_budget = speech.Budget(per_min=40, per_day=250, store=self.settings.setdefault("agent_budget", {}))
         self.voice_install = None
         self.spotter, self.spotter_manual, self.spotter_until = None, False, 0.0
@@ -4067,8 +4084,9 @@ class Capri:
             if not self.ask_once(
                     "vision", "Let Capri watch your screen with AI?",
                     "While she's watching, Capri takes a small shrunken screenshot every few seconds (only when the "
-                    "screen changed) and SENDS it to your AI provider (Claude or Gemini, whichever key you use) so "
-                    "the AI can see what's happening and react.\n\n* It can include ANYTHING visible on your "
+                    "screen changed) and shows it to an AI that can see: the LOCAL one on your PC if you installed it "
+                    "(/getbrain see, nothing leaves your PC), otherwise your AI provider (Claude or Gemini, whichever "
+                    "key you use), so the AI can see what's happening and react.\n\n* It can include ANYTHING visible on your "
                     "screen at that moment.\n* Capri doesn't save the screenshots. The provider's own data policy "
                     "applies to what it receives.\n* It pauses on banking, password and private-browsing windows "
                     "and while you're away.\n* It uses your API credits: very roughly $1-3 an hour with Claude at one "
@@ -4129,9 +4147,11 @@ class Capri:
         if self.brain_busy:
             return self.notify("I'm already downloading it. Hang on.", err=True)
         self.brain_busy = True
-        what = localai.MODELS[which][3]
-        self.notify(f"Installing a local AI: {what}. This downloads about {localai.MODELS[which][2]} MB. "
-                    "You can keep using me.", secs=9)
+        if localai.is_vision(which):
+            _repo, mb, what = localai.VISION_MODELS[which]
+        else:
+            mb, what = localai.MODELS[which][2], localai.MODELS[which][3]
+        self.notify(f"Installing a local AI: {what}. This downloads about {mb} MB. You can keep using me.", secs=9)
 
         def work():
             try:
@@ -4158,9 +4178,13 @@ class Capri:
                 self.notify(item[1], secs=5)
             elif item[0] == "ok":
                 self.brain_busy = False
+                LOCAL_AI.stop()                       # a running text-only engine can't see: restart on the new model
                 self.settings["brain_model"] = LOCAL_AI.which = item[1]
                 self.save_settings()
                 LOCAL_AI.refresh()
+                if localai.is_vision(item[1]):
+                    self.notify("She can see now, with the AI on your PC. /see on to let her look at your screen.",
+                                secs=9)
                 self.notify("Local AI installed. It runs on your computer, no key needed. /brain shows which AI I use.",
                             secs=9)
                 self.warm_brain()
@@ -5008,8 +5032,8 @@ class Capri:
 
     def look(self, question=""):
         """One-off: look at the screen now and answer (in the chat if it's open, else in a bubble)."""
-        if not read_api_key():
-            self.look_results.put(("", "401: no API key"))
+        if not can_look():
+            self.look_results.put(("", "no AI that can see: add a key, or /getbrain see for a local one"))
             return
         system = (speech.system_prompt(self.persona_text, self.mind.context(time.time(), self.doing()), "off",
                                        self.memory.context())
@@ -5018,7 +5042,8 @@ class Capri:
 
         def work():
             try:
-                text = vision.look_once(ledges.capture, self._spotter_ask, q, system)
+                text = vision.look_once(ledges.capture, lambda mt, b64, recent, game, sysm, question:
+                                        vision_ask(sysm, mt, b64, question, 200, local_ok=True), q, system)
                 self.look_results.put((" ".join((text or "").split())[:400] or "I looked but have nothing to say.", ""))
             except Exception as exc:
                 self.look_results.put(("", str(exc) or type(exc).__name__))
@@ -5369,7 +5394,7 @@ class Capri:
         return vision.look_secs(self.settings.get("vision_interval", vision.LOOK_DEFAULT))
 
     def glance_on(self):
-        return bool(self.settings.get("ai_vision") and self.settings.get("glance", True) and read_api_key())
+        return bool(self.settings.get("ai_vision") and self.settings.get("glance", True) and can_look())
 
     def glance(self, cat=None, periodic=False):
         """Look at the screen: right away when you switch apps, and every N seconds (Settings, 1-90 s, default 10).
@@ -5399,7 +5424,7 @@ class Capri:
                     return
                 media_type, b64 = vision.encode_frame(img)
                 del img
-                text = self._spotter_ask(media_type, b64, [], "", system, vision.GLANCE_QUESTION)
+                text = vision_ask(system, media_type, b64, vision.GLANCE_QUESTION, 200, local_ok=True)
                 doing, say = vision.parse_glance(text)
                 self.glance_results.put((doing, say, cat, "", periodic, False))
             except Exception as exc:
@@ -5454,10 +5479,13 @@ class Capri:
         self.save_settings()
         parts = ["sees which app you're in"]
         parts.append("sits on boxes on your screen" if sit else "NOT sitting on things (you said no)")
-        if look and read_api_key():
-            parts.append("glances at your screen when you switch apps, so she knows what you're actually doing")
+        if look and local_sees():
+            parts.append(f"looks at your screen every {self.look_every()} s with the AI on your PC (nothing leaves it)")
+        elif look and can_look():
+            parts.append(f"looks at your screen every {self.look_every()} s (one small screenshot to your AI provider)")
         elif look:
-            parts.append("will glance at your screen once you add an AI key (Settings > AI)")
+            parts.append("will look at your screen once she has an AI that can see: /getbrain see (free, on your "
+                         "PC) or a Claude/Gemini key")
         return "Screen: on. She " + ", ".join(parts) + "."
 
     def set_aware(self, on):

@@ -82,6 +82,17 @@ EXPRESSIONS (Settings > Size & look > "Act out how she feels", on by default)
   CUT-INS: for big moments only (laughing, hyped, shocked) an anime-style panel slides across her for about a
     second, at most once every 5 minutes. Settings > Size & look to turn off.
 
+LOCAL AI THAT CAN SEE (/getbrain see  - free, private, no key)
+  /getbrain see       Qwen 2.5 VL 3B: looks at your screen and reads text on it well. About 3 GB, wants ~6 GB
+                      free RAM. It also chats, so it replaces the text-only local brain (one program runs).
+  /getbrain see-fast  SmolVLM2 2.2B: faster on older laptops, rougher. About 2 GB.
+  The exact files are looked up on Hugging Face when you install. Once it's installed, her screen looks
+  (glances, /look) use it and the screenshot never leaves your PC (/brain cloud sends them to your key
+  instead). Honest limits: on a laptop CPU each look takes several seconds (so "every 1 s" can't really
+  be 1 s), it's less sharp than Claude/Gemini, and while it's looking, a chat reply waits a moment.
+  /do (clicking for you) and game commentary still use a Claude/Gemini key: a small model shouldn't click.
+  Already use Ollama? Pull a vision model (llava, qwen2.5vl, moondream, gemma3) and she uses it.
+
 LET HER SEE YOUR SCREEN (one switch: Settings > Quick setup > LET HER SEE MY SCREEN, or /see on | off)
   Turns on: Awareness (which app is in front), screen ledges (she sits on windows/boxes she finds), and AI
   glances: when you switch to something new she takes ONE small screenshot and the AI says exactly what you're
@@ -89,8 +100,9 @@ LET HER SEE YOUR SCREEN (one switch: Settings > Quick setup > LET HER SEE MY SCR
   instead of guessing from the window title. Then she keeps looking every 10 s (change it: /see every <1-90>
   or the Settings > AI slider; no daily limit) and only speaks up when what you're doing changes. An unchanged
   screen isn't sent. Never on banking /
-  password / private windows, while you're away, in a call/game-quiet, or during a /do task. Glances need an AI
-  key and send that one screenshot to your AI provider. /see shows what's on.
+  password / private windows, while you're away, in a call/game-quiet, or during a /do task. Looks need an AI that
+  can see: the local one (/getbrain see, stays on your PC) or a Claude/Gemini key (that screenshot goes to your
+  provider). /see shows what's on and which one she uses.
 
 SKINS (right-click her > Skins, or /skin <name>)
   capri    her new look, drawn by xilia_world00 (default): blinks, grins, glitches for real, talks with a

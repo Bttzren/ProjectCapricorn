@@ -8,12 +8,16 @@ import vision as V  # noqa: E402
 
 class GlanceTests(unittest.TestCase):
     def test_parse(self):
-        self.assertEqual(V.parse_glance("DOING: watching a Minecraft speedrun on YouTube SAY: Speedrunners scare me."),
-                         ("watching a Minecraft speedrun on YouTube", "Speedrunners scare me."))
+        self.assertEqual(V.parse_glance("DOING: watching a Minecraft speedrun on YouTube SAY: Those runners are unreal."),
+                         ("watching a Minecraft speedrun on YouTube", "Those runners are unreal."))
         self.assertEqual(V.parse_glance("doing: coding a Python pet app | say: Ooh, is that me?"),
                          ("coding a Python pet app", "Ooh, is that me?"))
         self.assertEqual(V.parse_glance("DOING: reading\nSAY: \"Nerd.\""), ("reading", "Nerd."))
         self.assertEqual(V.parse_glance("I see a browser."), ("", ""))
+        self.assertEqual(V.parse_glance(V.GLANCE_QUESTION), ("", ""))                 # echoed the instructions
+        self.assertEqual(V.parse_glance("DOING: watching a Minecraft speedrun on YouTube SAY: Speedrunners scare me."
+                                        ), ("", ""))                                  # copied the example
+        self.assertEqual(V.parse_glance("DOING: drawing in Krita SAY: <your reaction>"), ("drawing in Krita", ""))
         self.assertEqual(V.parse_glance(""), ("", ""))
         self.assertLessEqual(len(V.parse_glance("DOING: " + "x" * 300 + " SAY: hi")[0]), 80)
 

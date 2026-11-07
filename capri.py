@@ -955,6 +955,45 @@ def fast_crisp(img, cut=170):
     return out
 
 
+# ------------------------------------------------------------------ mouse wheel
+WHEEL_TARGETS = {}          # str(toplevel) -> the canvas that scrolls in that window
+
+
+def wheel_steps(delta):
+    """Scroll units for one <MouseWheel> event: 3 per notch (delta 120), at least 1 for touchpads' small deltas.
+    Negative = up."""
+    if not delta:
+        return 0
+    notches = max(1, int(round(abs(delta) / 120.0)))
+    return -3 * notches if delta > 0 else 3 * notches
+
+
+def install_wheel(root):
+    """One router for every window. On Windows Tk can deliver the wheel to whichever window has keyboard
+    focus (often the pet, after you open Settings from her menu), not the one under the mouse, so the
+    window is found from the POINTER position instead. Linux sends Button-4/5."""
+    def route(e, steps=None):
+        try:
+            w = root.winfo_containing(e.x_root, e.y_root)
+        except (tk.TclError, KeyError):
+            w = None
+        if w is None and not isinstance(e.widget, str):
+            w = e.widget
+        if w is None:
+            return None
+        try:
+            cv = WHEEL_TARGETS.get(str(w.winfo_toplevel()))
+            if cv is None or not cv.winfo_exists():
+                return None
+            cv.yview_scroll(steps if steps is not None else wheel_steps(e.delta), "units")
+        except tk.TclError:
+            return None
+        return "break"
+    root.bind_all("<MouseWheel>", route)
+    root.bind_all("<Button-4>", lambda e: route(e, -3))
+    root.bind_all("<Button-5>", lambda e: route(e, 3))
+
+
 class MiniFaces:
     """Her visor face (pet/mini/*.png, 2048px canvases): cropped to one shared box so faces don't jump, kept
     downscaled in memory, then sized per use (soft edges on a solid background for the chat, crisp hard
@@ -1229,16 +1268,13 @@ class ChatWindow:
         # messages
         mid = tk.Frame(w, bg=C_BG)
         mid.pack(fill="both", expand=True)
-        self.canvas = tk.Canvas(mid, bg=C_BG, highlightthickness=0, bd=0)
+        self.canvas = tk.Canvas(mid, bg=C_BG, highlightthickness=0, bd=0, yscrollincrement=20)
         self.canvas.pack(fill="both", expand=True)
+        WHEEL_TARGETS[str(self.win)] = self.canvas
         self.inner = tk.Frame(self.canvas, bg=C_BG)
         self.win_id = self.canvas.create_window(0, 0, window=self.inner, anchor="nw")
         self.canvas.bind("<Configure>", self.on_resize)
         self.inner.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
-        for wd in (self.canvas, self.inner):
-            wd.bind("<MouseWheel>", self.on_wheel)
-            wd.bind("<Button-4>", lambda e: self.canvas.yview_scroll(-3, "units"))
-            wd.bind("<Button-5>", lambda e: self.canvas.yview_scroll(3, "units"))
         self.bubbles = []
         self.win.after(700, self.blink)
 
@@ -1298,7 +1334,7 @@ class ChatWindow:
                 pass
 
     def on_wheel(self, e):
-        self.canvas.yview_scroll(-1 if e.delta > 0 else 1, "units" if abs(e.delta) < 120 else "units")
+        self.canvas.yview_scroll(wheel_steps(e.delta), "units")
 
     def scroll_end(self):
         self.win.update_idletasks()
@@ -1337,8 +1373,6 @@ class ChatWindow:
                            anchor="w", padx=12, pady=7, wraplength=wrap)
             lbl.pack(side="left")
         self.bubbles.append(lbl)
-        for wd in (row, holder, line, lbl, tag):
-            wd.bind("<MouseWheel>", self.on_wheel)
         lbl.bind("<Button-1>", lambda e, t=text: self.copy(t))
         self.win.after(30, self.scroll_end)
         return lbl
@@ -1542,7 +1576,7 @@ class ChatWindow:
                              "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
                              "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /tp  /dance  "
                              "/sleep  /calm  /watch  /look  /ailines  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /note  /notes  /remember  /facts  /feel  "
-                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /size  /skin  /tiny  /intro  /express  /neon  /boot  /hear  /call  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
+                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /see  /size  /skin  /tiny  /intro  /express  /neon  /boot  /hear  /call  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
@@ -1655,6 +1689,15 @@ class ChatWindow:
                     self.system_line("game_events.json: " + w, err=True)
         elif cmd == "/sit":
             p.sit_somewhere()
+        elif cmd == "/see":
+            arg = parts[1].lower() if len(parts) > 1 else ""
+            if arg in ("on", "off"):
+                self.system_line(p.see(arg == "on", parent=self.win))
+            else:
+                self.system_line(f"Screen: awareness {'on' if p.aware else 'off'}, sitting on boxes "
+                                 f"{'on' if p.settings.get('ledges') else 'off'}, glancing "
+                                 f"{'on' if p.settings.get('ai_vision') and p.settings.get('glance', True) else 'off'}"
+                                 f"{'' if read_api_key() else ' (needs an AI key)'}.   /see on | off")
         elif cmd == "/ledges":
             arg = parts[1].lower() if len(parts) > 1 else ""
             if arg == "on":
@@ -2126,9 +2169,9 @@ class SettingsWindow:
         ui.button(foot, "[ DONE ]", self.close, (f, 9, "bold"), filled=True, padx=22, pady=6).pack(pady=8)
         mid = tk.Frame(w, bg=C_BG)
         mid.pack(fill="both", expand=True)
-        canvas = tk.Canvas(mid, bg=C_BG, highlightthickness=0, bd=0, width=430)
+        canvas = tk.Canvas(mid, bg=C_BG, highlightthickness=0, bd=0, width=430, yscrollincrement=20)
         bar = tk.Scrollbar(mid, orient="vertical", command=canvas.yview, bg=C_PANEL2, troughcolor=C_BG,
-                           activebackground=self.acc, bd=0, relief="flat", width=10, highlightthickness=0)
+                           activebackground=self.acc, bd=0, relief="flat", width=16, highlightthickness=0)
         canvas.configure(yscrollcommand=bar.set)
         bar.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
@@ -2136,10 +2179,12 @@ class SettingsWindow:
         canvas.create_window(0, 0, window=body, anchor="nw", width=410)
         body.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         self.canvas = canvas
-        for wd in (canvas, body, w):
-            wd.bind("<MouseWheel>", lambda e: canvas.yview_scroll(-1 if e.delta > 0 else 1, "units"))
-            wd.bind("<Button-4>", lambda e: canvas.yview_scroll(-2, "units"))
-            wd.bind("<Button-5>", lambda e: canvas.yview_scroll(2, "units"))
+        WHEEL_TARGETS[str(w)] = canvas
+        for key, amount, what in (("<Prior>", -1, "pages"), ("<Next>", 1, "pages"), ("<Up>", -3, "units"),
+                                  ("<Down>", 3, "units")):
+            w.bind(key, lambda e, a=amount, k=what: None if isinstance(e.widget, tk.Entry) else canvas.yview_scroll(a, k))
+        w.bind("<Home>", lambda e: None if isinstance(e.widget, tk.Entry) else canvas.yview_moveto(0))
+        w.bind("<End>", lambda e: None if isinstance(e.widget, tk.Entry) else canvas.yview_moveto(1))
         pad = tk.Frame(body, bg=C_BG)
         pad.pack(fill="x", padx=8, pady=(0, 8))
         self.build_presets(pad)
@@ -2154,6 +2199,8 @@ class SettingsWindow:
         w.update_idletasks()
         h = min(700, pet.sh - 80)
         w.geometry(f"460x{h}+{max(0, pet.sw // 2 - 230)}+{max(0, pet.sh // 2 - h // 2)}")
+        w.lift()
+        w.focus_force()                  # so keys (and, on Windows, the wheel) go here, not to the pet
 
     # ---- small widgets
     def section(self, parent, title, note=""):
@@ -2345,6 +2392,15 @@ class SettingsWindow:
         what = presets.SUMMARY.get(cur, "You've set the switches yourself. Pick a preset to set them all at once.")
         tk.Label(box, text=f"Now: {presets.LABELS[cur]}. {what}", bg=C_PANEL, fg=C_DIM, font=(self.fam, 8),
                  wraplength=345, justify="left").pack(anchor="w", padx=10, pady=(2, 2))
+        row2 = tk.Frame(box, bg=C_PANEL)
+        row2.pack(anchor="w", padx=10, pady=(4, 2))
+        seeing = bool(pet.settings.get("ledges") and pet.settings.get("ai_vision") and pet.aware)
+        flat_button(row2, "SCREEN: ON" if seeing else "LET HER SEE MY SCREEN",
+                    lambda: (pet.notify(pet.see(not seeing, parent=self.win), secs=10), self.reopen()),
+                    C_GREEN if seeing else C_PANEL2, C_BLACK if seeing else C_TEXT, "#3dffa0",
+                    (self.fam, 9, "bold"), 14, 6).pack(side="left")
+        tk.Label(row2, text="sit on boxes + glance at what\nyou're doing (click again: off)", bg=C_PANEL, fg=C_DIM,
+                 font=(self.fam, 7), justify="left").pack(side="left", padx=8)
         tk.Label(box, text="Auto-lock / auto-pause when you walk away (Reflexes) are never part of a preset.",
                  bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=345, justify="left").pack(
             anchor="w", padx=10, pady=(0, 6))
@@ -2524,6 +2580,11 @@ class SettingsWindow:
         if self.pet.chat and self.pet.chat.alive():
             self.pet.chat.drop_keybar()
         self.pet.say("Key saved. Real chat unlocked.", 4, speak=None)
+
+    def reopen(self):
+        """Rebuild so every switch shows the truth after a one-click change."""
+        self.close()
+        self.pet.root.after(150, self.pet.open_settings)
 
     def close(self):
         try:
@@ -2847,6 +2908,7 @@ class Capri:
         self.canvas.pack()
         self.setup_transparency()
         self.set_app_icon()
+        install_wheel(self.root)
         self.win32 = Win32()
         self.sw, self.sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
 
@@ -2904,6 +2966,7 @@ class Capri:
         self.ai_fails, self.ai_pause_until = 0, 0.0
         self.recent_lines = collections.deque(maxlen=8)
         self.expr, self.expr_gate = None, expression.Gate()
+        self.glance_gate, self.glance_results, self.seen = vision.GlanceGate(), queue.Queue(), None
         self.cutin, self.last_cutin, self.panel_cache, self._face_stems = None, -1e9, {}, None
         self.agent = None
         self.agent_events = queue.Queue()
@@ -5176,6 +5239,7 @@ class Capri:
             try:
                 if self.settings_win.win.winfo_exists():
                     self.settings_win.win.lift()
+                    self.settings_win.win.focus_force()
                     return
             except tk.TclError:
                 pass
@@ -5286,7 +5350,75 @@ class Capri:
         if g:
             tone = "be supportive" if g.level == "off" else "cheer their good plays and tease them when they die"
             return f"playing {g.name} (this session: {g.kills} kills, {g.deaths} deaths); {tone}"
+        if self.aware and self.seen and time.time() - self.seen[1] < 600:
+            return self.seen[0]                                  # what she actually SAW (glance), not a guess
         return awareness.PHRASE.get(self.ctx, "") if (self.aware and self.ctx) else ""
+
+    def glance(self, cat=None):
+        """One look when you switch to something new (AI screen watching on, a key, not too often): the AI says
+        exactly what you're doing and she reacts to THAT. Never on private windows, while away, calm or busy."""
+        if not (self.settings.get("ai_vision") and self.settings.get("glance", True) and read_api_key()):
+            return False
+        if self.calm or self.agent is not None or self.boot or self.intro:
+            return False
+        title = self.win32.foreground_title() if self.win32.ok else ""
+        if not ledges.should_scan(title) or (self.win32.ok and self.win32.idle_seconds() > 120):
+            return False
+        now = time.time()
+        if not self.glance_gate.allow(now, time.strftime("%Y-%m-%d")):
+            return False
+        system = (self.persona_text + " " + self.mind.context(now, self.doing())
+                  + " Keep it PG. " + speech.ROAST_RULES.get(self.settings.get("roast", "mild"), ""))
+
+        def work():
+            try:
+                text = vision.look_once(ledges.capture, self._spotter_ask, vision.GLANCE_QUESTION, system)
+                doing, say = vision.parse_glance(text)
+                self.glance_results.put((doing, say, cat, ""))
+            except Exception as exc:
+                self.glance_results.put(("", "", cat, str(exc) or type(exc).__name__))
+        threading.Thread(target=work, daemon=True).start()
+        return True
+
+    def drain_glances(self, now):
+        while True:
+            try:
+                doing, say, cat, err = self.glance_results.get_nowait()
+            except queue.Empty:
+                return
+            if err:
+                log("glance failed: " + err[:120])
+            if doing and cat == self.ctx:
+                self.seen = (doing, now)
+            line = speech.sanitize(say) if say else ""
+            if not line and cat:
+                line = awareness.line(cat, self.rng)
+            if line:
+                self.say(line, 7)
+                self.recent_lines.append(line)
+
+    def see(self, on, parent=None):
+        """One switch: she notices which app you're in, sits on boxes on your screen, and glances at what you're
+        doing when you switch apps. Each part explains itself once. Returns a status line."""
+        if not on:
+            self.disable_ledges()
+            self.disable_vision()
+            self.settings["glance"] = False
+            self.save_settings()
+            return "Screen: off. She won't look at your screen (she still sees which app is in front if Awareness is on)."
+        if not self.aware:
+            self.set_aware(True)
+        sit = self.settings.get("ledges") or self.enable_ledges(parent=parent)
+        look = self.settings.get("ai_vision") or self.enable_vision(parent=parent)
+        self.settings["glance"] = bool(look)
+        self.save_settings()
+        parts = ["sees which app you're in"]
+        parts.append("sits on boxes on your screen" if sit else "NOT sitting on things (you said no)")
+        if look and read_api_key():
+            parts.append("glances at your screen when you switch apps, so she knows what you're actually doing")
+        elif look:
+            parts.append("will glance at your screen once you add an AI key (Settings > AI)")
+        return "Screen: on. She " + ", ".join(parts) + "."
 
     def set_aware(self, on):
         self.aware = bool(on)
@@ -5298,7 +5430,8 @@ class Capri:
                  else "Okay, I'm not watching your apps anymore.", 5)
 
     def react_context(self, cat):
-        self.say_ai("context", {"activity": awareness.PHRASE.get(cat, cat)}, awareness.line(cat, self.rng), 7)
+        if not self.glance(cat):
+            self.say_ai("context", {"activity": awareness.PHRASE.get(cat, cat)}, awareness.line(cat, self.rng), 7)
         icon, act = {"cyberpunk": ("star", "dance"), "game": ("star", None), "video": (None, "lounge"),
                      "music": ("note", "dance"), "coding": (None, "perch"), "writing": (None, "perch"),
                      "chat": ("?", "curious"), "social": ("?", None), "school": ("star", None),
@@ -5348,7 +5481,7 @@ class Capri:
         if self.settings.get("track_time", True) and idle < 60:      # only the category's minutes are saved
             self.daylog.add(time.strftime("%Y-%m-%d"), cat, dt)
         if cat != self.ctx:
-            self.ctx, self.ctx_since, self.ctx_done = cat, now, False
+            self.ctx, self.ctx_since, self.ctx_done, self.seen = cat, now, False, None
             return
         if not cat:
             return
@@ -5369,6 +5502,7 @@ class Capri:
         self.watch_ledges(now)
         self.drain_reactor()
         self.drain_ai(now)
+        self.drain_glances(now)
         self.watch_size(now)
         self.watch_hear(now)
         self.drain_agent()
@@ -5814,18 +5948,35 @@ class Capri:
                         for st in intro.STEMS))
 
     def start_intro(self, greet=True):
-        """She climbs up into the screen, says hi, grins and waves, then drops away and the pet appears."""
+        """She climbs up into the screen (full screen), says hi, grins and waves, then drops away and the pet
+        appears. The big frames are prepared in a background thread (PIL only) so the app never freezes."""
         wa = self.work_area()
         W, H = intro.size(wa[2] - wa[0], wa[3] - wa[1])
-        frames = {}
-        try:
-            d = pet_asset_dirs("intro")[0]
-            for st in intro.STEMS:
-                im = Image.open(os.path.join(d, st + ".webp")).convert("RGBA").resize((W, H), Image.LANCZOS)
-                frames[st] = ImageTk.PhotoImage(fast_crisp(im), master=self.root)
-        except Exception:
-            log("intro failed, using the beam animation: " + traceback.format_exc())
+        dirs = pet_asset_dirs("intro")
+        if not dirs:
             return False
+        it = {"loading": True, "pil": None, "err": None, "asked": time.time(), "greet": greet, "W": W, "H": H,
+              "x": int((wa[0] + wa[2]) / 2 - W / 2), "yup": int(wa[3] - H), "bottom": wa[3], "stem": None,
+              "happy": False, "win": None}
+
+        def build():
+            try:
+                out = {}
+                for st in intro.STEMS:
+                    im = Image.open(os.path.join(dirs[0], st + ".webp")).convert("RGBA")
+                    out[st] = fast_crisp(im.resize((W, H), Image.LANCZOS))
+                it["pil"] = out
+            except Exception:
+                it["err"] = traceback.format_exc()
+        threading.Thread(target=build, daemon=True).start()
+        self.intro = it
+        self.bubble, self.surf = "", None
+        self.go("idle", intro.DURATION + 15)
+        return True
+
+    def show_intro(self, it):
+        """Frames are ready: make the window and start the clock."""
+        frames = {st: ImageTk.PhotoImage(im, master=self.root) for st, im in it.pop("pil").items()}
         win = tk.Toplevel(self.root)
         win.overrideredirect(True)
         win.attributes("-topmost", True)
@@ -5834,22 +5985,24 @@ class Capri:
         lbl.pack()
         win.config(bg=bg)
         if IS_WIN:
-            win.attributes("-transparentcolor", KEY)
+            win.attributes("-transparentcolor", KEY)        # only her art is solid; clicks pass through the rest
         elif IS_MAC:
             win.attributes("-transparent", True)
         lbl.bind("<Button-1>", lambda e: self.finish_intro(skipped=True))
-        x, yup = int((wa[0] + wa[2]) / 2 - W / 2), int(wa[3] - H)
-        win.geometry(f"{W}x{H}+{x}+{wa[3] + 10}")
-        self.intro = {"t0": time.time(), "win": win, "lbl": lbl, "frames": frames, "greet": greet, "W": W, "H": H,
-                      "x": x, "yup": yup, "stem": None, "happy": False}
-        self.bubble, self.surf = "", None
-        self.go("idle", intro.DURATION + 5)
+        win.geometry(f"{it['W']}x{it['H']}+{it['x']}+{it['bottom'] + 10}")
+        it.update({"win": win, "lbl": lbl, "frames": frames, "t0": time.time(), "loading": False})
         self.sfx.play("blip")
-        return True
 
     def update_intro(self, now):
         it = self.intro
         if not it:
+            return
+        if it["loading"]:
+            if it["err"] or now - it["asked"] > 8:                # broken art or a very slow PC: skip to the greeting
+                log("intro skipped: " + (it["err"] or "frames took too long")[-300:])
+                return self.finish_intro(skipped=True)
+            if it["pil"] is not None:
+                self.show_intro(it)
             return
         r = intro.at(now - it["t0"])
         if r is None:
@@ -5869,7 +6022,7 @@ class Capri:
     def cancel_intro(self):
         """Close the intro without greeting (tests, or when something more important starts)."""
         it, self.intro = self.intro, None
-        if it:
+        if it and it.get("win"):
             try:
                 it["win"].destroy()
             except tk.TclError:
@@ -5879,10 +6032,11 @@ class Capri:
         it, self.intro = self.intro, None
         if not it:
             return
-        try:
-            it["win"].destroy()
-        except tk.TclError:
-            pass
+        if it.get("win"):
+            try:
+                it["win"].destroy()
+            except tk.TclError:
+                pass
         self.settings["booted"] = True
         self.save_settings()
         self.go("idle", 2.0)

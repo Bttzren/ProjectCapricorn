@@ -75,7 +75,11 @@ VERDICT = {
 
 
 def detect_game(title):
-    """Which supported game is this window title? None if none."""
+    """Which supported game is this window title? None if none (also for browser tabs and video/social sites:
+    'Valorant clips - Twitch' is watching, not playing)."""
+    import awareness
+    if awareness.is_web(title):
+        return None
     t = (title or "").lower()
     for key, (_name, words) in GAMES.items():
         if any(w in t for w in words):

@@ -26,10 +26,11 @@ class IntroTests(unittest.TestCase):
             self.assertTrue(os.path.isfile(os.path.join(root, s + ".webp")), s)
 
     def test_size(self):
-        self.assertEqual(I.size(1920, 1080), (863, 486))                 # height cap (45%) wins on 1080p
-        self.assertEqual(I.size(1920, 1600), (900, 506))
+        self.assertEqual(I.size(1920, 1080), (1920, 1080))               # full screen on 1080p
+        self.assertEqual(I.size(1920, 1040), (1847, 1040))               # taskbar: fit the height, keep her whole
+        self.assertEqual(I.size(2560, 1600), (2560, 1440))               # 16:10: fit the width
         w, h = I.size(1280, 400)
-        self.assertLessEqual(h, 180)
+        self.assertLessEqual(h, 400)
         self.assertAlmostEqual(w / h, 1672 / 941, places=1)
         self.assertGreaterEqual(I.size(100, 100)[0], 160)
 

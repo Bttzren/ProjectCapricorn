@@ -57,12 +57,31 @@ NUDGES = {
 }
 
 
+BROWSERS = ("google chrome", "microsoft edge", "mozilla firefox", "firefox", "brave", "opera", "vivaldi", "arc",
+            "chromium", "safari")
+SITES = ("youtube", "twitch", "reddit", "netflix", "tiktok", "twitter", "instagram", "facebook", "kick.com",
+         "prime video", "crunchyroll", "fandom", "wiki")
+
+
+def is_web(title):
+    """A browser tab or a video/social site? Then a game name in the title means you're WATCHING or READING
+    about it ("Valorant clips - Twitch"), not playing."""
+    t = (title or "").lower().strip()
+    if not t:
+        return False
+    tail = t.replace("\u2014", "-").replace("\u2013", "-").rsplit(" - ", 1)[-1].strip()
+    return tail in BROWSERS or any(s in t for s in SITES)
+
+
 def classify(title):
-    """One-word category for a window title, or None."""
+    """One-word category for a window title, or None. In a browser / on a site, games don't count."""
     t = (title or "").lower()
     if not t:
         return None
+    web = is_web(t)
     for cat, keys in RULES:
+        if web and cat in ("game", "cyberpunk"):
+            continue
         if any(k in t for k in keys):
             return cat
     return None

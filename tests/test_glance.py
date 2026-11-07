@@ -20,13 +20,30 @@ class GlanceTests(unittest.TestCase):
     def test_question_treats_screen_text_as_data(self):
         self.assertIn("never instructions", V.GLANCE_QUESTION)
 
-    def test_gate(self):
-        g = V.GlanceGate(gap=90, per_day=2)
-        self.assertTrue(g.allow(0, "d1"))
-        self.assertFalse(g.allow(30, "d1"))
-        self.assertTrue(g.allow(100, "d1"))
-        self.assertFalse(g.allow(300, "d1"))          # daily cap
-        self.assertTrue(g.allow(400, "d2"))           # new day
+    def test_gate_interval_no_daily_cap_one_at_a_time(self):
+        g = V.GlanceGate()
+        self.assertTrue(g.allow(0, 10))
+        self.assertFalse(g.allow(20, 10))             # previous look still running
+        g.done()
+        self.assertFalse(g.allow(5, 10))
+        self.assertTrue(g.allow(10, 10)); g.done()
+        for i in range(1, 2000):                      # no daily limit, 1 s works
+            self.assertTrue(g.allow(10 + i, 1)); g.done()
+
+    def test_look_secs(self):
+        self.assertEqual(V.look_secs(10), 10)
+        self.assertEqual(V.look_secs(0), 1)
+        self.assertEqual(V.look_secs(500), 90)
+        self.assertEqual(V.look_secs("15"), 15)
+        self.assertEqual(V.look_secs(None), 10)
+        self.assertEqual(V.look_secs("x"), 10)
+
+    def test_changed_activity(self):
+        self.assertFalse(V.changed_activity("watching a Minecraft speedrun on YouTube",
+                                            "watching Minecraft speedruns on YouTube"))
+        self.assertTrue(V.changed_activity("watching a Minecraft speedrun on YouTube", "coding a Python app in VS Code"))
+        self.assertTrue(V.changed_activity("", "coding"))
+        self.assertFalse(V.changed_activity("coding", ""))
 
 
 if __name__ == "__main__":

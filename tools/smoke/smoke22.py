@@ -20,6 +20,7 @@ class Model:
 listen.Whisper._load = lambda self: Model()
 capri.read_api_key = lambda: "sk-ant-x"
 capri.llm_reply = lambda msgs, persona, max_tokens=None, model=None: "Meeting moved to Friday 3pm; bring the report."
+capri.vision_ask = lambda *a, **k: "DOING: watching a meeting recording SAY: Taking notes."   # no real network in tests
 said, moments = [], []
 capri.Capri.say_moment = lambda self, sit, fb, *a, **k: moments.append(sit)
 p = capri.Capri(); p.boot = None; p.cancel_intro(); p.root.update()

@@ -1693,11 +1693,19 @@ class ChatWindow:
             arg = parts[1].lower() if len(parts) > 1 else ""
             if arg in ("on", "off"):
                 self.system_line(p.see(arg == "on", parent=self.win))
+            elif arg == "every" and len(parts) > 2:
+                secs = vision.look_secs(parts[2].rstrip("s"))
+                p.settings["vision_interval"] = secs
+                p.save_settings()
+                if p.spotter:
+                    p.spotter.interval = float(secs)
+                self.system_line(f"She looks every {secs} s (1-90).")
             else:
                 self.system_line(f"Screen: awareness {'on' if p.aware else 'off'}, sitting on boxes "
                                  f"{'on' if p.settings.get('ledges') else 'off'}, glancing "
                                  f"{'on' if p.settings.get('ai_vision') and p.settings.get('glance', True) else 'off'}"
-                                 f"{'' if read_api_key() else ' (needs an AI key)'}.   /see on | off")
+                                 f" every {p.look_every()} s{'' if read_api_key() else ' (needs an AI key)'}."
+                                 "   /see on | off | every <1-90>")
         elif cmd == "/ledges":
             arg = parts[1].lower() if len(parts) > 1 else ""
             if arg == "on":
@@ -2366,15 +2374,14 @@ class SettingsWindow:
                            "It starts by itself when a game is in front; /watch on works for anything else.",
                  bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=345, justify="left").pack(
             anchor="w", padx=10, pady=(2, 4))
-        tk.Label(box, text="Look every:", bg=C_PANEL, fg=C_DIM, font=(self.fam, 8)).pack(anchor="w", padx=10)
-        self.interval_var = tk.IntVar(value=int(self.pet.settings.get("vision_interval", 6)))
-        row = tk.Frame(box, bg=C_PANEL)
-        row.pack(anchor="w", padx=10, pady=(0, 8))
-        for secs in (4, 6, 10):
-            ui.NeonRadio(row, text=f"{secs}s", variable=self.interval_var, value=secs, command=self.pick_interval,
-                           bg=C_PANEL, fg=C_TEXT, selectcolor=C_PANEL2, activebackground=C_PANEL,
-                           activeforeground=C_TEXT, font=(self.fam, 9), highlightthickness=0, bd=0).pack(side="left",
-                                                                                                         padx=(0, 10))
+        self.interval_var = tk.IntVar(value=self.pet.look_every())
+        self.interval_lbl = tk.Label(box, text="", bg=C_PANEL, fg=C_DIM, font=(self.fam, 8))
+        self.interval_lbl.pack(anchor="w", padx=10)
+        tk.Scale(box, from_=vision.LOOK_MIN, to=vision.LOOK_MAX, orient="horizontal", variable=self.interval_var,
+                 command=lambda v: self.pick_interval(), showvalue=False, length=330, bg=C_PANEL, fg=C_TEXT,
+                 troughcolor=C_PANEL2, activebackground=self.acc, highlightthickness=0, bd=0, sliderlength=18).pack(
+            anchor="w", padx=10, pady=(0, 8))
+        self.pick_interval(save=False)
 
     def build_presets(self, parent):
         pet = self.pet
@@ -2512,9 +2519,14 @@ class SettingsWindow:
         else:
             self.pet.disable_vision()
 
-    def pick_interval(self):
-        self.pet.settings["vision_interval"] = int(self.interval_var.get())
-        self.pet.save_settings()
+    def pick_interval(self, save=True):
+        secs = vision.look_secs(self.interval_var.get())
+        self.interval_lbl.config(text=f"Look every {secs} s (1-90). No daily limit; static screens aren't sent.")
+        if save and secs != self.pet.settings.get("vision_interval"):
+            self.pet.settings["vision_interval"] = secs
+            self.pet.save_settings()
+            if self.pet.spotter:
+                self.pet.spotter.interval = float(secs)
 
     def build_behavior(self, parent):
         box = self.section(parent, "BEHAVIOUR")
@@ -2967,6 +2979,7 @@ class Capri:
         self.recent_lines = collections.deque(maxlen=8)
         self.expr, self.expr_gate = None, expression.Gate()
         self.glance_gate, self.glance_results, self.seen = vision.GlanceGate(), queue.Queue(), None
+        self.glance_frames = vision.FrameGate()
         self.cutin, self.last_cutin, self.panel_cache, self._face_stems = None, -1e9, {}, None
         self.agent = None
         self.agent_events = queue.Queue()
@@ -4058,8 +4071,8 @@ class Capri:
                     "the AI can see what's happening and react.\n\n* It can include ANYTHING visible on your "
                     "screen at that moment.\n* Capri doesn't save the screenshots. The provider's own data policy "
                     "applies to what it receives.\n* It pauses on banking, password and private-browsing windows "
-                    "and while you're away.\n* It uses your API credits: very roughly $1-3 an hour with Claude "
-                    "(there is a daily limit).\n* It starts by itself when a game is in front. /watch on works "
+                    "and while you're away.\n* It uses your API credits: very roughly $1-3 an hour with Claude at one "
+                    "look every 10 s, more if you make it faster (1-90 s in Settings; no daily limit).\n* It starts by itself when a game is in front. /watch on works "
                     "for anything else.\n\nOnly turn this on if you're comfortable with that. You can switch it "
                     "off any time. Turn on AI screen watching?", parent=parent):
                 return False
@@ -4938,10 +4951,8 @@ class Capri:
         if self.spotter and self.spotter.active:
             self.spotter_manual = self.spotter_manual or manual
             return True
-        cap = int(self.settings.get("vision_daily_cap", 600))
-        self.spotter = vision.Spotter(
-            ledges.capture, self._spotter_ask, interval=float(self.settings.get("vision_interval", 6)),
-            budget=speech.Budget(per_min=20, per_day=cap, store=self.settings.setdefault("vision_day", {})))
+        self.spotter = vision.Spotter(ledges.capture, self._spotter_ask, interval=float(self.look_every()),
+                                      budget=None)               # no daily limit (user's choice)
         self.spotter_manual = manual
         self.spotter_until = time.time() + 2 * 3600 if manual else 0.0
         self.refresh_spotter(time.time())          # privacy check + prompts BEFORE the first frame can be sent
@@ -4967,7 +4978,7 @@ class Capri:
         if context:                                          # what the AI is told about her and the user
             self.spotter_ctx_at = now
             sp.game = self.game.name if self.game else ""
-            sp.interval = float(self.settings.get("vision_interval", 6))
+            sp.interval = float(self.look_every())
             sp.system = vision.spotter_system(self.persona_text, self.mind.context(now, self.doing(),
                                               self.activity_phrase()), self.settings.get("roast", "mild"),
                                               self.memory.context())
@@ -5350,14 +5361,21 @@ class Capri:
         if g:
             tone = "be supportive" if g.level == "off" else "cheer their good plays and tease them when they die"
             return f"playing {g.name} (this session: {g.kills} kills, {g.deaths} deaths); {tone}"
-        if self.aware and self.seen and time.time() - self.seen[1] < 600:
+        if self.seen and time.time() - self.seen[1] < max(120, self.look_every() * 3):
             return self.seen[0]                                  # what she actually SAW (glance), not a guess
         return awareness.PHRASE.get(self.ctx, "") if (self.aware and self.ctx) else ""
 
-    def glance(self, cat=None):
-        """One look when you switch to something new (AI screen watching on, a key, not too often): the AI says
-        exactly what you're doing and she reacts to THAT. Never on private windows, while away, calm or busy."""
-        if not (self.settings.get("ai_vision") and self.settings.get("glance", True) and read_api_key()):
+    def look_every(self):
+        return vision.look_secs(self.settings.get("vision_interval", vision.LOOK_DEFAULT))
+
+    def glance_on(self):
+        return bool(self.settings.get("ai_vision") and self.settings.get("glance", True) and read_api_key())
+
+    def glance(self, cat=None, periodic=False):
+        """Look at the screen: right away when you switch apps, and every N seconds (Settings, 1-90 s, default 10).
+        The AI says exactly what you're doing; she reacts when that CHANGES. An unchanged screen isn't sent.
+        Never on private windows, while you're away, while she's calm, or during a task."""
+        if not self.glance_on():
             return False
         if self.calm or self.agent is not None or self.boot or self.intro:
             return False
@@ -5365,35 +5383,57 @@ class Capri:
         if not ledges.should_scan(title) or (self.win32.ok and self.win32.idle_seconds() > 120):
             return False
         now = time.time()
-        if not self.glance_gate.allow(now, time.strftime("%Y-%m-%d")):
+        if not self.glance_gate.allow(now, 0 if not periodic else self.look_every()):
             return False
         system = (self.persona_text + " " + self.mind.context(now, self.doing())
                   + " Keep it PG. " + speech.ROAST_RULES.get(self.settings.get("roast", "mild"), ""))
+        frames = self.glance_frames
 
         def work():
             try:
-                text = vision.look_once(ledges.capture, self._spotter_ask, vision.GLANCE_QUESTION, system)
+                img = ledges.capture()
+                if img is None:
+                    raise RuntimeError("can't capture the screen here")
+                if not frames.changed(img) and periodic:
+                    self.glance_results.put(("", "", cat, "", periodic, True))     # same screen: nothing sent
+                    return
+                media_type, b64 = vision.encode_frame(img)
+                del img
+                text = self._spotter_ask(media_type, b64, [], "", system, vision.GLANCE_QUESTION)
                 doing, say = vision.parse_glance(text)
-                self.glance_results.put((doing, say, cat, ""))
+                self.glance_results.put((doing, say, cat, "", periodic, False))
             except Exception as exc:
-                self.glance_results.put(("", "", cat, str(exc) or type(exc).__name__))
+                self.glance_results.put(("", "", cat, str(exc) or type(exc).__name__, periodic, False))
         threading.Thread(target=work, daemon=True).start()
         return True
+
+    def glance_tick(self, now):
+        if self.glance_on() and now - self.glance_gate.last >= self.look_every():
+            self.glance(self.ctx, periodic=True)
 
     def drain_glances(self, now):
         while True:
             try:
-                doing, say, cat, err = self.glance_results.get_nowait()
+                doing, say, cat, err, periodic, static = self.glance_results.get_nowait()
             except queue.Empty:
                 return
+            self.glance_gate.done()
+            if static:
+                if self.seen:
+                    self.seen = (self.seen[0], now)                    # still doing the same thing
+                continue
             if err:
                 log("glance failed: " + err[:120])
-            if doing and cat == self.ctx:
+            old = self.seen[0] if self.seen else ""
+            changed = bool(doing) and vision.changed_activity(old, doing)
+            if doing:
                 self.seen = (doing, now)
+            if periodic and not changed:
+                continue                                               # she keeps up silently
             line = speech.sanitize(say) if say else ""
-            if not line and cat:
+            if not line and cat and not periodic:
                 line = awareness.line(cat, self.rng)
-            if line:
+            if line and not (periodic and self.calm):
                 self.say(line, 7)
                 self.recent_lines.append(line)
 
@@ -5503,6 +5543,7 @@ class Capri:
         self.drain_reactor()
         self.drain_ai(now)
         self.drain_glances(now)
+        self.glance_tick(now)
         self.watch_size(now)
         self.watch_hear(now)
         self.drain_agent()

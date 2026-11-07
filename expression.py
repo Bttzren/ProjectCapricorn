@@ -33,6 +33,20 @@ EMOTIONS = {
 }
 NEUTRAL = ("neutral", "calm", "none", "normal", "chill")
 
+# face close-ups (pet/faces/<stem>.png) shown by her speech bubble; pick by what each picture shows
+FACES = {
+    "happy": "capri-face", "laugh": "face-laugh", "excited": "face-laugh", "love": "capri-face",
+    "proud": "face-smug", "smug": "face-smug", "sad": "face-aside", "angry": "face-many",
+    "surprised": "face-wide", "scared": "face-wide", "thinking": "face-calm", "confused": "face-look",
+    "embarrassed": "face-aside", "sleepy": "face-calm", "bored": "face-aside", "curious": "face-look",
+    "singing": "capri-face",
+}
+FACE_DEFAULT = "face-calm"
+# anime-style cut-in panels (pet/cutins/<stem>.png): only big moments, rarely
+CUTINS = {"laugh": "cutin-laugh", "excited": "cutin-grin", "surprised": "cutin-eyes"}
+CUTIN_GAP = 300.0           # seconds between cut-ins (unless previewed with /express)
+CUTIN_SECS = 1.1
+
 SYNONYMS = {
     "joy": "happy", "glad": "happy", "cheerful": "happy", "pleased": "happy", "content": "happy", "grin": "happy",
     "amused": "laugh", "lol": "laugh", "laughing": "laugh", "giggle": "laugh", "funny": "laugh",
@@ -138,3 +152,25 @@ def motion(kind, age, dur, dpi=1.0, direction=1):
     elif kind == "sway":
         ang = math.sin(age * 4) * 7
     return dy * fade, ang * fade, 1.0 + (sx - 1.0) * fade, 1.0 + (sy - 1.0) * fade
+
+
+def face_for(emotion, have=None):
+    """Face file stem for an emotion, falling back to the calm face (or None if the set has neither)."""
+    stem = FACES.get(emotion, FACE_DEFAULT)
+    if have is None or stem in have:
+        return stem
+    return FACE_DEFAULT if FACE_DEFAULT in have else None
+
+
+def cutin_slide(age, dur=CUTIN_SECS, edge=0.15):
+    """0..1 horizontal offset fraction for a cut-in: slides in from the left, holds, slides out to the right.
+    Returns -1..0 while entering, 0 while holding, 0..1 while leaving, None when it's over."""
+    if age < 0 or age >= dur:
+        return None
+    if age < edge:
+        x = age / edge
+        return -(1 - x * x * (3 - 2 * x))
+    if age > dur - edge:
+        x = (age - (dur - edge)) / edge
+        return x * x * (3 - 2 * x)
+    return 0.0

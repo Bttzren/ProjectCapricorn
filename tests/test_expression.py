@@ -73,5 +73,31 @@ class GateAndMotionTests(unittest.TestCase):
         self.assertEqual(E.motion("tilt", 1.0, 2.0, direction=-1)[1], -9.0)
 
 
+class ArtTests(unittest.TestCase):
+    ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pet")
+
+    def test_every_emotion_has_a_face_file(self):
+        have = {f[:-4] for f in os.listdir(os.path.join(self.ROOT, "faces")) if f.endswith(".png")}
+        self.assertIn(E.FACE_DEFAULT, have)
+        for name in E.EMOTIONS:
+            self.assertIn(E.face_for(name, have), have, name)
+        self.assertEqual(E.face_for("smug", {"face-calm"}), "face-calm")       # missing art: calm face
+        self.assertIsNone(E.face_for("smug", set()))
+
+    def test_cutins_exist_and_are_only_big_moments(self):
+        have = {f[:-4] for f in os.listdir(os.path.join(self.ROOT, "cutins"))}
+        for name, stem in E.CUTINS.items():
+            self.assertIn(stem, have)
+            self.assertIn(name, E.Gate.STRONG)
+        self.assertGreaterEqual(E.CUTIN_GAP, 120)
+
+    def test_cutin_slides_in_holds_and_leaves(self):
+        self.assertEqual(E.cutin_slide(0), -1.0)
+        self.assertEqual(E.cutin_slide(0.5), 0.0)
+        self.assertGreater(E.cutin_slide(1.05), 0.0)
+        self.assertIsNone(E.cutin_slide(E.CUTIN_SECS))
+        self.assertIsNone(E.cutin_slide(-0.1))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2243,6 +2243,9 @@ class SettingsWindow:
                              command=lambda n=name: pet.set_neon(n)).pack(side="left", padx=(0, 10))
         self.check(box, "Act out how she feels (poses, little moves and icons that match what she says)",
                    "expressive", True)
+        self.check(box, "Face close-ups next to her speech bubble while she feels something", "faces", True)
+        self.check(box, "Cut-in panels for big moments (laughing, hyped, shocked; at most every 5 minutes)",
+                   "cutins", True)
         self.check(box, "Glowing outline around her (off by default; needs a neon colour above)", "outline", False,
                    lambda v: pet.clear_sprite_caches())
         tk.Frame(box, bg=C_PANEL, height=4).pack()
@@ -2764,6 +2767,7 @@ class Capri:
         self.ai_fails, self.ai_pause_until = 0, 0.0
         self.recent_lines = collections.deque(maxlen=8)
         self.expr, self.expr_gate = None, expression.Gate()
+        self.cutin, self.last_cutin, self.panel_cache, self._face_stems = None, -1e9, {}, None
         self.agent = None
         self.agent_events = queue.Queue()
         self.brain_events, self.ears_events = queue.Queue(), queue.Queue()
@@ -3095,10 +3099,75 @@ class Capri:
         if self.state in ("walk", "curious"):
             self.go("perch" if self.surf else "idle", secs + 0.5)
         self.expr = (name, now, now + secs)
+        if (name in expression.CUTINS and self.settings.get("cutins", True)
+                and (forced or now - self.last_cutin >= expression.CUTIN_GAP)):
+            self.cutin, self.last_cutin = (expression.CUTINS[name], now), now
         icon = expression.EMOTIONS[name][2]
         if icon:
             self.set_icon(icon, min(secs, 1.8))
         return True
+
+    def face_stems(self):
+        if self._face_stems is None:
+            self._face_stems = {f.rsplit(".", 1)[0] for d in pet_asset_dirs("faces") for f in os.listdir(d)
+                                if f.lower().endswith((".png", ".webp"))}
+        return self._face_stems
+
+    def panel(self, sub, stem, w, h):
+        """A face / cut-in picture cropped to w:h, scaled and hard-edged (crisp) for the color-key window."""
+        key = (sub, stem, w, h)
+        if key not in self.panel_cache:
+            ph = None
+            for d in pet_asset_dirs(sub):
+                path = next((os.path.join(d, stem + e) for e in (".png", ".webp") if os.path.isfile(os.path.join(d, stem + e))),
+                            None)
+                if path:
+                    try:
+                        im = Image.open(path).convert("RGBA")
+                        r = w / float(h)
+                        if im.width / float(im.height) > r:
+                            cw = int(im.height * r)
+                            im = im.crop(((im.width - cw) // 2, 0, (im.width - cw) // 2 + cw, im.height))
+                        else:
+                            chh = int(im.width / r)
+                            im = im.crop((0, (im.height - chh) // 2, im.width, (im.height - chh) // 2 + chh))
+                        ph = ImageTk.PhotoImage(crisp(im.resize((w, h), Image.LANCZOS)))
+                    except Exception:
+                        log(f"panel {sub}/{stem} failed: " + traceback.format_exc())
+                    break
+            if len(self.panel_cache) > 40:
+                self.panel_cache.clear()
+            self.panel_cache[key] = ph
+        return self.panel_cache[key]
+
+    def draw_feelings(self, c, now, lfx, lfy, top, bub):
+        """Cut-in panel (rare, big moments) across her, and a face close-up by her speech bubble."""
+        acc = self.accent()
+        if self.cutin:
+            stem, t0 = self.cutin
+            off = expression.cutin_slide(now - t0)
+            if off is None or self.agent is not None or self.state not in ("idle", "perch"):
+                self.cutin = None
+            else:
+                w = self.Wd - 16
+                h = int(w / 3)
+                ph = self.panel("cutins", stem, w, h)
+                if ph:
+                    x, y = 8 + off * self.Wd, max(2, int(lfy - self.fh * 0.62 - h / 2))
+                    c.create_rectangle(x - 3, y - 3, x + w + 2, y + h + 2, fill=C_BLACK, outline=acc, width=2)
+                    c.create_image(x, y, image=ph, anchor="nw")
+        if self.expr and self.settings.get("faces", True) and self.state in ("idle", "perch"):
+            stem = expression.face_for(self.expr[0], self.face_stems())
+            size = int(44 * self.dpi)
+            ph = self.panel("faces", stem, size, size) if stem else None
+            if ph:
+                if bub:
+                    x, y = bub[0] - 4, bub[1] - size - 6              # sits on top of the bubble, never over text
+                else:
+                    x, y = lfx - self.fw * 0.5 - size * 0.3, top - size - 4
+                x, y = min(max(3, x), self.Wd - size - 3), max(3, y)
+                c.create_rectangle(x - 2, y - 2, x + size + 1, y + size + 1, fill=C_BLACK, outline=acc, width=2)
+                c.create_image(x, y, image=ph, anchor="nw")
 
     def update_expression(self, now):
         if not self.expr:
@@ -5735,6 +5804,7 @@ class Capri:
             base_y = y1 - 10
         if pr is not None:
             self.draw_boot_over(c, pr, bt, lfx, y0, w, scan_y)
+        bub = None
         if self.bubble and now < self.bubble_until and not self.boot:
             shown = int((now - self.bubble_t0) * 80)
             txt = self.bubble[:max(1, shown)]
@@ -5754,6 +5824,9 @@ class Capri:
             c.tag_lower(tail)
             c.tag_lower(bg)
             c.coords(tid, lfx, y2)
+            bub = (bx1, by1)
+        if not self.boot:
+            self.draw_feelings(c, now, lfx, lfy, top, bub)
 
 
 # ------------------------------------------------------------------ preview / main

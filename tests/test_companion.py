@@ -57,22 +57,19 @@ class HabitTests(unittest.TestCase):
             h.add(f"habit {i}")
         self.assertEqual(len(h.items), habits.MAX_HABITS)
 
-    def test_check_streaks_and_missed_days(self):
+    def test_check_once_per_day_and_no_streaks(self):
         h = habits.Habits([])
         h.add("water")
-        self.assertEqual(h.check(1, "2026-11-01"), (True, "water", 1))
-        self.assertEqual(h.check(1, "2026-11-01"), (False, "water", 1))     # already done today
-        h.check(1, "2026-11-02")
-        ok, _, streak = h.check(1, "2026-11-03")
-        self.assertEqual(streak, 3)
-        item = h.items[0]
-        self.assertEqual(h.streak(item, "2026-11-04"), 3)          # not done yet today: streak still alive
-        self.assertEqual(h.streak(item, "2026-11-05"), 0)          # missed a day: gone
+        self.assertEqual(h.check(1, "2026-11-01"), (True, "water"))
+        self.assertEqual(h.check(1, "2026-11-01"), (False, "water"))     # already done today
+        self.assertEqual(h.check(1, "2026-11-02"), (True, "water"))
+        self.assertFalse(hasattr(h, "streak"))
+        self.assertNotIn("streak", " ".join(h.lines("2026-11-02")))
 
     def test_bad_numbers_and_remove(self):
         h = habits.Habits([])
         h.add("a")
-        self.assertEqual(h.check(5, "2026-11-01"), (False, "", 0))
+        self.assertEqual(h.check(5, "2026-11-01"), (False, ""))
         self.assertIsNone(h.remove(0))
         self.assertEqual(h.remove(1), "a")
 

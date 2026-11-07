@@ -1387,14 +1387,10 @@ class ChatWindow:
                     self.system_line(line)
         elif cmd == "/did":
             today = time.strftime("%Y-%m-%d")
-            ok, name, streak = p.habits.check(int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0, today)
+            ok, name = p.habits.check(int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0, today)
             if ok:
-                extra = ""
-                if streak in (7, 30):
-                    extra = f" {streak} days in a row. Nova!"
-                    p.spawn_confetti(40)
                 p.save_settings()
-                self.system_line(f"{name}: done! {streak}-day streak.{extra}")
+                self.system_line(f"{name}: done.")
                 p.react("happy")
             elif name:
                 self.system_line(f"You already did {name} today.", err=True)

@@ -281,8 +281,8 @@ SCREEN LEDGES (she sits on boxes on your screen)  - OFF by default, needs your O
 SHE KNOWS YOU
   MEMORY: /remember my favorite game is Minecraft, /facts, /forget 1. She brings facts up now and
     then, and they're added to her chat instructions (only what you told her to remember). Local only.
-  HABITS: /habit add drink water, /habit, /did 1 (check off), /habit rm 2. Streaks, with a
-    confetti celebration at 7 and 30 days, a gentle reminder at 8pm for anything left.
+  HABITS: /habit add drink water, /habit, /did 1 (check off), /habit rm 2. A plain daily
+    checklist (no streaks), with a gentle reminder at 8pm for anything left.
   JOURNAL: around 8:30pm she asks how today was. /feel 4 good day, /journal for the last week.
   DAILY RECAP (Windows): /day shows time per KIND of app (coding 2h, videos 45m...), with an evening
     recap. Only category totals are kept for 14 days. Never window titles. Settings > Track time.

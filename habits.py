@@ -1,12 +1,6 @@
-"""Daily habits with streaks (pure logic, no Tk). Items live in the list you pass in (settings.json)."""
-from datetime import date, timedelta
-
+"""Daily habit checklist (pure logic, no Tk). No streaks. Items live in the list you pass in (settings.json)."""
 MAX_HABITS = 8
 KEEP_DAYS = 60
-
-
-def _d(iso):
-    return date.fromisoformat(iso)
 
 
 class Habits:
@@ -31,27 +25,15 @@ class Habits:
         return today in item["days"]
 
     def check(self, number, today):
-        """Mark habit `number` (1-based) done for `today`. Returns (ok, name, streak)."""
+        """Mark habit `number` (1-based) done for `today`. Returns (ok, name)."""
         if not (1 <= number <= len(self.items)):
-            return False, "", 0
+            return False, ""
         item = self.items[number - 1]
         if today in item["days"]:
-            return False, item["name"], self.streak(item, today)
+            return False, item["name"]
         item["days"].append(today)
         item["days"] = sorted(set(item["days"]))[-KEEP_DAYS:]
-        return True, item["name"], self.streak(item, today)
-
-    def streak(self, item, today):
-        """Consecutive days ending today (or yesterday, so a streak isn't lost before you've done today's)."""
-        days = set(item["days"])
-        day = _d(today)
-        if today not in days:
-            day -= timedelta(days=1)
-        n = 0
-        while day.isoformat() in days:
-            n += 1
-            day -= timedelta(days=1)
-        return n
+        return True, item["name"]
 
     def pending(self, today):
         return [i["name"] for i in self.items if today not in i["days"]]
@@ -61,8 +43,7 @@ class Habits:
             return ["No habits yet. Add one: /habit add drink water"]
         out = []
         for n, i in enumerate(self.items, 1):
-            s = self.streak(i, today)
-            out.append(f"{n}. [{'x' if today in i['days'] else ' '}] {i['name']}" + (f"  ({s}-day streak)" if s else ""))
+            out.append(f"{n}. [{'x' if today in i['days'] else ' '}] {i['name']}")
         return out
 
     def nag(self, today):

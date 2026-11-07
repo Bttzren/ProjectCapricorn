@@ -1576,7 +1576,7 @@ class ChatWindow:
                              "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
                              "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /tp  /dance  "
                              "/sleep  /calm  /watch  /look  /ailines  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /note  /notes  /remember  /facts  /feel  "
-                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /size  /skin  /tiny  /intro  /express  /neon  /boot  /hear  /call  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
+                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /see  /size  /skin  /tiny  /intro  /express  /neon  /boot  /hear  /call  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
@@ -1689,6 +1689,15 @@ class ChatWindow:
                     self.system_line("game_events.json: " + w, err=True)
         elif cmd == "/sit":
             p.sit_somewhere()
+        elif cmd == "/see":
+            arg = parts[1].lower() if len(parts) > 1 else ""
+            if arg in ("on", "off"):
+                self.system_line(p.see(arg == "on", parent=self.win))
+            else:
+                self.system_line(f"Screen: awareness {'on' if p.aware else 'off'}, sitting on boxes "
+                                 f"{'on' if p.settings.get('ledges') else 'off'}, glancing "
+                                 f"{'on' if p.settings.get('ai_vision') and p.settings.get('glance', True) else 'off'}"
+                                 f"{'' if read_api_key() else ' (needs an AI key)'}.   /see on | off")
         elif cmd == "/ledges":
             arg = parts[1].lower() if len(parts) > 1 else ""
             if arg == "on":
@@ -2383,6 +2392,15 @@ class SettingsWindow:
         what = presets.SUMMARY.get(cur, "You've set the switches yourself. Pick a preset to set them all at once.")
         tk.Label(box, text=f"Now: {presets.LABELS[cur]}. {what}", bg=C_PANEL, fg=C_DIM, font=(self.fam, 8),
                  wraplength=345, justify="left").pack(anchor="w", padx=10, pady=(2, 2))
+        row2 = tk.Frame(box, bg=C_PANEL)
+        row2.pack(anchor="w", padx=10, pady=(4, 2))
+        seeing = bool(pet.settings.get("ledges") and pet.settings.get("ai_vision") and pet.aware)
+        flat_button(row2, "SCREEN: ON" if seeing else "LET HER SEE MY SCREEN",
+                    lambda: (pet.notify(pet.see(not seeing, parent=self.win), secs=10), self.reopen()),
+                    C_GREEN if seeing else C_PANEL2, C_BLACK if seeing else C_TEXT, "#3dffa0",
+                    (self.fam, 9, "bold"), 14, 6).pack(side="left")
+        tk.Label(row2, text="sit on boxes + glance at what\nyou're doing (click again: off)", bg=C_PANEL, fg=C_DIM,
+                 font=(self.fam, 7), justify="left").pack(side="left", padx=8)
         tk.Label(box, text="Auto-lock / auto-pause when you walk away (Reflexes) are never part of a preset.",
                  bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=345, justify="left").pack(
             anchor="w", padx=10, pady=(0, 6))
@@ -2562,6 +2580,11 @@ class SettingsWindow:
         if self.pet.chat and self.pet.chat.alive():
             self.pet.chat.drop_keybar()
         self.pet.say("Key saved. Real chat unlocked.", 4, speak=None)
+
+    def reopen(self):
+        """Rebuild so every switch shows the truth after a one-click change."""
+        self.close()
+        self.pet.root.after(150, self.pet.open_settings)
 
     def close(self):
         try:
@@ -2943,6 +2966,7 @@ class Capri:
         self.ai_fails, self.ai_pause_until = 0, 0.0
         self.recent_lines = collections.deque(maxlen=8)
         self.expr, self.expr_gate = None, expression.Gate()
+        self.glance_gate, self.glance_results, self.seen = vision.GlanceGate(), queue.Queue(), None
         self.cutin, self.last_cutin, self.panel_cache, self._face_stems = None, -1e9, {}, None
         self.agent = None
         self.agent_events = queue.Queue()
@@ -5326,7 +5350,75 @@ class Capri:
         if g:
             tone = "be supportive" if g.level == "off" else "cheer their good plays and tease them when they die"
             return f"playing {g.name} (this session: {g.kills} kills, {g.deaths} deaths); {tone}"
+        if self.aware and self.seen and time.time() - self.seen[1] < 600:
+            return self.seen[0]                                  # what she actually SAW (glance), not a guess
         return awareness.PHRASE.get(self.ctx, "") if (self.aware and self.ctx) else ""
+
+    def glance(self, cat=None):
+        """One look when you switch to something new (AI screen watching on, a key, not too often): the AI says
+        exactly what you're doing and she reacts to THAT. Never on private windows, while away, calm or busy."""
+        if not (self.settings.get("ai_vision") and self.settings.get("glance", True) and read_api_key()):
+            return False
+        if self.calm or self.agent is not None or self.boot or self.intro:
+            return False
+        title = self.win32.foreground_title() if self.win32.ok else ""
+        if not ledges.should_scan(title) or (self.win32.ok and self.win32.idle_seconds() > 120):
+            return False
+        now = time.time()
+        if not self.glance_gate.allow(now, time.strftime("%Y-%m-%d")):
+            return False
+        system = (self.persona_text + " " + self.mind.context(now, self.doing())
+                  + " Keep it PG. " + speech.ROAST_RULES.get(self.settings.get("roast", "mild"), ""))
+
+        def work():
+            try:
+                text = vision.look_once(ledges.capture, self._spotter_ask, vision.GLANCE_QUESTION, system)
+                doing, say = vision.parse_glance(text)
+                self.glance_results.put((doing, say, cat, ""))
+            except Exception as exc:
+                self.glance_results.put(("", "", cat, str(exc) or type(exc).__name__))
+        threading.Thread(target=work, daemon=True).start()
+        return True
+
+    def drain_glances(self, now):
+        while True:
+            try:
+                doing, say, cat, err = self.glance_results.get_nowait()
+            except queue.Empty:
+                return
+            if err:
+                log("glance failed: " + err[:120])
+            if doing and cat == self.ctx:
+                self.seen = (doing, now)
+            line = speech.sanitize(say) if say else ""
+            if not line and cat:
+                line = awareness.line(cat, self.rng)
+            if line:
+                self.say(line, 7)
+                self.recent_lines.append(line)
+
+    def see(self, on, parent=None):
+        """One switch: she notices which app you're in, sits on boxes on your screen, and glances at what you're
+        doing when you switch apps. Each part explains itself once. Returns a status line."""
+        if not on:
+            self.disable_ledges()
+            self.disable_vision()
+            self.settings["glance"] = False
+            self.save_settings()
+            return "Screen: off. She won't look at your screen (she still sees which app is in front if Awareness is on)."
+        if not self.aware:
+            self.set_aware(True)
+        sit = self.settings.get("ledges") or self.enable_ledges(parent=parent)
+        look = self.settings.get("ai_vision") or self.enable_vision(parent=parent)
+        self.settings["glance"] = bool(look)
+        self.save_settings()
+        parts = ["sees which app you're in"]
+        parts.append("sits on boxes on your screen" if sit else "NOT sitting on things (you said no)")
+        if look and read_api_key():
+            parts.append("glances at your screen when you switch apps, so she knows what you're actually doing")
+        elif look:
+            parts.append("will glance at your screen once you add an AI key (Settings > AI)")
+        return "Screen: on. She " + ", ".join(parts) + "."
 
     def set_aware(self, on):
         self.aware = bool(on)
@@ -5338,7 +5430,8 @@ class Capri:
                  else "Okay, I'm not watching your apps anymore.", 5)
 
     def react_context(self, cat):
-        self.say_ai("context", {"activity": awareness.PHRASE.get(cat, cat)}, awareness.line(cat, self.rng), 7)
+        if not self.glance(cat):
+            self.say_ai("context", {"activity": awareness.PHRASE.get(cat, cat)}, awareness.line(cat, self.rng), 7)
         icon, act = {"cyberpunk": ("star", "dance"), "game": ("star", None), "video": (None, "lounge"),
                      "music": ("note", "dance"), "coding": (None, "perch"), "writing": (None, "perch"),
                      "chat": ("?", "curious"), "social": ("?", None), "school": ("star", None),
@@ -5388,7 +5481,7 @@ class Capri:
         if self.settings.get("track_time", True) and idle < 60:      # only the category's minutes are saved
             self.daylog.add(time.strftime("%Y-%m-%d"), cat, dt)
         if cat != self.ctx:
-            self.ctx, self.ctx_since, self.ctx_done = cat, now, False
+            self.ctx, self.ctx_since, self.ctx_done, self.seen = cat, now, False, None
             return
         if not cat:
             return
@@ -5409,6 +5502,7 @@ class Capri:
         self.watch_ledges(now)
         self.drain_reactor()
         self.drain_ai(now)
+        self.drain_glances(now)
         self.watch_size(now)
         self.watch_hear(now)
         self.drain_agent()

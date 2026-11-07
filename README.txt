@@ -82,6 +82,14 @@ EXPRESSIONS (Settings > Size & look > "Act out how she feels", on by default)
   CUT-INS: for big moments only (laughing, hyped, shocked) an anime-style panel slides across her for about a
     second, at most once every 5 minutes. Settings > Size & look to turn off.
 
+LET HER SEE YOUR SCREEN (one switch: Settings > Quick setup > LET HER SEE MY SCREEN, or /see on | off)
+  Turns on: Awareness (which app is in front), screen ledges (she sits on windows/boxes she finds), and AI
+  glances: when you switch to something new she takes ONE small screenshot and the AI says exactly what you're
+  doing ("watching a Minecraft speedrun on YouTube"), so her comments and chat know what's really on screen
+  instead of guessing from the window title. At most one glance per 90 s and 120 a day; never on banking /
+  password / private windows, while you're away, in a call/game-quiet, or during a /do task. Glances need an AI
+  key and send that one screenshot to your AI provider. /see shows what's on.
+
 SKINS (right-click her > Skins, or /skin <name>)
   capri    her new look, drawn by xilia_world00 (default): blinks, grins, glitches for real, talks with a
            moving mouth, sits on window edges, dangles when you pick her up, lies down to nap.

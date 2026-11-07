@@ -32,28 +32,28 @@ PHRASE = {
 
 LINES = {
     "cyberpunk": ["Night City?! That's my home turf, choom!", "Cyberpunk?! Say hi to Night City for me."],
-    "game": ["Gig time. Don't flatline, choom!", "Game on. I'll cheer from the corner.", "Preem. Go get 'em."],
-    "ai": ["Chatting with another AI? Rude. Tell it I'm cuter.", "Another AI? I'm the original netrunner, choom."],
-    "school": ["Schoolwork mode? Respect, choom.", "School gig. One tiny step at a time. You got this."],
-    "video": ["Movie night? Scoot over, choom.", "Braindance time. I'll be quiet. Mostly.", "Popcorn's on you."],
-    "music": ["Ooh, a banger? Turn it up, choom.", "I can feel the bass in my pixels."],
+    "game": ["Gig time. Don't flatline!", "Game on. I'll cheer from the corner.", "Preem. Go get 'em."],
+    "ai": ["Chatting with another AI? Rude. Tell it I'm cuter.", "Another AI? I'm the original netrunner."],
+    "school": ["Schoolwork mode? Respect.", "School gig. One tiny step at a time. You got this."],
+    "video": ["Movie night? Scoot over.", "Braindance time. I'll be quiet. Mostly.", "Popcorn's on you."],
+    "music": ["Ooh, a banger? Turn it up.", "I can feel the bass in my pixels."],
     "coding": ["Hacking the grid? I'll supervise from up here.", "Netrunner mode: engaged.", "One bug at a time, choom."],
-    "chat": ["Gossiping, huh? Tell them I said hi.", "Social hour. Hydrate, choom."],
-    "writing": ["Writing a masterpiece? Preem.", "Words time. Save often, choom."],
-    "social": ["Scrolling again, choom? Eyes up for a sec.", "Doomscroll detected. Judging. Lovingly."],
+    "chat": ["Gossiping, huh? Tell them I said hi.", "Social hour. Hydrate."],
+    "writing": ["Writing a masterpiece? Preem.", "Words time. Save often."],
+    "social": ["Scrolling again? Eyes up for a sec.", "Doomscroll detected. Judging. Lovingly."],
 }
 
 # After this many seconds in one category she nudges you once, then again every 20 minutes.
 NUDGE_AFTER = {"social": 25 * 60, "video": 90 * 60, "game": 120 * 60, "coding": 60 * 60, "school": 50 * 60,
                "writing": 60 * 60, "chat": 60 * 60}
 NUDGES = {
-    "social": "Twenty-five minutes of scrolling, choom. Stand up, stretch.",
+    "social": "Twenty-five minutes of scrolling. Stand up, stretch.",
     "video": "Long braindance. Water and a stretch?",
-    "game": "Two hours deep, choom. Hydrate. Eyes off the screen for a minute.",
+    "game": "Two hours deep. Hydrate. Eyes off the screen for a minute.",
     "coding": "An hour of code. Stand up and stretch, netrunner.",
-    "school": "You've been grinding a while. Break time, choom. Five minutes.",
+    "school": "You've been grinding a while. Break time. Five minutes.",
     "writing": "An hour of writing. Stretch those fingers.",
-    "chat": "Long chat session. Drink some water, choom.",
+    "chat": "Long chat session. Drink some water.",
 }
 
 

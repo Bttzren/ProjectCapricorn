@@ -4,7 +4,7 @@ import re
 
 RADIO = [
     "Night City Radio. All the hits, none of the ICE.",
-    "This is your DJ in the static. Hydrate, choom.",
+    "This is your DJ in the static. Hydrate.",
     "Next up: forty minutes of pure synth. Nova.",
     "Traffic update: everything's a mess. As usual.",
     "Weather: neon, with a chance of glitch.",
@@ -19,13 +19,13 @@ RADIO = [
 
 # (month, day) -> (key, line)
 SPECIAL = {
-    (1, 1): ("newyear", "Happy New Year, choom! New year, new gigs."),
+    (1, 1): ("newyear", "Happy New Year! New year, new gigs."),
     (2, 14): ("valentine", "Happy Valentine's Day! I got you a heart. It's a glitch, but it's sincere."),
     (3, 14): ("pi", "Happy Pi Day! 3.14159... and then I glitch."),
     (10, 31): ("halloween", "Happy Halloween! Boo. I'm a ghost in your machine all year."),
     (12, 10): ("cp77", "Happy Night City Day, choom! The city's birthday."),
-    (12, 25): ("xmas", "Merry Christmas, choom! Eddies for everyone. (Not really.)"),
-    (12, 31): ("nye", "Last day of the year. Happy New Year's Eve, choom!"),
+    (12, 25): ("xmas", "Merry Christmas! Eddies for everyone. (Not really.)"),
+    (12, 31): ("nye", "Last day of the year. Happy New Year's Eve!"),
 }
 
 
@@ -58,10 +58,10 @@ def battery_event(state, percent, plugged):
     low = state.get("low", False)
     if not plugged and percent <= 20 and not low:
         state["low"] = True
-        return f"Battery's at {percent}%. Plug in before we flatline, choom."
+        return f"Battery's at {percent}%. Plug in before we flatline."
     if plugged and low and percent < 95:
         state["low"] = False
-        return "Ahh, juice. Thanks, choom."
+        return "Ahh, juice. Thanks."
     if plugged and percent >= 30:
         state["low"] = False
     if not plugged and percent >= 40:

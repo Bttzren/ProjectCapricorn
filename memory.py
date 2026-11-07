@@ -38,6 +38,6 @@ class Memory:
         if not self.items:
             return ""
         fact = rng.choice(self.items)
-        return rng.choice([f"Hey, I remember: {fact}. Still true, choom?",
+        return rng.choice([f"Hey, I remember: {fact}. Still true?",
                            f"Random thought: {fact}. I think about that.",
                            f"You told me: {fact}. Just checking in."])

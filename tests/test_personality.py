@@ -125,7 +125,11 @@ class MindTests(unittest.TestCase):
         joined = " ".join(pools).lower()
         for word in ("choom", "preem", "nova", "gonk", "chrome", "netrunner", "gig"):
             self.assertIn(word, joined)
-        self.assertGreater(sum(any(w in l.lower() for w in P.SLANG) for l in pools), len(pools) // 2)
+        # Night City flavour stays, but on purpose it's no longer in every line (user: "not corny").
+        with_slang = sum(any(w in l.lower() for w in P.SLANG) for l in pools)
+        self.assertGreater(with_slang, len(pools) // 10)
+        self.assertLess(with_slang, len(pools) // 2)
+        self.assertLessEqual(joined.count("choom"), 3)
         for line in pools:
             self.assertLessEqual(len(line), 120, line)
         bad = re.compile(r"\b(fuck\w*|shit\w*|bitch\w*|damn\w*|hell|ass|asshole|crap)\b")
@@ -137,6 +141,26 @@ class MindTests(unittest.TestCase):
         persona = src[src.index("DEFAULT_PERSONA = ("):src.index(")\n", src.index("DEFAULT_PERSONA = ("))]
         for word in ("choom", "preem", "nova", "gonk", "eddies", "PG"):
             self.assertIn(word, persona)
+
+
+class NoRepeatTests(unittest.TestCase):
+    def test_lines_dont_repeat_until_the_pool_is_used_up(self):
+        import random as _r
+        m = P.Mind({}, now=at(14), rng=_r.Random(3))
+        m.affection = 50
+        pool = P.LINES["checkin"]
+        seen = [m.line("checkin", at(14)) for _ in range(len(pool))]
+        self.assertEqual(sorted(seen), sorted(pool))
+        for _ in range(30):                                    # never the same line twice in a row
+            nxt = m.line("checkin", at(14))
+            self.assertNotEqual(nxt, seen[-1])
+            seen.append(nxt)
+
+    def test_offline_replies_rotate(self):
+        import random as _r
+        m = P.Mind({}, now=at(14), rng=_r.Random(5))
+        a, b, c = (m.offline_reply("hello there", at(14)) for _ in range(3))
+        self.assertEqual(len({a, b, c}), 3)
 
 
 if __name__ == "__main__":

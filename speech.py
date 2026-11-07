@@ -11,7 +11,8 @@ ROAST_RULES = {
               "hate, threats or anything sexual."),
 }
 STYLE = ("Reply with exactly ONE short sentence, at most 18 words. Plain text only: no emoji, no markdown, "
-         "no quotation marks, no hashtags. Sound like a person, not a bot.")
+         "no quotation marks, no hashtags. Sound like a person, not a bot or a mascot: dry and specific beats "
+         "loud and generic, and slang is optional.")
 
 REFUSALS = ("as an ai", "i'm sorry", "i am sorry", "i cannot", "i can't", "i can not", "sorry,", "i'm unable")
 

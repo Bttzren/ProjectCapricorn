@@ -1,7 +1,7 @@
 # Capri — handoff for the next session
 
 Read this first, then `README.txt` (user-facing feature docs). State as of branch tip
-`claude/zen-ptolemy-6a26qh`, **352 unit tests passing** (1 skipped), nothing uncommitted.
+`claude/zen-ptolemy-6a26qh`, **355 unit tests passing** (1 skipped), nothing uncommitted.
 
 **Fresh container setup** (both were missing in the last session; without them 4 tests error and every smoke
 script dies on `import tkinter`):
@@ -158,8 +158,9 @@ Real hardware reports from the user are the most valuable input — ask for exac
   before controls/remind/launch; tests pin that "open notepad", remind, brief, hear, tasks, chat still route.
   Stored as text in settings.json (`notes`), never sent to the AI. Spoken recall reads the best match only.
 - **Quiet in calls/meetings** (setting `meeting_quiet`, default ON, Settings > Gaming): meeting window titles
-  (Awareness on) or another app with the mic open (HKCU ConsentStore\microphone, `LastUsedTimeStop == 0`;
-  python/pythonw/py/capri ignored). Sets calm (stash/restore like game mode), 45 s grace, manual calm toggle
+  (Awareness on) or a known CALL app with the mic open (HKCU ConsentStore\microphone, `LastUsedTimeStop == 0`;
+  allow-list `meeting.CALL_APPS`, so OBS/NVIDIA Broadcast/Voicemeeter/Sonar/Krisp never trigger it; a mic
+  signal stuck 4 h with no meeting window is ignored until it changes). Sets calm (stash/restore like game mode), 45 s grace, manual calm toggle
   during a call wins. The registry reading is the riskiest unverified part — ask the user if she goes quiet in
   a Discord call and back afterwards.
 - **`/do` with Gemini**: only the provider guard blocked it. Gemini agent calls add a "pixels, not 0-1000" note

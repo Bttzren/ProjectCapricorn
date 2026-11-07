@@ -44,6 +44,7 @@ import listen
 import localai
 import memory
 import neon
+import notes
 import personality
 import presets
 import reactor
@@ -1243,7 +1244,7 @@ class ChatWindow:
             self.system_line("/focus [min]  /remind <min> <text>  /name <you>  /mood  /key <api key>  "
                              "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
                              "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /tp  /dance  "
-                             "/sleep  /calm  /watch  /look  /ailines  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /remember  /facts  /feel  "
+                             "/sleep  /calm  /watch  /look  /ailines  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /note  /notes  /remember  /facts  /feel  "
                              "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /size  /neon  /boot  /hear  /call  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
         elif cmd == "/clear":
             self.clear()
@@ -1408,6 +1409,21 @@ class ChatWindow:
         elif cmd == "/facts":
             for line in p.memory.lines():
                 self.system_line(line)
+        elif cmd == "/note":
+            body = text.split(None, 1)[1] if len(parts) > 1 else ""
+            saved = p.add_note(body)
+            self.system_line(f"Noted: {saved}" if saved else
+                             ("Already in your notes." if body.strip() else "What should I note? /note <text>"),
+                             err=not saved)
+        elif cmd == "/notes":
+            if len(parts) > 2 and parts[1].lower() in ("rm", "remove", "del") and parts[2].isdigit():
+                gone = p.notes.remove(int(parts[2]))
+                p.save_settings()
+                self.system_line(f"Deleted note: {gone}" if gone else "Which one? /notes shows the numbers.",
+                                 err=not gone)
+            else:
+                for line in p.notes.lines(text.split(None, 1)[1] if len(parts) > 1 else ""):
+                    self.system_line(line)
         elif cmd == "/feel":
             today = time.strftime("%Y-%m-%d")
             if len(parts) > 1 and parts[1].isdigit() and 1 <= int(parts[1]) <= 5:
@@ -2460,6 +2476,7 @@ class Capri:
         self.todos = fun.Todos(self.settings.setdefault("todos", []))
         self.habits = habits.Habits(self.settings.setdefault("habits", []))
         self.memory = memory.Memory(self.settings.setdefault("memory", []))
+        self.notes = notes.Notes(self.settings.setdefault("notes", []))
         self.daylog = daylog.DayLog(self.settings.setdefault("daylog", {}))
         self.journal = journal.Journal(self.settings.setdefault("journal", []))
         self.msgs = []
@@ -3472,6 +3489,13 @@ class Capri:
         return True
 
     # ---- local AI and voice input
+    def add_note(self, text):
+        """Save a note (typed or dictated). Text only, kept in settings.json on this PC; never sent to the AI."""
+        saved = self.notes.add(text, time.strftime("%m-%d %H:%M"))
+        if saved:
+            self.save_settings()
+        return saved
+
     def notify(self, text, err=False, secs=6.0):
         self.say(text, secs, speak=None)
         if self.chat and self.chat.alive():
@@ -4148,6 +4172,22 @@ class Capri:
                 continue
             if kind == "focus":
                 self.start_focus()
+                continue
+            if kind == "note":
+                if not body:
+                    self.say("What should I note? Say 'note that' and then the note.", 6, speak="priority")
+                elif self.add_note(body):
+                    self.react("happy")
+                    self.notify(f"Noted: {body[:120]}", secs=5)
+                    self.speak("Noted.", priority=True)
+                else:
+                    self.say("That's already in your notes.", 4, speak="priority")
+                continue
+            if kind == "notes":
+                self.say(self.notes.spoken(body), 9, speak="priority")
+                if self.chat and self.chat.alive():
+                    for line in self.notes.lines(body):
+                        self.chat.system_line(line)
                 continue
             if kind == "remind":
                 mins, what = listen.parse_reminder(body) or (None, "")

@@ -281,6 +281,10 @@ SCREEN LEDGES (she sits on boxes on your screen)  - OFF by default, needs your O
 SHE KNOWS YOU
   MEMORY: /remember my favorite game is Minecraft, /facts, /forget 1. She brings facts up now and
     then, and they're added to her chat instructions (only what you told her to remember). Local only.
+  NOTES: say "Capri, note that the wifi password is on the router" (or "take a note: ...", "write this
+    down ...", or type /note <text>). Later: "what did I note about the wifi?" / "read my notes" or
+    /notes wifi. /notes rm 3 deletes one. Only the text of the note is kept, in settings.json on your PC
+    (audio is never saved) and notes are never sent to the AI. Up to 200; the oldest goes first.
   HABITS: /habit add drink water, /habit, /did 1 (check off), /habit rm 2. A plain daily
     checklist (no streaks), with a gentle reminder at 8pm for anything left.
   JOURNAL: around 8:30pm she asks how today was. /feel 4 good day, /journal for the last week.
@@ -348,6 +352,6 @@ DEVELOPING
         voice.py  speech: Fish Audio + system voice (no Tk)
   hands.py        key presses / clicks with safety rails (no Tk)
   breach.py  hacking puzzle   sfx.py  sound effects   world.py  holidays, radio, battery (all no Tk)
-  gamemode.py  game commentary   reactor.py  screen-patch detectors   speech.py  vision.py  AI lines + spotter   ledges.py  screen box detection   simon.py  habits.py  memory.py  journal.py  daylog.py  autostart.py
+  gamemode.py  game commentary   reactor.py  screen-patch detectors   speech.py  vision.py  AI lines + spotter   ledges.py  screen box detection   simon.py  habits.py  memory.py  notes.py  journal.py  daylog.py  autostart.py
   fun.py  dice, to-dos, horoscope
   Tests:  python -m unittest discover -s tests

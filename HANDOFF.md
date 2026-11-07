@@ -1,7 +1,7 @@
 # Capri — handoff for the next session
 
 Read this first, then `README.txt` (user-facing feature docs). State as of branch tip
-`claude/zen-ptolemy-6a26qh`, **369 unit tests passing** (1 skipped), nothing uncommitted.
+`claude/zen-ptolemy-6a26qh`, **370 unit tests passing** (1 skipped), nothing uncommitted.
 
 **Fresh container setup** (both were missing in the last session; without them 4 tests error and every smoke
 script dies on `import tkinter`):
@@ -36,7 +36,9 @@ Windows hardware. Be honest about that every time.
   rc is 0** (never pipe through `| tail` before checking the code — I once pushed a failing test that way).
 - Edit `capri.py` (≈5,400 lines) with **patch scripts**: Python that does `assert s.count(old) == 1` for every
   replacement and writes only if all match. Never do blind sed on it. `ast.parse` it after patching.
-- Headless GUI checks: `xvfb-run -a -s "-screen 0 1280x1400x24" /usr/bin/python3.12 tools/smoke/smokeNN.py`
+- **Run all smoke scripts: `tools/smoke/run_all.sh` (or `run_all.sh 'smoke3*'`)** — own TMPDIR per script, fails
+  on exit code, traceback, or `tick error`/`failed:` in that run's capri.log. Single script by hand:
+  `xvfb-run -a -s "-screen 0 1280x1400x24" /usr/bin/python3.12 tools/smoke/smokeNN.py`
   (scripts hard-code `/home/user/ProjectCapricorn`; they monkeypatch Tk dialogs, AI, audio, hands with fakes and
   use `PIL.ImageGrab` for screenshots — look at screenshots with the Read tool; they caught real bugs).
   Index: 15 `/do` agent · 16 voice→local AI + offline fallback · 17 wake word · 18 size/presets/clip ·
@@ -205,3 +207,15 @@ User decisions: **new skin is the default**, mini face = **chat avatar + tiny mo
   without registering it on Windows).
 - Not used on purpose: `capri-cutout.png`, `capri-full.png`, `tray.png` (no tray feature), dangle beyond drag.
 - Riskiest on real Windows: intro window transparency/focus, perch alignment on window edges, lay pose size.
+
+## 12. "do more stuff" batch (same session)
+
+- `tools/smoke/run_all.sh` gate (it caught images bound to the wrong Tk root in smoke31's two-app run; all
+  PhotoImages now pass `master=`).
+- Chat replies act out a feeling (`expression.split_reply` / `strip_tags` in `ChatWindow.work`, before
+  history/bubble/voice/call see the text; same `expressive` switch). Smoke 37.
+- New skin: `air` state (falling/hopping) uses the dangle pose. Smoke 38.
+- `/intro on|once|off` (`intro_mode()`; once = only while `booted` unset). Default still every launch —
+  **user hasn't answered whether it should be first-launch only**.
+- Considered and skipped: vectorising `crisp` (6 ms/frame, strips already build in a background thread);
+  registering Share Tech Mono (Windows-only, untestable here).

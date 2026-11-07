@@ -43,6 +43,7 @@ import ledges
 import listen
 import localai
 import memory
+import meeting
 import neon
 import notes
 import personality
@@ -1953,6 +1954,8 @@ class SettingsWindow:
                 ("spicy", "Spicy", "She'll tell you that was ass. Mild swearing, no slurs.")):
             self.radio(box, label, self.roast_var, value, self.pick_roast, note)
         self.check(box, "Stay small and quiet while a game is in front", "game_quiet", True)
+        self.check(box, "Go quiet during calls and meetings (Windows: Zoom/Meet/Teams in front, or Discord, Zoom "
+                        "etc. using your mic)", "meeting_quiet", True)
         tk.Frame(box, bg=C_PANEL, height=6).pack()
 
     def pick_roast(self):
@@ -2544,6 +2547,7 @@ class Capri:
         self.simon_win, self.last_watch, self.next_memory_cb = None, now, now + 7200
         self.scanner, self.ledges, self.ledge_counter, self.ledge_next = ledges.Scanner(), [], 0, 0.0
         self.game, self.game_seen, self.game_manual, self.reactor, self.calm_before_game = None, now, False, None, None
+        self.meeting, self.calm_before_meeting = meeting.Detector(), None
         self.persona_text = read_first(["persona.txt"]) or DEFAULT_PERSONA
         self.ai_budget = speech.Budget(per_min=14, per_day=int(self.settings.get("ai_daily_cap", 800)),
                                        store=self.settings.setdefault("ai_day", {}))
@@ -4803,6 +4807,7 @@ class Capri:
             self.react("happy")
             self.set_icon("heart", 1.6)
         self.reflexes(now, idle)
+        self.meeting_tick(now)
         if not self.aware:
             return
         if not self.settings.get("aware_notice") and now - self.t_start > 25:
@@ -5016,7 +5021,38 @@ class Capri:
         self.reminders.append((time.time() + mins * 60, text))
         self.say(f"Got it. Pinging you in {mins:g} min.", 4)
 
+    def meeting_tick(self, now):
+        """In a call or meeting (meeting window in front, or another app has the mic open): stay quiet and put."""
+        if not self.settings.get("meeting_quiet", True):
+            if self.meeting.active:
+                self.meeting.active = False
+                self.meeting_ended()
+            return
+        title = self.win32.foreground_title() if self.aware else ""     # title: checked here, never kept
+        ev = self.meeting.update(now, title, meeting.mic_users(meeting.read_mic_entries()))
+        if ev == "start":
+            log(f"meeting quiet on ({self.meeting.why})")
+            if self.calm_before_meeting is None:
+                self.calm_before_meeting, self.calm = self.calm, True
+            self.speaker.stop()
+            if self.state == "dance":
+                self.go("idle", 4)
+            self.say("In a call. I'll keep quiet.", 3, speak=None)
+        elif ev == "end":
+            self.meeting_ended()
+
+    def meeting_ended(self):
+        was, self.calm_before_meeting = self.calm_before_meeting, None
+        if was is None:
+            return
+        log("meeting quiet off")
+        if self.game and self.calm_before_game is not None:
+            self.calm_before_game = was                              # the game still wants her quiet
+        else:
+            self.calm = was
+
     def toggle_calm(self):
+        self.calm_before_meeting = None                              # you chose: don't undo it when the call ends
         self.calm = not self.calm
         self.settings["calm"] = self.calm
         self.save_settings()

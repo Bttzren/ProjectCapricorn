@@ -71,6 +71,15 @@ MORE STUFF
     Christmas) and on YOUR birthday: /birthday 03-27.
   BATTERY (Windows laptops): she warns you at 20% and cheers when you plug in.
 
+QUIET IN CALLS AND MEETINGS (Windows, on by default; Settings > Gaming to turn off)
+  She goes calm (no chatter, stays put) while you're in a call or meeting, and goes back to normal
+  about 45 seconds after it ends. She notices it two ways, both on your PC only:
+  - a Zoom / Google Meet / Teams call / Webex window is in front (only while Awareness is on), or
+  - another app has your microphone open right now (Discord voice, Zoom, Teams, Meet in a browser...).
+    Windows already tracks this for its mic icon; she reads only which app and whether it's in use.
+    Her own mic use (talk, wake word, call mode) doesn't count.
+  Replies to you and reminders still speak. Untested on real Windows so far.
+
 GAME MODE (she hypes your kills and roasts your deaths)
   When a supported game is in front (Valorant, CS2, Apex, Overwatch, Fortnite, League, Rocket League,
   Cyberpunk 2077; needs Windows + Awareness on) she tucks into a corner, stays quiet, and keeps a K/D

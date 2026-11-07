@@ -55,7 +55,7 @@ print("ring grows while she is silent?", before > 0, "| frozen while she talks:"
 p.disable_hear(); print("after off:", p.hear, p.settings["hear"])
 # preset full starts hearing
 import presets
-p.speaker = type("S", (), {"speaking": False, "stop": lambda self: None, "available": False, "engine": "none", "speak": lambda *a, **k: False})()
+p.speaker = type("S", (), {"speaking": False, "stop": lambda self: None, "available": False, "engine": "none", "last_error": "", "speak": lambda *a, **k: False})()
 p.apply_preset("full", ask=False)
 for _ in range(10): p.root.update(); time.sleep(0.05)
 print("FULL -> hear running:", p.hear is not None and p.hear.running, presets.detect(p.settings))

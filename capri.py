@@ -2531,6 +2531,7 @@ class Capri:
         self.glitch = 0.0
         self.hop_y = 0.0
         self.step_ph, self.walk_k, self.turn_until = 0.0, 1.0, 0.0     # walking: step clock, pace, turn pause
+        self.seen_dir, self.turn_squash = 1, 0.0                     # quick squash when she turns around
         self.surf = None            # (id, left_at_last_seen) when standing on a window
         self.surfaces = []
         self.surf_check = 0.0
@@ -3270,8 +3271,11 @@ class Capri:
         # smoothing
         self.angle += (self.angle_t - self.angle) * min(1.0, 0.22 * dt * 25)
         self.land_squash = max(0.0, self.land_squash - dt * 5)
+        if self.dir != self.seen_dir:
+            self.seen_dir, self.turn_squash = self.dir, 1.0
+        self.turn_squash = max(0.0, self.turn_squash - dt * 8)
         self.sy = 1.0 - 0.16 * self.land_squash
-        self.sx = 1.0 + 0.12 * self.land_squash
+        self.sx = (1.0 + 0.12 * self.land_squash) * (1.0 - 0.3 * motion.smoothstep(self.turn_squash))
         if self.state in ("tp_out", "tp_in"):
             self.sx = max(0.12, 1.0 - 0.9 * self.glitch ** 1.5)
             self.sy = 1.0 + 0.12 * self.glitch

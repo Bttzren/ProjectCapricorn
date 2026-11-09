@@ -158,6 +158,18 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(len(s.take()), 1)
 
 
+class TrackMoveTests(unittest.TestCase):
+    def test_a_moved_window_keeps_its_ids_box_to_box(self):
+        prev = [{"id": "L1", "l": 318, "t": 698, "r": 962, "kind": "box"},
+                {"id": "L2", "l": 318, "t": 726, "r": 962, "kind": "edge"}]
+        new = [{"l": 318, "t": 626, "r": 980, "kind": "edge"},          # title bar's lower line, now 72 px away
+               {"l": 318, "t": 598, "r": 962, "kind": "box"}]           # the real new top, 100 px away
+        out, _ = L.track(prev, new, 2)
+        ids = {d["t"]: d["id"] for d in out}
+        self.assertEqual(ids[598], "L1")
+        self.assertEqual(ids[626], "L2")
+
+
 class HoldTests(unittest.TestCase):
     PREV = [{"id": "L1", "l": 318, "t": 698, "r": 962, "kind": "box"}]
 
@@ -174,6 +186,21 @@ class HoldTests(unittest.TestCase):
         new = [{"id": "L1", "l": 318, "t": 699, "r": 962}]
         self.assertIs(L.hold(self.PREV, new, [], "L1"), new)
         self.assertEqual(L.hold(self.PREV, [], [{"l": 318, "t": 698, "r": 962}], None), [])
+
+    def test_a_box_partly_behind_her_still_counts(self):
+        img = Image.new("RGB", (1280, 800), (30, 30, 40))
+        ImageDraw.Draw(img).rectangle((300, 300, 900, 600), fill=(200, 200, 210))
+        mask = [(250, 150, 280, 330)]                     # her window covers the box's top-left corner
+        found = L.detect(img, mask)
+        tops = [f for f in found if abs(f["t"] - 300) <= 6]
+        self.assertTrue(tops, found)
+        self.assertEqual(tops[0]["kind"], "box")
+        self.assertLess(tops[0]["l"], 300)                # it continues behind her window, under her feet
+        self.assertGreater(tops[0]["r"], 880)
+        # a plain short line that ends at her window, with no side anywhere, is still not a box
+        img2 = Image.new("RGB", (1280, 800), (30, 30, 40))
+        ImageDraw.Draw(img2).line((300, 300, 700, 300), fill=(220, 220, 220), width=2)
+        self.assertFalse([f for f in L.detect(img2, mask) if f["kind"] == "box"])
 
     def test_detect_raw_returns_every_run(self):
         img = Image.new("RGB", (1280, 800), (30, 30, 40))

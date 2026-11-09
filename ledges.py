@@ -81,8 +81,10 @@ def _edge_map(small, dx, dy):
     return diff.point(lambda v: 255 if v > TH else 0)
 
 
-def detect(image, masks=(), screen=None):
+def detect(image, masks=(), screen=None, raw=False):
     """Ledges found in `image`: [{'l', 't', 'r', 'kind'}] in screen coordinates ('box' or 'edge').
+    raw=True returns (ledges, every horizontal edge found) - the second list lets a ledge she's sitting on
+    survive while her own body hides its corner.
 
     masks: [(x, y, w, h)] screen rectangles to ignore (Capri's own windows).
     screen: (width, height) of the screen in the coordinates you want back (defaults to the image size).
@@ -114,6 +116,7 @@ def detect(image, masks=(), screen=None):
         top, xl, xr = g["y0"], g["x0"], g["x1"]
         has = [any(abs(t - top) <= 4 and b - top >= minv for t, b in side(x)) for x in (xl, xr)]
         found.append({"l": xl / sc, "t": top / sc, "r": xr / sc, "kind": "box" if all(has) else "edge"})
+    all_runs = list(found)
     keep = [f for f in found if f["kind"] == "box" or (f["r"] - f["l"]) >= 0.4 * sw]
     out = []
     for f in sorted(keep, key=lambda d: (d["kind"] != "box", -(d["r"] - d["l"]))):
@@ -125,7 +128,23 @@ def detect(image, masks=(), screen=None):
                 break
         if not dup and f["t"] > 20:
             out.append(f)
-    return out[:MAX_LEDGES]
+    return (out[:MAX_LEDGES], all_runs) if raw else out[:MAX_LEDGES]
+
+
+def hold(prev, new, runs, keep_id, min_visible=MIN_W * 0.5):
+    """The ledge she's sitting on (keep_id) vanished from this scan? Her own window hides part of it (it's
+    masked out), which can make it stop looking like a box. Keep it if some of that edge is still visibly
+    there (any horizontal run at the same height overlapping it); if the window closed or moved, it isn't."""
+    if not keep_id or any(d.get("id") == keep_id for d in new):
+        return new
+    old = next((d for d in prev if d.get("id") == keep_id), None)
+    if old is None:
+        return new
+    for r in runs or ():
+        ov = min(r["r"], old["r"]) - max(r["l"], old["l"])
+        if abs(r["t"] - old["t"]) <= 6 and ov >= min_visible:
+            return new + [old]
+    return new
 
 
 def track(prev, new, counter):
@@ -155,7 +174,7 @@ class Scanner:
 
     def __init__(self, capture=capture, detect=detect, threaded=True):
         self.capture, self.detect, self.threaded = capture, detect, threaded
-        self.result, self.error, self._thread = None, "", None
+        self.result, self.error, self._thread, self.runs = None, "", None, None
 
     @property
     def busy(self):
@@ -177,7 +196,8 @@ class Scanner:
             if img is None:
                 self.error = "can't capture the screen here"
                 return
-            self.result = self.detect(img, masks, screen)
+            res = self.detect(img, masks, screen)
+            self.result, self.runs = res if isinstance(res, tuple) else (res, None)
             del img                                        # the screenshot is gone as soon as we're done
         except Exception as exc:
             self.error = type(exc).__name__

@@ -3039,7 +3039,8 @@ class Capri:
         self.battery_state, self.next_battery, self.next_radio = {}, now + 20, now + 300
         self.peek_side, self.peek_said, self.breach_win, self.next_hungry = 0, False, None, now + 3600
         self.simon_win, self.last_watch, self.next_memory_cb = None, now, now + 7200
-        self.scanner, self.ledges, self.ledge_counter, self.ledge_next = ledges.Scanner(), [], 0, 0.0
+        self.scanner = ledges.Scanner(detect=lambda img, masks, screen: ledges.detect(img, masks, screen, raw=True))
+        self.ledges, self.ledge_counter, self.ledge_next = [], 0, 0.0
         self.game, self.game_seen, self.game_manual, self.reactor, self.calm_before_game = None, now, False, None, None
         self.meeting, self.calm_before_meeting = meeting.Detector(), None
         self.persona_text = read_first(["persona.txt"]) or DEFAULT_PERSONA
@@ -4066,7 +4067,10 @@ class Capri:
             return
         result = self.scanner.take()
         if result is not None:
-            self.ledges, self.ledge_counter = ledges.track(self.ledges, result, self.ledge_counter)
+            prev = self.ledges
+            new, self.ledge_counter = ledges.track(prev, result, self.ledge_counter)
+            seat = self.surf[0] if self.surf and str(self.surf[0]).startswith("L") else None
+            self.ledges = ledges.hold(prev, new, self.scanner.runs, seat)    # her body hides part of her seat
         if self.scanner.error:
             err, self.scanner.error = self.scanner.error, ""
             self.settings["ledges"] = False
@@ -4120,6 +4124,8 @@ class Capri:
                 self.say("Turn on 'Screen ledges' in Settings first.", 5, speak=None)
             return
         spots = [d for d in self.ledges if d["r"] - d["l"] > 160]
+        tops = [d for d in spots if d.get("kind") == "box"]
+        spots = tops or spots                                # window tops first, plain edges only if that's all
         if not spots or self.state in ("tp_out", "tp_in", "drag"):
             if not quiet:
                 self.say("I don't see anywhere to sit yet. Looking...", 4, speak=None)

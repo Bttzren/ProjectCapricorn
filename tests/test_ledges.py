@@ -158,5 +158,32 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(len(s.take()), 1)
 
 
+class HoldTests(unittest.TestCase):
+    PREV = [{"id": "L1", "l": 318, "t": 698, "r": 962, "kind": "box"}]
+
+    def test_keeps_the_seat_while_part_of_its_edge_is_visible(self):
+        runs = [{"l": 561, "t": 699, "r": 962, "kind": "edge"}]           # her body hides the left part
+        self.assertEqual([d["id"] for d in L.hold(self.PREV, [], runs, "L1")], ["L1"])
+
+    def test_drops_it_when_the_window_is_gone_or_moved(self):
+        self.assertEqual(L.hold(self.PREV, [], [], "L1"), [])                               # closed
+        self.assertEqual(L.hold(self.PREV, [], [{"l": 318, "t": 400, "r": 962}], "L1"), [])  # moved up a lot
+        self.assertEqual(L.hold(self.PREV, [], [{"l": 900, "t": 698, "r": 940}], "L1"), [])  # only a sliver
+
+    def test_no_change_when_still_found_or_not_sitting(self):
+        new = [{"id": "L1", "l": 318, "t": 699, "r": 962}]
+        self.assertIs(L.hold(self.PREV, new, [], "L1"), new)
+        self.assertEqual(L.hold(self.PREV, [], [{"l": 318, "t": 698, "r": 962}], None), [])
+
+    def test_detect_raw_returns_every_run(self):
+        img = Image.new("RGB", (1280, 800), (30, 30, 40))
+        d = ImageDraw.Draw(img)
+        d.rectangle((300, 300, 900, 600), fill=(200, 200, 210))
+        found, runs = L.detect(img, raw=True)
+        self.assertTrue(found)
+        self.assertGreaterEqual(len(runs), len(found))
+        self.assertEqual(L.detect(img), found)
+
+
 if __name__ == "__main__":
     unittest.main()

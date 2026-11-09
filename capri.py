@@ -2214,6 +2214,9 @@ class SettingsWindow:
         tk.Label(col, text="CAPRI//CONFIG", bg=C_PANEL, fg=self.acc, font=(f, 14, "bold")).pack(anchor="w")
         tk.Label(col, text="SYSTEM PERMISSIONS  ·  VOICE  ·  AI", bg=C_PANEL, fg=ui.DIM, font=(f, 7)).pack(anchor="w")
         ui.rule(w, 8, ui.blend(self.acc, C_BG, 0.5), C_BG, notch=False).pack(fill="x")
+        self.jumpbar = tk.Frame(w, bg=C_BG)                 # filled in once the sections exist
+        self.jumpbar.pack(fill="x", padx=8, pady=(0, 2))
+        self.sections = []
         foot = tk.Frame(w, bg=C_PANEL)
         foot.pack(side="bottom", fill="x")
         ui.rule(foot, 8, self.acc, C_PANEL, notch=False).pack(fill="x")
@@ -2247,6 +2250,7 @@ class SettingsWindow:
         self.build_local(pad)
         self.build_behavior(pad)
         self.build_keys(pad)
+        self.build_jumpbar(body)
         w.update_idletasks()
         h = min(700, pet.sh - 80)
         w.geometry(f"460x{h}+{max(0, pet.sw // 2 - 230)}+{max(0, pet.sh // 2 - h // 2)}")
@@ -2254,10 +2258,33 @@ class SettingsWindow:
         w.focus_force()                  # so keys (and, on Windows, the wheel) go here, not to the pet
 
     # ---- small widgets
+    JUMP_NAMES = {"QUICK SETUP": "SETUP", "SIZE & LOOK": "LOOK", "LOCAL AI & VOICE INPUT": "LOCAL AI",
+                  "AI CHAT KEY": "KEY"}
+
+    def build_jumpbar(self, body):
+        """A row of section names at the top: one click scrolls there (Settings is long)."""
+        def jump(frame):
+            self.win.update_idletasks()
+            total = max(1, body.winfo_height())
+            y = frame.winfo_rooty() - body.winfo_rooty() - 6
+            self.canvas.yview_moveto(max(0.0, y / float(total)))
+        for i, (name, frame) in enumerate(self.sections):
+            b = tk.Label(self.jumpbar, text=name, bg=C_PANEL2, fg=C_TEXT, font=(self.fam, 7, "bold"), padx=5, pady=2,
+                         cursor="hand2")
+            b.grid(row=i // 5, column=i % 5, padx=2, pady=2, sticky="we")
+            b.bind("<Button-1>", lambda e, f=frame: jump(f))
+            b.bind("<Enter>", lambda e, x=b: x.config(fg=self.acc))
+            b.bind("<Leave>", lambda e, x=b: x.config(fg=C_TEXT))
+        for c in range(5):
+            self.jumpbar.grid_columnconfigure(c, weight=1)
+
     def section(self, parent, title, note=""):
         head, _, sub = title.partition(":")
         outer = tk.Frame(parent, bg=ui.blend(self.acc, C_BG, 0.78))
         outer.pack(fill="x", pady=(10, 0))
+        if hasattr(self, "sections"):
+            h = head.strip().upper()
+            self.sections.append((self.JUMP_NAMES.get(h, h.split()[0] if h else "?"), outer))
         box = tk.Frame(outer, bg=C_PANEL)
         box.pack(fill="x", padx=1, pady=1)
         bar = tk.Frame(box, bg=C_PANEL)

@@ -1,7 +1,7 @@
 # Capri — handoff for the next session
 
 Read this first, then `README.txt` (user-facing feature docs). State as of branch tip
-`claude/zen-ptolemy-6a26qh`, **370 unit tests passing** (1 skipped), nothing uncommitted.
+`claude/zen-ptolemy-6a26qh`, **404 unit tests passing** (1 skipped), nothing uncommitted.
 
 **Fresh container setup** (both were missing in the last session; without them 4 tests error and every smoke
 script dies on `import tkinter`):
@@ -232,3 +232,21 @@ User decisions: **new skin is the default**, mini face = **chat avatar + tiny mo
   engine re-downloaded if `--help` lacks `--mmproj`. Served with `--mmproj`, OpenAI `image_url` data URI. The
   vision model also chats. Routing: glances and /look use it unless `/brain cloud`; `/do` and the game spotter
   are cloud-only on purpose. NOT downloadable/runnable in this sandbox (HF blocked) — verified with fakes only.
+
+## 14. Overnight batch (user asleep: "keep doing stuff")
+
+- Python 3.13 check: every file compiles with no SyntaxWarnings; all non-Tk tests pass on 3.13 (no Tk for 3.13
+  in the sandbox). No modules removed in 3.13 are used.
+- `/report` (+ right-click > Copy bug report): `report.py` builds a scrubbed report (versions, allow-listed
+  settings, recent log errors with tracebacks; keys/emails/home path removed) to clipboard + capri-report.txt.
+  Loop errors now show a notice pointing at /report (max every 10 min). capri.log rotates at 1 MB.
+- `read_api_key()` cached 2 s (was re-read from disk up to 50x/s via the look timer); save invalidates.
+- Settings jump bar (sections register in `section()`).
+- Sitting on windows (`ledges.py`), found by smoke 44 with a real window from another process:
+  1. her own window is masked out of scans, which hid the corner of the box she sat on -> it stopped being a
+     box -> she fell after ~2 s. `hold()` keeps her seat while part of its edge is visible.
+  2. `detect()` treats an edge that runs into her window as continuing behind it (box side + extended span).
+  3. `track()` pairs old/new ledges globally, closest first, box<->edge penalty (moved windows keep ids).
+  Known flake: ~1 in 9 runs she drops to the floor when the window moves (harmless).
+- Smoke 42 (/report scrub), 43 (jump bar), 44 (sit / ride a moving window / drop when closed), 45 (soak:
+  invariants every frame; SOAK_SECS / SOAK_SEED). 5 seeds overnight: 0 problems.

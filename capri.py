@@ -177,7 +177,20 @@ def enable_dpi_awareness():
 
 
 # ------------------------------------------------------------------ chat backends
-def read_api_key():
+_KEY_CACHE = [0.0, ""]
+
+
+def read_api_key(max_age=2.0):
+    """The AI key (env var, or api_key.txt). Cached for a moment: it's asked many times a second and each
+    miss is a file open (which antivirus may scan on Windows). save_api_key() refreshes it at once."""
+    if time.time() - _KEY_CACHE[0] < max_age:
+        return _KEY_CACHE[1]
+    _KEY_CACHE[1] = _read_api_key()
+    _KEY_CACHE[0] = time.time()
+    return _KEY_CACHE[1]
+
+
+def _read_api_key():
     for var in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
         k = os.environ.get(var, "").strip()
         if k:
@@ -196,6 +209,7 @@ def read_api_key():
 def save_api_key(key):
     with open(os.path.join(data_dir(), "api_key.txt"), "w", encoding="utf-8") as f:
         f.write(key.strip() + "\n")
+    _KEY_CACHE[0] = 0.0                                  # pick it up immediately
 
 
 def read_fish_key():
@@ -5534,7 +5548,7 @@ class Capri:
         return True
 
     def glance_tick(self, now):
-        if self.glance_on() and now - self.glance_gate.last >= self.look_every():
+        if now - self.glance_gate.last >= self.look_every() and self.glance_on():
             self.glance(self.ctx, periodic=True)
 
     def drain_glances(self, now):

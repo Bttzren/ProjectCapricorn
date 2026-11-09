@@ -191,7 +191,7 @@ class HoldTests(unittest.TestCase):
         img = Image.new("RGB", (1280, 800), (30, 30, 40))
         ImageDraw.Draw(img).rectangle((300, 300, 900, 600), fill=(200, 200, 210))
         mask = [(250, 150, 280, 330)]                     # her window covers the box's top-left corner
-        found = L.detect(img, mask)
+        found = L.detect(img, mask, self_mask=mask[0])
         tops = [f for f in found if abs(f["t"] - 300) <= 6]
         self.assertTrue(tops, found)
         self.assertEqual(tops[0]["kind"], "box")
@@ -200,7 +200,15 @@ class HoldTests(unittest.TestCase):
         # a plain short line that ends at her window, with no side anywhere, is still not a box
         img2 = Image.new("RGB", (1280, 800), (30, 30, 40))
         ImageDraw.Draw(img2).line((300, 300, 700, 300), fill=(220, 220, 220), width=2)
-        self.assertFalse([f for f in L.detect(img2, mask) if f["kind"] == "box"])
+        self.assertFalse([f for f in L.detect(img2, mask, self_mask=mask[0]) if f["kind"] == "box"])
+
+    def test_behind_her_chat_window_is_unknown_not_a_continuation(self):
+        img = Image.new("RGB", (1280, 800), (30, 30, 40))
+        ImageDraw.Draw(img).rectangle((300, 300, 900, 600), fill=(200, 200, 210))
+        chat = (250, 150, 280, 330)                      # the CHAT window covers the corner, not her
+        tops = [f for f in L.detect(img, [chat], self_mask=(1000, 0, 200, 200)) if abs(f["t"] - 300) <= 6]
+        self.assertFalse([f for f in tops if f["l"] < 500])     # never extended behind the chat window
+        self.assertFalse([f for f in tops if f["kind"] == "box"])
 
     def test_detect_raw_returns_every_run(self):
         img = Image.new("RGB", (1280, 800), (30, 30, 40))

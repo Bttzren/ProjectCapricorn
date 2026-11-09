@@ -3039,7 +3039,9 @@ class Capri:
         self.battery_state, self.next_battery, self.next_radio = {}, now + 20, now + 300
         self.peek_side, self.peek_said, self.breach_win, self.next_hungry = 0, False, None, now + 3600
         self.simon_win, self.last_watch, self.next_memory_cb = None, now, now + 7200
-        self.scanner = ledges.Scanner(detect=lambda img, masks, screen: ledges.detect(img, masks, screen, raw=True))
+        self._self_rect = None
+        self.scanner = ledges.Scanner(detect=lambda img, masks, screen: ledges.detect(
+            img, masks, screen, raw=True, self_mask=self._self_rect))
         self.ledges, self.ledge_counter, self.ledge_next = [], 0, 0.0
         self.game, self.game_seen, self.game_manual, self.reactor, self.calm_before_game = None, now, False, None, None
         self.meeting, self.calm_before_meeting = meeting.Detector(), None
@@ -4048,10 +4050,13 @@ class Capri:
     def scan_masks(self):
         """Screen rectangles of her own windows, so she never sits on herself."""
         rects = []
+        self._self_rect = None
         for w in [self.root] + [c for c in self.root.winfo_children() if isinstance(c, tk.Toplevel)]:
             try:
                 if w.winfo_viewable():
                     rects.append((w.winfo_rootx(), w.winfo_rooty(), w.winfo_width(), w.winfo_height()))
+                    if w is self.root:
+                        self._self_rect = rects[-1]          # only behind HER can an edge be assumed to go on
             except tk.TclError:
                 pass
         return rects

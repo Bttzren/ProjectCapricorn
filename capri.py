@@ -8,6 +8,7 @@ Run:  python capri.py          Preview a Codex/Petdex sheet:  python capri.py --
 """
 import collections
 import json
+import platform
 import math
 import os
 import queue
@@ -51,6 +52,7 @@ import neon
 import notes
 import personality
 import presets
+import report
 import reactor
 import sfx
 import simon
@@ -236,6 +238,14 @@ def make_speaker():
         edge = voice.EdgeVoice(os.environ.get("CAPRI_EDGE_VOICE") or voice.DEFAULT_EDGE_VOICE,
                                os.path.join(data_dir(), "voice_cache"))
     return voice.Speaker(fish=fish, edge=edge, log=log)
+
+
+def importlib_ok(name):
+    try:
+        __import__(name)
+        return True
+    except Exception:
+        return False
 
 
 def detect_provider(key):
@@ -1590,7 +1600,7 @@ class ChatWindow:
                              "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
                              "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /tp  /dance  "
                              "/sleep  /calm  /watch  /look  /ailines  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /note  /notes  /remember  /facts  /feel  "
-                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /see  /size  /skin  /tiny  /intro  /express  /neon  /boot  /hear  /call  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
+                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /report  /see  /size  /skin  /tiny  /intro  /express  /neon  /boot  /hear  /call  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
@@ -2042,6 +2052,8 @@ class ChatWindow:
             else:
                 self.system_line(f"Tiny mode: {p.settings.get('tiny', 'auto')}   /tiny on | off | auto  (auto = just her "
                                  "face while you game or run a focus timer)")
+        elif cmd == "/report":
+            p.copy_report()
         elif cmd == "/skin":
             name = parts[1].lower() if len(parts) > 1 else ""
             if name and p.set_skin(name):
@@ -2936,6 +2948,7 @@ class Capri:
         self.canvas = tk.Canvas(self.root, width=self.Wd, height=self.Hd, highlightthickness=0, bd=0)
         self.canvas.pack()
         self.setup_transparency()
+        report.rotate(os.path.join(data_dir(), "capri.log"))         # keep the log from growing forever
         self.set_app_icon()
         install_wheel(self.root)
         self.win32 = Win32()
@@ -3812,7 +3825,95 @@ class Capri:
             self._tick()
         except Exception:
             log("tick error: " + traceback.format_exc())
+            self.tick_failed()
         self.root.after(TICK_MS, self.tick)
+
+    def tick_failed(self):
+        """Something broke inside her loop. Tell the user once in a while instead of only the log knowing."""
+        self.tick_errors = getattr(self, "tick_errors", 0) + 1
+        now = time.time()
+        if now - getattr(self, "tick_err_notice", 0.0) < 600:
+            return
+        self.tick_err_notice = now
+        try:
+            self.notify("Something glitched inside me. Type /report (or right-click me > Copy bug report) and "
+                        "paste it to Claude.", err=True, secs=9)
+        except Exception:
+            pass
+
+    def app_version(self):
+        """The git commit this copy came from (no git program needed), or 'unknown'."""
+        try:
+            g = os.path.join(app_dir(), ".git")
+            with open(os.path.join(g, "HEAD"), encoding="utf-8") as f:
+                head = f.read().strip()
+            if head.startswith("ref:"):
+                ref = head.split(None, 1)[1]
+                p = os.path.join(g, *ref.split("/"))
+                if os.path.isfile(p):
+                    with open(p, encoding="utf-8") as f:
+                        return ref.rsplit("/", 1)[-1] + " " + f.read().strip()[:10]
+                with open(os.path.join(g, "packed-refs"), encoding="utf-8") as f:
+                    for line in f:
+                        if line.strip().endswith(ref):
+                            return ref.rsplit("/", 1)[-1] + " " + line[:10]
+            return head[:10]
+        except OSError:
+            return "built exe" if getattr(sys, "frozen", False) else "unknown"
+
+    def bug_report(self):
+        try:
+            import PIL
+            pil = PIL.__version__
+        except Exception:
+            pil = "?"
+        key = read_api_key()
+        info = {
+            "version": self.app_version(),
+            "python": sys.version.split()[0] + (" (exe)" if getattr(sys, "frozen", False) else ""),
+            "system": platform.platform(),
+            "tk": self.root.tk.call("info", "patchlevel"),
+            "pillow": pil,
+            "numpy": "yes" if importlib_ok("numpy") else "no",
+            "screen": f"{self.sw}x{self.sh} dpi x{self.dpi:.2f}",
+            "skin": f"{self.settings.get('skin', 'capri')} ({getattr(self.art, 'kind', '?')}, {self.art.w}x{self.art.h})",
+            "size": f"{self.size_now:.2f}",
+            "ai": f"brain {BRAIN['mode']}, key {detect_provider(key) if key else 'none'}, local {LOCAL_AI.status()}",
+            "screen looks": f"{'local' if local_sees() else 'cloud' if can_look() else 'none'}, "
+                            f"every {self.look_every()} s",
+            "voice": f"{getattr(self.speaker, 'engine', '?')}, ears {'yes' if listen.installed() else 'no'}",
+            "windows helpers": "ok" if self.win32.ok else "off",
+            "state": f"{self.state} anim {self.anim} calm {self.calm} game {bool(self.game)}",
+            "errors this run": getattr(self, "tick_errors", 0),
+            "uptime": f"{int((time.time() - self.t_start) / 60)} min",
+        }
+        try:
+            with open(os.path.join(data_dir(), "capri.log"), encoding="utf-8", errors="replace") as f:
+                f.seek(0, 2)
+                f.seek(max(0, f.tell() - 200_000))
+                log_text = f.read()
+        except OSError:
+            log_text = ""
+        return report.build(info, self.settings, log_text)
+
+    def copy_report(self):
+        text = self.bug_report()
+        path = os.path.join(data_dir(), "capri-report.txt")
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+        except OSError:
+            path = ""
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            copied = True
+        except tk.TclError:
+            copied = False
+        msg = ("Bug report copied! Paste it to Claude. (No keys, notes or chats in it.)" if copied
+               else "Couldn't use the clipboard.") + (f" Also saved: {path}" if path else "")
+        self.notify(msg, secs=10)
+        return text
 
     def _tick(self):
         now = time.time()
@@ -5876,6 +5977,7 @@ class Capri:
         for key, label in (("auto", "Auto (while gaming or focusing)"), ("on", "Always"), ("off", "Never")):
             tm.add_command(label=("* " if cur_tiny == key else "   ") + label, command=lambda k=key: self.set_tiny(k))
         m.add_cascade(label="Tiny mode (just her face)", menu=tm)
+        m.add_command(label="Copy bug report", command=self.copy_report)
         m.add_command(label=f"Calm mode: {'on' if self.calm else 'off'}", command=self.toggle_calm)
         m.add_command(label=f"Check-ins: {'on' if self.checkins else 'off'}", command=self.toggle_checkins)
         if self.win32.ok:

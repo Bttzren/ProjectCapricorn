@@ -82,6 +82,11 @@ EXPRESSIONS (Settings > Size & look > "Act out how she feels", on by default)
   CUT-INS: for big moments only (laughing, hyped, shocked) an anime-style panel slides across her for about a
     second, at most once every 5 minutes. Settings > Size & look to turn off.
 
+SOMETHING BROKE? /report  (or right-click her > Copy bug report)
+  Copies a bug report to your clipboard (and saves capri-report.txt next to capri.log): versions, which
+  features are on, and the recent errors. It never contains your keys, notes, memory, chats or window titles.
+  Paste it to whoever is fixing her. If something breaks inside her she tells you (at most every 10 minutes).
+
 LOCAL AI THAT CAN SEE (/getbrain see  - free, private, no key)
   /getbrain see       Qwen 2.5 VL 3B: looks at your screen and reads text on it well. About 3 GB, wants ~6 GB
                       free RAM. It also chats, so it replaces the text-only local brain (one program runs).

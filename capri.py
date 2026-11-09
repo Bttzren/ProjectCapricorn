@@ -3401,7 +3401,7 @@ class Capri:
         if self.state in ("walk", "curious"):
             self.go("perch" if self.surf else "idle", secs + 0.5)
         self.expr = (name, now, now + secs)
-        if (name in expression.CUTINS and self.settings.get("cutins", True)
+        if (name in expression.CUTINS and self.settings.get("cutins", True) and not self.tiny_on()
                 and (forced or now - self.last_cutin >= expression.CUTIN_GAP)):
             self.cutin, self.last_cutin = (expression.CUTINS[name], now), now
         icon = expression.EMOTIONS[name][2]

@@ -16,6 +16,32 @@ r.after(200000, r.destroy); r.mainloop()
 time.sleep(1.5)
 p = capri.Capri(); p.boot = None; p.cancel_intro(); p.rng.seed(int(os.environ.get("SOAK_SEED", "7"))); random.seed(int(os.environ.get("SOAK_SEED", "7")))
 p.enable_ledges()
+# modes the user will hit: /see on with a fake vision AI, focus timer (tiny), game mode, meeting quiet
+import ledges, meeting
+from PIL import Image
+capri.read_api_key = lambda: "sk-ant-x"
+looks_while_calm = []
+def fake_look(system, mt, b64, q, n=120, model=None, room=1, **k):
+    return "DOING: reading something SAY: Interesting."           # (the game spotter may look while calm: by design)
+capri.vision_ask = fake_look
+ledges_capture = ledges.capture
+frame = [0]
+def cap():
+    frame[0] += 1
+    return Image.new("RGB", (800, 450), ((frame[0] * 50) % 255, 40, 40)) if frame[0] % 3 else ledges_capture()
+ledges.capture = cap
+p.see(True)
+orig_glance = p.glance
+def glance_watch(cat=None, periodic=False):
+    started = orig_glance(cat, periodic)
+    if started and (p.calm or p.game): looks_while_calm.append(p.state)    # glances must not start while quiet
+    return started
+p.glance = glance_watch
+p.settings["vision_interval"] = 2
+mic = [[]]
+meeting.read_mic_entries = lambda: mic[0]
+cutin_in_tiny = []
+mode_log = []
 SECS = float(os.environ.get("SOAK_SECS", "40"))   # SOAK_SECS=300 for a long run
 wa = p.work_area(); states = {}; problems = []; floating_since = None; last_state = None; transitions = 0
 t0 = time.time()
@@ -26,12 +52,23 @@ while time.time() - t0 < SECS:
     except Exception as exc:
         problems.append(f"tick raised {type(exc).__name__}: {exc}")
     now = time.time()
+    if p.tiny_on() and p.cutin is not None: cutin_in_tiny.append(p.state)
     # speed up her life: shorten whatever she's doing so many behaviours happen in the soak window
     if p.state in ("idle", "perch", "lounge", "sleep", "curious") and p.state_dur and now - p.state_t0 > 3:
         p.state_dur = min(p.state_dur, now - p.state_t0)
     if random.random() < 0.004: p.react("happy")
     if random.random() < 0.003: p.express(random.choice(list(capri.expression.EMOTIONS)), forced=True)
     if random.random() < 0.002: p.sit_somewhere(quiet=True)
+    r = random.random()
+    if r < 0.0015:
+        if p.timer_end: p.timer_end = p.timer_mode = None; mode_log.append("focus off")
+        else: p.start_focus(25); mode_log.append("focus on")
+    elif r < 0.003:
+        if p.game: p.end_game(quiet=True); mode_log.append("game off")
+        else: p.start_game("valorant", manual=True); mode_log.append("game on")
+    elif r < 0.0045:
+        mic[0] = [] if mic[0] else [(r"C:#Discord#Discord.exe", 5, 0)]; mode_log.append("call " + ("on" if mic[0] else "off"))
+    p.meeting.grace = 2.0; p.meeting_tick(now)
     s = p.state; states[s] = states.get(s, 0) + 1
     if s != last_state: transitions += 1; last_state = s
     if not (wa[0] - 200 <= p.fx <= wa[2] + 200 and wa[1] - 50 <= p.fy <= wa[3] + 5):
@@ -49,6 +86,9 @@ while time.time() - t0 < SECS:
 other.kill()
 print("states seen:", sorted(states, key=lambda k: -states[k]))
 print("state changes:", transitions, "| tick errors:", getattr(p, "tick_errors", 0))
+if looks_while_calm: problems.append(f"{len(looks_while_calm)} glances started while calm/gaming")
+if cutin_in_tiny: problems.append(f"cut-in shown in tiny mode {len(cutin_in_tiny)}x")
+print("modes toggled:", len(mode_log), sorted(set(mode_log)))
 uniq = sorted(set(problems))
 print("problems:", len(problems), uniq[:8])
 print("ok")

@@ -8,6 +8,7 @@ Run:  python capri.py          Preview a Codex/Petdex sheet:  python capri.py --
 """
 import collections
 import json
+import platform
 import math
 import os
 import queue
@@ -51,6 +52,7 @@ import neon
 import notes
 import personality
 import presets
+import report
 import reactor
 import sfx
 import simon
@@ -175,7 +177,20 @@ def enable_dpi_awareness():
 
 
 # ------------------------------------------------------------------ chat backends
-def read_api_key():
+_KEY_CACHE = [0.0, ""]
+
+
+def read_api_key(max_age=2.0):
+    """The AI key (env var, or api_key.txt). Cached for a moment: it's asked many times a second and each
+    miss is a file open (which antivirus may scan on Windows). save_api_key() refreshes it at once."""
+    if time.time() - _KEY_CACHE[0] < max_age:
+        return _KEY_CACHE[1]
+    _KEY_CACHE[1] = _read_api_key()
+    _KEY_CACHE[0] = time.time()
+    return _KEY_CACHE[1]
+
+
+def _read_api_key():
     for var in ("ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"):
         k = os.environ.get(var, "").strip()
         if k:
@@ -194,6 +209,7 @@ def read_api_key():
 def save_api_key(key):
     with open(os.path.join(data_dir(), "api_key.txt"), "w", encoding="utf-8") as f:
         f.write(key.strip() + "\n")
+    _KEY_CACHE[0] = 0.0                                  # pick it up immediately
 
 
 def read_fish_key():
@@ -236,6 +252,14 @@ def make_speaker():
         edge = voice.EdgeVoice(os.environ.get("CAPRI_EDGE_VOICE") or voice.DEFAULT_EDGE_VOICE,
                                os.path.join(data_dir(), "voice_cache"))
     return voice.Speaker(fish=fish, edge=edge, log=log)
+
+
+def importlib_ok(name):
+    try:
+        __import__(name)
+        return True
+    except Exception:
+        return False
 
 
 def detect_provider(key):
@@ -1590,7 +1614,7 @@ class ChatWindow:
                              "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
                              "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /tp  /dance  "
                              "/sleep  /calm  /watch  /look  /ailines  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /note  /notes  /remember  /facts  /feel  "
-                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /see  /size  /skin  /tiny  /intro  /express  /neon  /boot  /hear  /call  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
+                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /report  /see  /size  /skin  /tiny  /intro  /express  /neon  /boot  /hear  /call  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
@@ -2042,6 +2066,8 @@ class ChatWindow:
             else:
                 self.system_line(f"Tiny mode: {p.settings.get('tiny', 'auto')}   /tiny on | off | auto  (auto = just her "
                                  "face while you game or run a focus timer)")
+        elif cmd == "/report":
+            p.copy_report()
         elif cmd == "/skin":
             name = parts[1].lower() if len(parts) > 1 else ""
             if name and p.set_skin(name):
@@ -2188,6 +2214,9 @@ class SettingsWindow:
         tk.Label(col, text="CAPRI//CONFIG", bg=C_PANEL, fg=self.acc, font=(f, 14, "bold")).pack(anchor="w")
         tk.Label(col, text="SYSTEM PERMISSIONS  ·  VOICE  ·  AI", bg=C_PANEL, fg=ui.DIM, font=(f, 7)).pack(anchor="w")
         ui.rule(w, 8, ui.blend(self.acc, C_BG, 0.5), C_BG, notch=False).pack(fill="x")
+        self.jumpbar = tk.Frame(w, bg=C_BG)                 # filled in once the sections exist
+        self.jumpbar.pack(fill="x", padx=8, pady=(0, 2))
+        self.sections = []
         foot = tk.Frame(w, bg=C_PANEL)
         foot.pack(side="bottom", fill="x")
         ui.rule(foot, 8, self.acc, C_PANEL, notch=False).pack(fill="x")
@@ -2221,6 +2250,7 @@ class SettingsWindow:
         self.build_local(pad)
         self.build_behavior(pad)
         self.build_keys(pad)
+        self.build_jumpbar(body)
         w.update_idletasks()
         h = min(700, pet.sh - 80)
         w.geometry(f"460x{h}+{max(0, pet.sw // 2 - 230)}+{max(0, pet.sh // 2 - h // 2)}")
@@ -2228,10 +2258,33 @@ class SettingsWindow:
         w.focus_force()                  # so keys (and, on Windows, the wheel) go here, not to the pet
 
     # ---- small widgets
+    JUMP_NAMES = {"QUICK SETUP": "SETUP", "SIZE & LOOK": "LOOK", "LOCAL AI & VOICE INPUT": "LOCAL AI",
+                  "AI CHAT KEY": "KEY"}
+
+    def build_jumpbar(self, body):
+        """A row of section names at the top: one click scrolls there (Settings is long)."""
+        def jump(frame):
+            self.win.update_idletasks()
+            total = max(1, body.winfo_height())
+            y = frame.winfo_rooty() - body.winfo_rooty() - 6
+            self.canvas.yview_moveto(max(0.0, y / float(total)))
+        for i, (name, frame) in enumerate(self.sections):
+            b = tk.Label(self.jumpbar, text=name, bg=C_PANEL2, fg=C_TEXT, font=(self.fam, 7, "bold"), padx=5, pady=2,
+                         cursor="hand2")
+            b.grid(row=i // 5, column=i % 5, padx=2, pady=2, sticky="we")
+            b.bind("<Button-1>", lambda e, f=frame: jump(f))
+            b.bind("<Enter>", lambda e, x=b: x.config(fg=self.acc))
+            b.bind("<Leave>", lambda e, x=b: x.config(fg=C_TEXT))
+        for c in range(5):
+            self.jumpbar.grid_columnconfigure(c, weight=1)
+
     def section(self, parent, title, note=""):
         head, _, sub = title.partition(":")
         outer = tk.Frame(parent, bg=ui.blend(self.acc, C_BG, 0.78))
         outer.pack(fill="x", pady=(10, 0))
+        if hasattr(self, "sections"):
+            h = head.strip().upper()
+            self.sections.append((self.JUMP_NAMES.get(h, h.split()[0] if h else "?"), outer))
         box = tk.Frame(outer, bg=C_PANEL)
         box.pack(fill="x", padx=1, pady=1)
         bar = tk.Frame(box, bg=C_PANEL)
@@ -2936,6 +2989,7 @@ class Capri:
         self.canvas = tk.Canvas(self.root, width=self.Wd, height=self.Hd, highlightthickness=0, bd=0)
         self.canvas.pack()
         self.setup_transparency()
+        report.rotate(os.path.join(data_dir(), "capri.log"))         # keep the log from growing forever
         self.set_app_icon()
         install_wheel(self.root)
         self.win32 = Win32()
@@ -2985,7 +3039,8 @@ class Capri:
         self.battery_state, self.next_battery, self.next_radio = {}, now + 20, now + 300
         self.peek_side, self.peek_said, self.breach_win, self.next_hungry = 0, False, None, now + 3600
         self.simon_win, self.last_watch, self.next_memory_cb = None, now, now + 7200
-        self.scanner, self.ledges, self.ledge_counter, self.ledge_next = ledges.Scanner(), [], 0, 0.0
+        self.scanner = ledges.Scanner(detect=lambda img, masks, screen: ledges.detect(img, masks, screen, raw=True))
+        self.ledges, self.ledge_counter, self.ledge_next = [], 0, 0.0
         self.game, self.game_seen, self.game_manual, self.reactor, self.calm_before_game = None, now, False, None, None
         self.meeting, self.calm_before_meeting = meeting.Detector(), None
         self.persona_text = read_first(["persona.txt"]) or DEFAULT_PERSONA
@@ -3812,7 +3867,95 @@ class Capri:
             self._tick()
         except Exception:
             log("tick error: " + traceback.format_exc())
+            self.tick_failed()
         self.root.after(TICK_MS, self.tick)
+
+    def tick_failed(self):
+        """Something broke inside her loop. Tell the user once in a while instead of only the log knowing."""
+        self.tick_errors = getattr(self, "tick_errors", 0) + 1
+        now = time.time()
+        if now - getattr(self, "tick_err_notice", 0.0) < 600:
+            return
+        self.tick_err_notice = now
+        try:
+            self.notify("Something glitched inside me. Type /report (or right-click me > Copy bug report) and "
+                        "paste it to Claude.", err=True, secs=9)
+        except Exception:
+            pass
+
+    def app_version(self):
+        """The git commit this copy came from (no git program needed), or 'unknown'."""
+        try:
+            g = os.path.join(app_dir(), ".git")
+            with open(os.path.join(g, "HEAD"), encoding="utf-8") as f:
+                head = f.read().strip()
+            if head.startswith("ref:"):
+                ref = head.split(None, 1)[1]
+                p = os.path.join(g, *ref.split("/"))
+                if os.path.isfile(p):
+                    with open(p, encoding="utf-8") as f:
+                        return ref.rsplit("/", 1)[-1] + " " + f.read().strip()[:10]
+                with open(os.path.join(g, "packed-refs"), encoding="utf-8") as f:
+                    for line in f:
+                        if line.strip().endswith(ref):
+                            return ref.rsplit("/", 1)[-1] + " " + line[:10]
+            return head[:10]
+        except OSError:
+            return "built exe" if getattr(sys, "frozen", False) else "unknown"
+
+    def bug_report(self):
+        try:
+            import PIL
+            pil = PIL.__version__
+        except Exception:
+            pil = "?"
+        key = read_api_key()
+        info = {
+            "version": self.app_version(),
+            "python": sys.version.split()[0] + (" (exe)" if getattr(sys, "frozen", False) else ""),
+            "system": platform.platform(),
+            "tk": self.root.tk.call("info", "patchlevel"),
+            "pillow": pil,
+            "numpy": "yes" if importlib_ok("numpy") else "no",
+            "screen": f"{self.sw}x{self.sh} dpi x{self.dpi:.2f}",
+            "skin": f"{self.settings.get('skin', 'capri')} ({getattr(self.art, 'kind', '?')}, {self.art.w}x{self.art.h})",
+            "size": f"{self.size_now:.2f}",
+            "ai": f"brain {BRAIN['mode']}, key {detect_provider(key) if key else 'none'}, local {LOCAL_AI.status()}",
+            "screen looks": f"{'local' if local_sees() else 'cloud' if can_look() else 'none'}, "
+                            f"every {self.look_every()} s",
+            "voice": f"{getattr(self.speaker, 'engine', '?')}, ears {'yes' if listen.installed() else 'no'}",
+            "windows helpers": "ok" if self.win32.ok else "off",
+            "state": f"{self.state} anim {self.anim} calm {self.calm} game {bool(self.game)}",
+            "errors this run": getattr(self, "tick_errors", 0),
+            "uptime": f"{int((time.time() - self.t_start) / 60)} min",
+        }
+        try:
+            with open(os.path.join(data_dir(), "capri.log"), encoding="utf-8", errors="replace") as f:
+                f.seek(0, 2)
+                f.seek(max(0, f.tell() - 200_000))
+                log_text = f.read()
+        except OSError:
+            log_text = ""
+        return report.build(info, self.settings, log_text)
+
+    def copy_report(self):
+        text = self.bug_report()
+        path = os.path.join(data_dir(), "capri-report.txt")
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+        except OSError:
+            path = ""
+        try:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            copied = True
+        except tk.TclError:
+            copied = False
+        msg = ("Bug report copied! Paste it to Claude. (No keys, notes or chats in it.)" if copied
+               else "Couldn't use the clipboard.") + (f" Also saved: {path}" if path else "")
+        self.notify(msg, secs=10)
+        return text
 
     def _tick(self):
         now = time.time()
@@ -3924,7 +4067,10 @@ class Capri:
             return
         result = self.scanner.take()
         if result is not None:
-            self.ledges, self.ledge_counter = ledges.track(self.ledges, result, self.ledge_counter)
+            prev = self.ledges
+            new, self.ledge_counter = ledges.track(prev, result, self.ledge_counter)
+            seat = self.surf[0] if self.surf and str(self.surf[0]).startswith("L") else None
+            self.ledges = ledges.hold(prev, new, self.scanner.runs, seat)    # her body hides part of her seat
         if self.scanner.error:
             err, self.scanner.error = self.scanner.error, ""
             self.settings["ledges"] = False
@@ -3978,6 +4124,8 @@ class Capri:
                 self.say("Turn on 'Screen ledges' in Settings first.", 5, speak=None)
             return
         spots = [d for d in self.ledges if d["r"] - d["l"] > 160]
+        tops = [d for d in spots if d.get("kind") == "box"]
+        spots = tops or spots                                # window tops first, plain edges only if that's all
         if not spots or self.state in ("tp_out", "tp_in", "drag"):
             if not quiet:
                 self.say("I don't see anywhere to sit yet. Looking...", 4, speak=None)
@@ -5433,7 +5581,7 @@ class Capri:
         return True
 
     def glance_tick(self, now):
-        if self.glance_on() and now - self.glance_gate.last >= self.look_every():
+        if now - self.glance_gate.last >= self.look_every() and self.glance_on():
             self.glance(self.ctx, periodic=True)
 
     def drain_glances(self, now):
@@ -5876,6 +6024,7 @@ class Capri:
         for key, label in (("auto", "Auto (while gaming or focusing)"), ("on", "Always"), ("off", "Never")):
             tm.add_command(label=("* " if cur_tiny == key else "   ") + label, command=lambda k=key: self.set_tiny(k))
         m.add_cascade(label="Tiny mode (just her face)", menu=tm)
+        m.add_command(label="Copy bug report", command=self.copy_report)
         m.add_command(label=f"Calm mode: {'on' if self.calm else 'off'}", command=self.toggle_calm)
         m.add_command(label=f"Check-ins: {'on' if self.checkins else 'off'}", command=self.toggle_checkins)
         if self.win32.ok:

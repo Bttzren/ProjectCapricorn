@@ -81,8 +81,10 @@ def _edge_map(small, dx, dy):
     return diff.point(lambda v: 255 if v > TH else 0)
 
 
-def detect(image, masks=(), screen=None):
+def detect(image, masks=(), screen=None, raw=False):
     """Ledges found in `image`: [{'l', 't', 'r', 'kind'}] in screen coordinates ('box' or 'edge').
+    raw=True returns (ledges, every horizontal edge found) - the second list lets a ledge she's sitting on
+    survive while her own body hides its corner.
 
     masks: [(x, y, w, h)] screen rectangles to ignore (Capri's own windows).
     screen: (width, height) of the screen in the coordinates you want back (defaults to the image size).
@@ -95,11 +97,24 @@ def detect(image, masks=(), screen=None):
     w, h = small.size
     sc = w / float(sw)                                    # small pixels per screen pixel
     hmap, vmap = _edge_map(small, 0, 1), _edge_map(small, 1, 0)
+    mboxes = []
     for m in masks:                                       # forget edges inside her own windows
         x, y, mw, mh = m
         box = [int((x - 4) * sc), int((y - 4) * sc), int((x + mw + 4) * sc) + 1, int((y + mh + 4) * sc) + 1]
+        mboxes.append(box)
         for mp in (hmap, vmap):
             ImageDraw.Draw(mp).rectangle(box, fill=0)
+
+    def behind_her(x, y):
+        """An edge that stops exactly where her own window starts may well go on behind her: returns where it
+        would come out on her other side (or None)."""
+        for b in mboxes:
+            if b[1] <= y <= b[3]:
+                if abs(x - b[0]) <= 3:
+                    return b[2]
+                if abs(x - b[2]) <= 3:
+                    return b[0]
+        return None
     hmap, vmap = hmap.filter(ImageFilter.MaxFilter(3)), vmap.filter(ImageFilter.MaxFilter(3))
     hgroups = _group(_runs(hmap, max(8, int(MIN_W * sc))))
     minv = max(6, int(MIN_V * sc))
@@ -112,8 +127,15 @@ def detect(image, masks=(), screen=None):
     found = []
     for g in hgroups:
         top, xl, xr = g["y0"], g["x0"], g["x1"]
-        has = [any(abs(t - top) <= 4 and b - top >= minv for t, b in side(x)) for x in (xl, xr)]
+        hidden_l, hidden_r = behind_her(xl, top), behind_her(xr, top)
+        has = [hid is not None or any(abs(t - top) <= 4 and b - top >= minv for t, b in side(x))
+               for x, hid in ((xl, hidden_l), (xr, hidden_r))]
+        if hidden_l is not None and hidden_l < xl:      # it continues behind her: count that part too, so the
+            xl = hidden_l                               # spot she's sitting on is still part of the ledge
+        if hidden_r is not None and hidden_r > xr:
+            xr = hidden_r
         found.append({"l": xl / sc, "t": top / sc, "r": xr / sc, "kind": "box" if all(has) else "edge"})
+    all_runs = list(found)
     keep = [f for f in found if f["kind"] == "box" or (f["r"] - f["l"]) >= 0.4 * sw]
     out = []
     for f in sorted(keep, key=lambda d: (d["kind"] != "box", -(d["r"] - d["l"]))):
@@ -125,28 +147,51 @@ def detect(image, masks=(), screen=None):
                 break
         if not dup and f["t"] > 20:
             out.append(f)
-    return out[:MAX_LEDGES]
+    return (out[:MAX_LEDGES], all_runs) if raw else out[:MAX_LEDGES]
+
+
+def hold(prev, new, runs, keep_id, min_visible=MIN_W * 0.5):
+    """The ledge she's sitting on (keep_id) vanished from this scan? Her own window hides part of it (it's
+    masked out), which can make it stop looking like a box. Keep it if some of that edge is still visibly
+    there (any horizontal run at the same height overlapping it); if the window closed or moved, it isn't."""
+    if not keep_id or any(d.get("id") == keep_id for d in new):
+        return new
+    old = next((d for d in prev if d.get("id") == keep_id), None)
+    if old is None:
+        return new
+    for r in runs or ():
+        ov = min(r["r"], old["r"]) - max(r["l"], old["l"])
+        if abs(r["t"] - old["t"]) <= 6 and ov >= min_visible:
+            return new + [old]
+    return new
 
 
 def track(prev, new, counter):
-    """Give detections stable ids so she can follow a ledge that scrolls. Returns (ledges, counter)."""
-    used, out = set(), []
-    for n in sorted(new, key=lambda d: -(d["r"] - d["l"])):
-        best = None
-        for p in prev:
-            if p["id"] in used:
-                continue
+    """Give detections stable ids so she can follow a ledge that scrolls or a window that moves. Returns
+    (ledges, counter). Pairs are chosen globally, closest first, and a box top prefers a box top (after a
+    window moves, its title bar's lower line can be closer than its new top)."""
+    pairs = []
+    for i, n in enumerate(new):
+        for j, p in enumerate(prev):
             ov = min(p["r"], n["r"]) - max(p["l"], n["l"])
             narrow = min(p["r"] - p["l"], n["r"] - n["l"])
             dy = abs(p["t"] - n["t"])
-            if narrow > 0 and ov >= 0.5 * narrow and dy <= 160 and (best is None or dy < best[0]):
-                best = (dy, p)
-        if best:
-            used.add(best[1]["id"])
-            out.append(dict(n, id=best[1]["id"]))
-        else:
+            if narrow > 0 and ov >= 0.5 * narrow and dy <= 160:
+                cost = dy + (0 if p.get("kind") == n.get("kind") else 40)
+                pairs.append((cost, i, j))
+    taken_new, taken_old, ids = set(), set(), {}
+    for cost, i, j in sorted(pairs):
+        if i in taken_new or j in taken_old:
+            continue
+        taken_new.add(i)
+        taken_old.add(j)
+        ids[i] = prev[j]["id"]
+    out = []
+    for i, n in sorted(enumerate(new), key=lambda kv: -(kv[1]["r"] - kv[1]["l"])):
+        if i not in ids:
             counter += 1
-            out.append(dict(n, id=f"L{counter}"))
+            ids[i] = f"L{counter}"
+        out.append(dict(n, id=ids[i]))
     return out, counter
 
 
@@ -155,7 +200,7 @@ class Scanner:
 
     def __init__(self, capture=capture, detect=detect, threaded=True):
         self.capture, self.detect, self.threaded = capture, detect, threaded
-        self.result, self.error, self._thread = None, "", None
+        self.result, self.error, self._thread, self.runs = None, "", None, None
 
     @property
     def busy(self):
@@ -177,7 +222,8 @@ class Scanner:
             if img is None:
                 self.error = "can't capture the screen here"
                 return
-            self.result = self.detect(img, masks, screen)
+            res = self.detect(img, masks, screen)
+            self.result, self.runs = res if isinstance(res, tuple) else (res, None)
             del img                                        # the screenshot is gone as soon as we're done
         except Exception as exc:
             self.error = type(exc).__name__

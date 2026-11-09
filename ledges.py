@@ -81,10 +81,12 @@ def _edge_map(small, dx, dy):
     return diff.point(lambda v: 255 if v > TH else 0)
 
 
-def detect(image, masks=(), screen=None, raw=False):
+def detect(image, masks=(), screen=None, raw=False, self_mask=None):
     """Ledges found in `image`: [{'l', 't', 'r', 'kind'}] in screen coordinates ('box' or 'edge').
     raw=True returns (ledges, every horizontal edge found) - the second list lets a ledge she's sitting on
     survive while her own body hides its corner.
+    self_mask: the rectangle of HER OWN window (one of masks). Only there may an edge be assumed to continue
+    behind it; behind her chat or Settings window it's unknown, so she must not pick a spot there.
 
     masks: [(x, y, w, h)] screen rectangles to ignore (Capri's own windows).
     screen: (width, height) of the screen in the coordinates you want back (defaults to the image size).
@@ -101,7 +103,8 @@ def detect(image, masks=(), screen=None, raw=False):
     for m in masks:                                       # forget edges inside her own windows
         x, y, mw, mh = m
         box = [int((x - 4) * sc), int((y - 4) * sc), int((x + mw + 4) * sc) + 1, int((y + mh + 4) * sc) + 1]
-        mboxes.append(box)
+        if self_mask is not None and tuple(m) == tuple(self_mask):
+            mboxes.append(box)
         for mp in (hmap, vmap):
             ImageDraw.Draw(mp).rectangle(box, fill=0)
 

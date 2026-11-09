@@ -249,4 +249,7 @@ User decisions: **new skin is the default**, mini face = **chat avatar + tiny mo
   3. `track()` pairs old/new ledges globally, closest first, box<->edge penalty (moved windows keep ids).
   Known flake: ~1 in 9 runs she drops to the floor when the window moves (harmless).
 - Smoke 42 (/report scrub), 43 (jump bar), 44 (sit / ride a moving window / drop when closed), 45 (soak:
-  invariants every frame; SOAK_SECS / SOAK_SEED). 5 seeds overnight: 0 problems.
+  invariants every frame; also toggles focus/tiny, game mode, meeting quiet, /see with a fake vision AI;
+  SOAK_SECS / SOAK_SEED), 46 (/see every 1 with a 3 s vision AI: one look at a time, chat still answers).
+- Later fixes: the behind-her edge rule applies only to the pet window (not chat/Settings, `self_mask`);
+  cut-ins are never set in tiny mode. `Win32.foreground()` already skips her own process (checked).

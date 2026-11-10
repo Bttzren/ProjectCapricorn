@@ -94,7 +94,7 @@ def parse_match(text):
         for sep, name in (("-", "rounds"), ("/", "kd"), (":", "rounds")):
             if sep in tok:
                 a, _, b = tok.partition(sep)
-                if a.isdigit() and b.isdigit() and int(a) < 1000 and int(b) < 1000:
+                if (a + b).isascii() and a.isdigit() and b.isdigit() and len(a) < 4 and len(b) < 4:
                     out[name] = (int(a), int(b))
                 break
     return out or None

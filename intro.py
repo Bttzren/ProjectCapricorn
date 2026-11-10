@@ -34,6 +34,12 @@ def at(t):
     return FRAMES[-1][0], _ease(u / EXIT)
 
 
+def zoom(width, limit=2880):
+    """Very wide screens (4K and up): frames are built at 1/zoom size and Tk enlarges them. A third of the work and
+    memory, and it looks the same from a chair."""
+    return max(1, -(-int(width) // limit))
+
+
 def size(screen_w, screen_h, art_w=1672, art_h=941):
     """Full screen: as big as the art can be inside the screen's work area without cropping her."""
     w, h = int(screen_w), int(screen_w * art_h / art_w)

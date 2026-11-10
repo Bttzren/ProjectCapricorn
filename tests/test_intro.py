@@ -34,6 +34,10 @@ class IntroTests(unittest.TestCase):
         self.assertAlmostEqual(w / h, 1672 / 941, places=1)
         self.assertGreaterEqual(I.size(100, 100)[0], 160)
 
+    def test_zoom_only_on_huge_screens(self):
+        self.assertEqual([I.zoom(w) for w in (1366, 1920, 2560, 2880)], [1, 1, 1, 1])
+        self.assertEqual([I.zoom(w) for w in (3440, 3840, 5120, 7680)], [2, 2, 2, 3])
+
 
 if __name__ == "__main__":
     unittest.main()

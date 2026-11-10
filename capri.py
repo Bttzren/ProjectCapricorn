@@ -32,6 +32,7 @@ import breach
 import brief
 import call as calls
 import clip
+import cmdargs
 import daylog
 import expression
 import fun
@@ -1618,12 +1619,19 @@ class ChatWindow:
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
-            mins = float(parts[1]) if len(parts) > 1 and parts[1].replace(".", "").isdigit() else FOCUS_MIN
-            p.start_focus(mins)
-            self.system_line(f"Focus timer started: {mins:g} min.")
-        elif cmd == "/remind" and len(parts) == 3 and parts[1].replace(".", "").isdigit():
-            p.add_reminder(float(parts[1]), parts[2])
-            self.system_line(f"Okay, I'll ping you in {float(parts[1]):g} min.")
+            mins = cmdargs.minutes(parts[1], hi=600) if len(parts) > 1 else FOCUS_MIN
+            if mins is None:
+                self.system_line("/focus 25   (minutes, up to 600)", err=True)
+            else:
+                p.start_focus(mins)
+                self.system_line(f"Focus timer started: {mins:g} min.")
+        elif cmd == "/remind":
+            mins = cmdargs.minutes(parts[1]) if len(parts) == 3 else None
+            if mins is None:
+                self.system_line("/remind 10 drink water   (minutes, then what to remind you about)", err=True)
+            else:
+                p.add_reminder(mins, parts[2])
+                self.system_line(f"Okay, I'll ping you in {mins:g} min.")
         elif cmd == "/name" and len(parts) >= 2:
             p.mind.user_name = " ".join(parts[1:])
             p.save_settings()
@@ -1672,8 +1680,8 @@ class ChatWindow:
                                  + f"   used today: {p.ai_budget.used_today()}   /ailines on | off")
         elif cmd in GAME_COMMANDS:
             kind, count = GAME_COMMANDS[cmd]
-            if cmd == "/kill" and len(parts) > 1 and parts[1].isdigit():
-                count = max(1, min(5, int(parts[1])))
+            if cmd == "/kill" and len(parts) > 1 and cmdargs.index(parts[1]) is not None:
+                count = max(1, min(5, cmdargs.index(parts[1])))
             p.game_event(kind, count)
             self.system_line(p.game.status())
         elif cmd == "/gg":
@@ -1766,8 +1774,8 @@ class ChatWindow:
                 p.save_settings()
                 self.system_line(f"Habit added: {name}. Check it off with /did <number>." if name
                                  else "Couldn't add that (empty, duplicate, or you have 8 already).", err=not name)
-            elif sub in ("rm", "remove", "del") and len(parts) > 2 and parts[2].isdigit():
-                name = p.habits.remove(int(parts[2]))
+            elif sub in ("rm", "remove", "del") and len(parts) > 2 and cmdargs.index(parts[2]) is not None:
+                name = p.habits.remove(cmdargs.index(parts[2]))
                 p.save_settings()
                 self.system_line(f"Removed: {name}" if name else "Which one? /habit shows the numbers.", err=not name)
             else:
@@ -1775,7 +1783,7 @@ class ChatWindow:
                     self.system_line(line)
         elif cmd == "/did":
             today = time.strftime("%Y-%m-%d")
-            ok, name = p.habits.check(int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0, today)
+            ok, name = p.habits.check((cmdargs.index(parts[1]) or 0) if len(parts) > 1 else 0, today)
             if ok:
                 p.save_settings()
                 self.system_line(f"{name}: done.")
@@ -1790,7 +1798,7 @@ class ChatWindow:
             self.system_line(f"Got it: {fact}" if fact else "Tell me something new: /remember I have a dog named Rex",
                              err=not fact)
         elif cmd == "/forget":
-            gone = p.memory.forget(int(parts[1])) if len(parts) > 1 and parts[1].isdigit() else None
+            gone = p.memory.forget(cmdargs.index(parts[1])) if len(parts) > 1 and cmdargs.index(parts[1]) is not None else None
             p.save_settings()
             self.system_line(f"Forgot: {gone}" if gone else "Which one? /facts shows the numbers.", err=not gone)
         elif cmd == "/facts":
@@ -1803,8 +1811,8 @@ class ChatWindow:
                              ("Already in your notes." if body.strip() else "What should I note? /note <text>"),
                              err=not saved)
         elif cmd == "/notes":
-            if len(parts) > 2 and parts[1].lower() in ("rm", "remove", "del") and parts[2].isdigit():
-                gone = p.notes.remove(int(parts[2]))
+            if len(parts) > 2 and parts[1].lower() in ("rm", "remove", "del") and cmdargs.index(parts[2]) is not None:
+                gone = p.notes.remove(cmdargs.index(parts[2]))
                 p.save_settings()
                 self.system_line(f"Deleted note: {gone}" if gone else "Which one? /notes shows the numbers.",
                                  err=not gone)
@@ -1813,11 +1821,12 @@ class ChatWindow:
                     self.system_line(line)
         elif cmd == "/feel":
             today = time.strftime("%Y-%m-%d")
-            if len(parts) > 1 and parts[1].isdigit() and 1 <= int(parts[1]) <= 5:
-                p.journal.add(today, int(parts[1]), text.split(None, 2)[2] if len(parts) > 2 else "")
+            score = cmdargs.index(parts[1]) if len(parts) > 1 else None
+            if score is not None and 1 <= score <= 5:
+                p.journal.add(today, score, text.split(None, 2)[2] if len(parts) > 2 else "")
                 p.save_settings()
                 p.mind.chatted(time.time())
-                self.system_line(p.journal.reply(int(parts[1]), p.rng))
+                self.system_line(p.journal.reply(score, p.rng))
             else:
                 self.system_line("/feel 1-5 [note]   for example: /feel 4 good day", err=True)
         elif cmd == "/journal":
@@ -1876,7 +1885,7 @@ class ChatWindow:
                 for line in p.todos.lines():
                     self.system_line(line)
         elif cmd == "/done":
-            done = p.todos.finish(int(parts[1])) if len(parts) > 1 and parts[1].isdigit() else None
+            done = p.todos.finish(cmdargs.index(parts[1])) if len(parts) > 1 and cmdargs.index(parts[1]) is not None else None
             if done:
                 self.system_line(f"Done: {done}")
                 p.react("happy")
@@ -6178,16 +6187,19 @@ class Capri:
         dirs = pet_asset_dirs("intro")
         if not dirs:
             return False
+        zoom = intro.zoom(W)                      # 4K and up: build smaller frames, Tk enlarges them
+        w, h = W // zoom, H // zoom
+        W, H = w * zoom, h * zoom
         it = {"loading": True, "pil": None, "err": None, "asked": time.time(), "greet": greet, "W": W, "H": H,
               "x": int((wa[0] + wa[2]) / 2 - W / 2), "yup": int(wa[3] - H), "bottom": wa[3], "stem": None,
-              "happy": False, "win": None}
+              "happy": False, "win": None, "zoom": zoom, "frames": {}}
 
         def build():
             try:
                 out = {}
                 for st in intro.STEMS:
                     im = Image.open(os.path.join(dirs[0], st + ".webp")).convert("RGBA")
-                    out[st] = fast_crisp(im.resize((W, H), Image.LANCZOS))
+                    out[st] = fast_crisp(im.resize((w, h), Image.LANCZOS))
                 it["pil"] = out
             except Exception:
                 it["err"] = traceback.format_exc()
@@ -6197,9 +6209,19 @@ class Capri:
         self.go("idle", intro.DURATION + 15)
         return True
 
+    def intro_photo(self, im, zoom=1):
+        """One intro frame as a Tk image (enlarged by Tk when it was built small for a huge screen)."""
+        ph = ImageTk.PhotoImage(im, master=self.root)
+        if zoom <= 1:
+            return ph
+        big = tk.PhotoImage(master=self.root)
+        self.root.tk.call(big, "copy", str(ph), "-zoom", zoom, zoom)
+        return big
+
     def show_intro(self, it):
         """Frames are ready: make the window and start the clock."""
-        frames = {st: ImageTk.PhotoImage(im, master=self.root) for st, im in it.pop("pil").items()}
+        frames = it["frames"]
+        it["pil"] = None
         win = tk.Toplevel(self.root)
         win.overrideredirect(True)
         win.attributes("-topmost", True)
@@ -6221,10 +6243,17 @@ class Capri:
         if not it:
             return
         if it["loading"]:
-            if it["err"] or now - it["asked"] > 8:                # broken art or a very slow PC: skip to the greeting
+            if it["err"] or now - it["asked"] > 10:               # broken art or a very slow PC: skip to the greeting
                 log("intro skipped: " + (it["err"] or "frames took too long")[-300:])
                 return self.finish_intro(skipped=True)
-            if it["pil"] is not None:
+            pil = it["pil"]
+            if pil:                                               # one big frame per tick: the app never freezes
+                st = next(iter(pil))
+                try:
+                    it["frames"][st] = self.intro_photo(pil.pop(st), it["zoom"])
+                except (tk.TclError, MemoryError) as exc:
+                    it["err"] = f"frame {st}: {exc}"
+            elif pil is not None:
                 self.show_intro(it)
             return
         r = intro.at(now - it["t0"])

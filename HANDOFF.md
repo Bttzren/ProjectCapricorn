@@ -287,5 +287,8 @@ User decisions: **new skin is the default**, mini face = **chat avatar + tiny mo
 - Settings: the text beside "LET HER SEE MY SCREEN" was clipped on both sides; it's now a wrapped line below.
   (Found by looking at a real screenshot: `ImageGrab.grab(bbox=...)` of the windows under Xvfb is worth doing
   after any UI change.)
+- Settings > AI: `ui.NeonSlider` (canvas; click/drag/arrow keys) replaces the stock `tk.Scale`, which was a dark
+  knob on a dark trough with a clipped label. Settings > Local AI has INSTALL ONE THAT SEES / FASTER buttons
+  (`install_brain("see" | "see-fast")`). Smoke 50 drives both.
 - Not a bug: under Xvfb her body looks shredded on the dark fallback window because the art is black-bodied;
   on Windows the window is transparent.

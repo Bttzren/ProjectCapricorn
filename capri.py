@@ -2497,12 +2497,19 @@ class SettingsWindow:
                  bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=345, justify="left").pack(
             anchor="w", padx=10, pady=(2, 4))
         self.interval_var = tk.IntVar(value=self.pet.look_every())
-        self.interval_lbl = tk.Label(box, text="", bg=C_PANEL, fg=C_DIM, font=(self.fam, 8))
-        self.interval_lbl.pack(anchor="w", padx=10)
-        tk.Scale(box, from_=vision.LOOK_MIN, to=vision.LOOK_MAX, orient="horizontal", variable=self.interval_var,
-                 command=lambda v: self.pick_interval(), showvalue=False, length=330, bg=C_PANEL, fg=C_TEXT,
-                 troughcolor=C_PANEL2, activebackground=self.acc, highlightthickness=0, bd=0, sliderlength=18).pack(
-            anchor="w", padx=10, pady=(0, 8))
+        self.interval_lbl = tk.Label(box, text="", bg=C_PANEL, fg=C_TEXT, font=(self.fam, 9, "bold"))
+        self.interval_lbl.pack(anchor="w", padx=10, pady=(4, 0))
+        self.interval_slider = ui.NeonSlider(box, vision.LOOK_MIN, vision.LOOK_MAX, self.interval_var,
+                                             command=lambda v: self.pick_interval(), length=340, bg=C_PANEL,
+                                             color=self.acc)
+        self.interval_slider.pack(anchor="w", padx=10)
+        ends = tk.Frame(box, bg=C_PANEL)
+        ends.pack(fill="x", padx=14)
+        tk.Label(ends, text=f"{vision.LOOK_MIN} s", bg=C_PANEL, fg=C_DIM, font=(self.fam, 7)).pack(side="left")
+        tk.Label(ends, text=f"{vision.LOOK_MAX} s", bg=C_PANEL, fg=C_DIM, font=(self.fam, 7)).pack(side="right")
+        tk.Label(box, text="Drag it, or type /see every 5. No daily limit. A screen that hasn't changed isn't "
+                           "sent again.", bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=345,
+                 justify="left").pack(anchor="w", padx=10, pady=(0, 8))
         self.pick_interval(save=False)
 
     def build_presets(self, parent):
@@ -2591,6 +2598,15 @@ class SettingsWindow:
                     "#26263a", (self.fam, 8), 8, 4).pack(side="left", padx=(0, 6))
         flat_button(row, "BIGGER (2.1 GB)", lambda: pet.install_brain("big"), C_PANEL2, C_TEXT, "#26263a",
                     (self.fam, 8), 8, 4).pack(side="left")
+        tk.Label(box, text="Or one that can SEE your screen (it chats too, and the screenshots never leave your "
+                           "computer):", bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=340,
+                 justify="left").pack(anchor="w", padx=10, pady=(2, 2))
+        row_see = tk.Frame(box, bg=C_PANEL)
+        row_see.pack(anchor="w", padx=10, pady=(0, 4))
+        flat_button(row_see, "INSTALL ONE THAT SEES (3 GB)", lambda: pet.install_brain("see"), C_PANEL2, C_GREEN,
+                    "#26263a", (self.fam, 8), 8, 4).pack(side="left", padx=(0, 6))
+        flat_button(row_see, "FASTER (2 GB)", lambda: pet.install_brain("see-fast"), C_PANEL2, C_TEXT, "#26263a",
+                    (self.fam, 8), 8, 4).pack(side="left")
         tk.Label(box, text="Voice input: " + ("installed. Ctrl+Alt+C, the MIC button or /talk."
                                               if listen.installed() else "not installed yet."),
                  bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=340, justify="left").pack(
@@ -2644,7 +2660,7 @@ class SettingsWindow:
 
     def pick_interval(self, save=True):
         secs = vision.look_secs(self.interval_var.get())
-        self.interval_lbl.config(text=f"Look every {secs} s (1-90). No daily limit; static screens aren't sent.")
+        self.interval_lbl.config(text=f"She looks at your screen every {secs} second{'' if secs == 1 else 's'}")
         if save and secs != self.pet.settings.get("vision_interval"):
             self.pet.settings["vision_interval"] = secs
             self.pet.save_settings()

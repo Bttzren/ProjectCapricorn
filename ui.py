@@ -151,3 +151,52 @@ class NeonRadio(_Toggle):
 
     def toggle(self):
         self.var.set(self.value)
+
+
+class NeonSlider(tk.Canvas):
+    """A flat slider you can actually see on a dark panel: a bright line up to a bright knob.
+    Click or drag anywhere on it; the arrow keys nudge it by one."""
+
+    def __init__(self, parent, from_, to, variable, command=None, length=330, bg=PANEL, color=None):
+        super().__init__(parent, width=length, height=24, bg=bg, highlightthickness=0, bd=0, cursor="hand2",
+                         takefocus=1)
+        self.lo, self.hi, self.var, self.command = int(from_), int(to), variable, command
+        self.length, self.pad, self.color = int(length), 9, color or acc()
+        self.bind("<Button-1>", self._drag)
+        self.bind("<B1-Motion>", self._drag)
+        self.bind("<Left>", lambda e: self.set(self.value() - 1))
+        self.bind("<Right>", lambda e: self.set(self.value() + 1))
+        self.draw()
+
+    def value(self):
+        try:
+            return min(self.hi, max(self.lo, int(self.var.get())))
+        except (tk.TclError, ValueError):
+            return self.lo
+
+    def value_at(self, x):
+        f = (x - self.pad) / float(self.length - 2 * self.pad)
+        return int(round(self.lo + min(1.0, max(0.0, f)) * (self.hi - self.lo)))
+
+    def x_of(self, v):
+        f = (v - self.lo) / float(max(1, self.hi - self.lo))
+        return self.pad + f * (self.length - 2 * self.pad)
+
+    def set(self, v):
+        v = min(self.hi, max(self.lo, int(v)))
+        changed = v != self.value()
+        self.var.set(v)
+        self.draw()
+        if changed and self.command:
+            self.command(v)
+
+    def _drag(self, e):
+        self.focus_set()
+        self.set(self.value_at(e.x))
+
+    def draw(self):
+        self.delete("all")
+        y, x = 12, self.x_of(self.value())
+        self.create_line(self.pad, y, self.length - self.pad, y, fill=LINE, width=3)
+        self.create_line(self.pad, y, x, y, fill=self.color, width=3)
+        self.create_rectangle(x - 5, y - 9, x + 5, y + 9, fill=self.color, outline=BLACK)

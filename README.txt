@@ -27,9 +27,12 @@ AWARENESS (Windows only)
   chatting, writing, games (extra excited about Cyberpunk 2077), social media (she'll nudge you if
   you scroll for 25 minutes), or chatting with another AI. She also notices when you've been away
   for 10+ minutes (she naps) and greets you when you're back.
-  PRIVACY: she only reads the TITLE of the front window and turns it into a one-word category.
-  The title is never stored, logged or sent anywhere. She never sees what you type or what's on
-  your screen. When you chat, only a short hint such as "coding" is added to the AI's instructions.
+  She goes by the program first, so a Discord channel called #valorant is chatting, a YouTube video
+  about Minecraft is watching, the Steam store is not "playing", and any game she knows (or any Unreal
+  Engine game) counts as a game even when its window title says nothing.
+  PRIVACY: she only reads the TITLE of the front window and the NAME OF ITS PROGRAM (like "discord")
+  and turns them into a one-word category. Neither is stored, logged or sent anywhere. She never sees
+  what you type or what's on your screen. When you chat, only a short hint such as "coding" is added to the AI's instructions.
   Turn it off any time: right-click > Awareness, or /aware off.
 
 SETTINGS & HANDS

@@ -27,7 +27,7 @@ def run(cmd, secs=8):
     while time.time() - t < secs:
         p._tick(); p.root.update(); time.sleep(0.02)
         if not p.updating and len(lines) >= 2: break
-    return list(lines)
+    return [part for ln in lines for part in ln.split("\n")]
 ok = True
 def check(name, cond, got):
     global ok

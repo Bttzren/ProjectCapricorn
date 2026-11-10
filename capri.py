@@ -517,6 +517,46 @@ class Win32:
         except Exception:
             return ""
 
+    def foreground_app(self):
+        """Program name of the front window, like 'discord' (file name only, no folders; used only to pick a
+        one-word category; never stored or logged). '' when it can't be read (some games protect themselves)."""
+        if not self.ok:
+            return ""
+        try:
+            ct, wt, u = self.ct, self.wt, self.u
+            hwnd = u.GetForegroundWindow()
+            if not hwnd:
+                return ""
+            pid = wt.DWORD()
+            u.GetWindowThreadProcessId(hwnd, ct.byref(pid))
+            if not pid.value or pid.value == os.getpid():
+                return ""
+            if pid.value == getattr(self, "_app_pid", None):
+                return self._app_name                           # same program as last time: no system calls
+            k = getattr(self, "_k32", None)
+            if k is None:
+                k = self._k32 = ct.WinDLL("kernel32", use_last_error=True)
+                k.OpenProcess.restype = wt.HANDLE
+                k.OpenProcess.argtypes = [wt.DWORD, wt.BOOL, wt.DWORD]
+                k.QueryFullProcessImageNameW.restype = wt.BOOL
+                k.QueryFullProcessImageNameW.argtypes = [wt.HANDLE, wt.DWORD, wt.LPWSTR, ct.POINTER(wt.DWORD)]
+                k.CloseHandle.restype = wt.BOOL
+                k.CloseHandle.argtypes = [wt.HANDLE]
+            name = ""
+            h = k.OpenProcess(0x1000, False, pid.value)         # PROCESS_QUERY_LIMITED_INFORMATION
+            if h:
+                try:
+                    buf = ct.create_unicode_buffer(1024)
+                    size = wt.DWORD(1024)
+                    if k.QueryFullProcessImageNameW(h, 0, buf, ct.byref(size)):
+                        name = awareness.app_key(buf.value)
+                finally:
+                    k.CloseHandle(h)
+            self._app_pid, self._app_name = pid.value, name
+            return name
+        except Exception:
+            return ""
+
     def hotkey(self, letter, on_press):
         """Global Ctrl+Alt+<letter>. on_press runs on a helper thread, so it must only queue something."""
         if not self.ok or not letter:
@@ -2488,8 +2528,9 @@ class SettingsWindow:
                     lambda: (pet.notify(pet.see(not seeing, parent=self.win), secs=10), self.reopen()),
                     C_GREEN if seeing else C_PANEL2, C_BLACK if seeing else C_TEXT, "#3dffa0",
                     (self.fam, 9, "bold"), 14, 6).pack(side="left")
-        tk.Label(row2, text="sit on boxes + glance at what\nyou're doing (click again: off)", bg=C_PANEL, fg=C_DIM,
-                 font=(self.fam, 7), justify="left").pack(side="left", padx=8)
+        tk.Label(box, text="She sits on boxes on your screen and glances at what you're doing. Click again to turn "
+                           "it off.", bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=345,
+                 justify="left").pack(anchor="w", padx=10, pady=(2, 2))
         tk.Label(box, text="Auto-lock / auto-pause when you walk away (Reflexes) are never part of a preset.",
                  bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=345, justify="left").pack(
             anchor="w", padx=10, pady=(0, 6))
@@ -2640,7 +2681,8 @@ class SettingsWindow:
         self.check(box, "Awareness: notice which app is in front, and when I'm away"
                         + ("" if self.pet.win32.ok else " (Windows only)"), "aware", True, self.pet.set_aware,
                    state="normal" if self.pet.win32.ok else "disabled")
-        tk.Label(box, text="Awareness only reads the title of the front window. It's never stored, logged or sent.",
+        tk.Label(box, text="Awareness only reads the front window's title and program name. Never stored, logged "
+                           "or sent.",
                  bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=345, justify="left").pack(anchor="w", padx=10,
                                                                                                    pady=(2, 8))
 
@@ -3071,6 +3113,7 @@ class Capri:
         self.agent_events = queue.Queue()
         self.brain_events, self.ears_events = queue.Queue(), queue.Queue()
         self.update_events, self.updating = queue.Queue(), False
+        self.played_at = 0.0
         self.heard_events, self.talk_requests = queue.Queue(), queue.Queue()
         self.brain_busy = self.ears_busy = self.listening = self.listen_stop = self.hotkey_on = False
         self.whisper = None
@@ -3250,7 +3293,7 @@ class Capri:
     def size_factor(self, now):
         if not self.auto_size:
             return 1.0
-        return sizing.auto_factor(gaming=bool(self.game), focusing=self.timer_mode == "focus" and bool(self.timer_end),
+        return sizing.auto_factor(gaming=self.in_game(), focusing=self.timer_mode == "focus" and bool(self.timer_end),
                                   sleeping=self.state == "sleep", excited=now < self.excited_until)
 
     def apply_size(self, force=False):
@@ -3274,7 +3317,12 @@ class Capri:
         mode = self.settings.get("tiny", "auto")
         if mode == "on":
             return True
-        return mode == "auto" and (bool(self.game) or (self.timer_mode == "focus" and bool(self.timer_end)))
+        return mode == "auto" and (self.in_game() or (self.timer_mode == "focus" and bool(self.timer_end)))
+
+    def in_game(self):
+        """A game session is on, or ANY game she recognises was in front in the last 90 s (so alt-tabbing to
+        Discord for a moment doesn't make her pop back to full size)."""
+        return bool(self.game) or time.time() - self.played_at < 90
 
     def set_tiny(self, mode):
         self.settings["tiny"] = mode
@@ -4444,8 +4492,7 @@ class Capri:
             if status == "updated":
                 self.react("happy")
             if self.chat and self.chat.alive():
-                for ln in lines:
-                    self.chat.system_line(ln, err=not good)
+                self.chat.system_line("\n".join(lines), err=not good)
 
     def install_ears(self):
         if listen.installed():
@@ -5774,9 +5821,11 @@ class Capri:
             self.save_settings()
             self.say("Heads up: I can see which app is in front (never what you type). Only a short hint like "
                      "'coding' goes to the AI when we chat. Right-click me > Awareness to turn it off.", 16)
-        title = self.win32.foreground_title()
-        cat = awareness.classify(title)                              # the title is not kept anywhere
-        self.game_tick(now, gamemode.detect_game(title), bool(title))
+        title, app = self.win32.foreground_title(), self.win32.foreground_app()
+        cat = awareness.classify(title, app)                         # title and program name are not kept anywhere
+        if cat in ("game", "cyberpunk"):
+            self.played_at = now
+        self.game_tick(now, gamemode.detect_game(title, app), bool(title))
         dt, self.last_watch = min(5.0, now - self.last_watch), now
         if self.settings.get("track_time", True) and idle < 60:      # only the category's minutes are saved
             self.daylog.add(time.strftime("%Y-%m-%d"), cat, dt)

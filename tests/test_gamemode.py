@@ -50,6 +50,18 @@ class GameDetectTests(unittest.TestCase):
         self.assertIsNone(G.detect_game(""))
         self.assertIsNone(G.detect_game(None))
 
+    def test_detect_game_uses_the_program_name(self):
+        self.assertEqual(G.detect_game("", "C:\\Riot Games\\VALORANT-Win64-Shipping.exe"), "valorant")
+        self.assertEqual(G.detect_game("Counter-Strike 2", "cs2.exe"), "cs2")
+        self.assertEqual(G.detect_game("whatever", "r5apex_dx12.exe"), "apex")
+        self.assertIsNone(G.detect_game("#valorant | Server - Discord", "Discord.exe"))      # chatting about it
+        self.assertIsNone(G.detect_game("#valorant | Server - Discord"))
+        self.assertIsNone(G.detect_game("Valorant", "chrome.exe"))                             # a tab
+        self.assertIsNone(G.detect_game("valorant", "explorer.exe"))                           # a folder
+        self.assertIsNone(G.detect_game("Palworld", "Palworld-Win64-Shipping.exe"))            # a game, not a supported one
+        for key in G.APP_GAMES.values():
+            self.assertIn(key, G.GAMES)
+
     def test_parse_match(self):
         self.assertEqual(G.parse_match("13-7 15/12"), {"rounds": (13, 7), "kd": (15, 12)})
         self.assertEqual(G.parse_match("13:11"), {"rounds": (13, 11)})

@@ -32,6 +32,7 @@ import breach
 import brief
 import call as calls
 import clip
+import cmdargs
 import daylog
 import expression
 import fun
@@ -59,6 +60,7 @@ import simon
 import sizing
 import speech
 import ui
+import updater
 import vision
 import voice
 import world
@@ -512,6 +514,46 @@ class Win32:
             buf = ct.create_unicode_buffer(n + 1)
             u.GetWindowTextW(hwnd, buf, n + 1)
             return buf.value
+        except Exception:
+            return ""
+
+    def foreground_app(self):
+        """Program name of the front window, like 'discord' (file name only, no folders; used only to pick a
+        one-word category; never stored or logged). '' when it can't be read (some games protect themselves)."""
+        if not self.ok:
+            return ""
+        try:
+            ct, wt, u = self.ct, self.wt, self.u
+            hwnd = u.GetForegroundWindow()
+            if not hwnd:
+                return ""
+            pid = wt.DWORD()
+            u.GetWindowThreadProcessId(hwnd, ct.byref(pid))
+            if not pid.value or pid.value == os.getpid():
+                return ""
+            if pid.value == getattr(self, "_app_pid", None):
+                return self._app_name                           # same program as last time: no system calls
+            k = getattr(self, "_k32", None)
+            if k is None:
+                k = self._k32 = ct.WinDLL("kernel32", use_last_error=True)
+                k.OpenProcess.restype = wt.HANDLE
+                k.OpenProcess.argtypes = [wt.DWORD, wt.BOOL, wt.DWORD]
+                k.QueryFullProcessImageNameW.restype = wt.BOOL
+                k.QueryFullProcessImageNameW.argtypes = [wt.HANDLE, wt.DWORD, wt.LPWSTR, ct.POINTER(wt.DWORD)]
+                k.CloseHandle.restype = wt.BOOL
+                k.CloseHandle.argtypes = [wt.HANDLE]
+            name = ""
+            h = k.OpenProcess(0x1000, False, pid.value)         # PROCESS_QUERY_LIMITED_INFORMATION
+            if h:
+                try:
+                    buf = ct.create_unicode_buffer(1024)
+                    size = wt.DWORD(1024)
+                    if k.QueryFullProcessImageNameW(h, 0, buf, ct.byref(size)):
+                        name = awareness.app_key(buf.value)
+                finally:
+                    k.CloseHandle(h)
+            self._app_pid, self._app_name = pid.value, name
+            return name
         except Exception:
             return ""
 
@@ -1614,16 +1656,23 @@ class ChatWindow:
                              "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
                              "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /tp  /dance  "
                              "/sleep  /calm  /watch  /look  /ailines  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /note  /notes  /remember  /facts  /feel  "
-                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /report  /see  /size  /skin  /tiny  /intro  /express  /neon  /boot  /hear  /call  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
+                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /report  /see  /size  /skin  /tiny  /intro  /express  /neon  /boot  /hear  /call  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /update  /clear")
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
-            mins = float(parts[1]) if len(parts) > 1 and parts[1].replace(".", "").isdigit() else FOCUS_MIN
-            p.start_focus(mins)
-            self.system_line(f"Focus timer started: {mins:g} min.")
-        elif cmd == "/remind" and len(parts) == 3 and parts[1].replace(".", "").isdigit():
-            p.add_reminder(float(parts[1]), parts[2])
-            self.system_line(f"Okay, I'll ping you in {float(parts[1]):g} min.")
+            mins = cmdargs.minutes(parts[1], hi=600) if len(parts) > 1 else FOCUS_MIN
+            if mins is None:
+                self.system_line("/focus 25   (minutes, up to 600)", err=True)
+            else:
+                p.start_focus(mins)
+                self.system_line(f"Focus timer started: {mins:g} min.")
+        elif cmd == "/remind":
+            mins = cmdargs.minutes(parts[1]) if len(parts) == 3 else None
+            if mins is None:
+                self.system_line("/remind 10 drink water   (minutes, then what to remind you about)", err=True)
+            else:
+                p.add_reminder(mins, parts[2])
+                self.system_line(f"Okay, I'll ping you in {mins:g} min.")
         elif cmd == "/name" and len(parts) >= 2:
             p.mind.user_name = " ".join(parts[1:])
             p.save_settings()
@@ -1672,8 +1721,8 @@ class ChatWindow:
                                  + f"   used today: {p.ai_budget.used_today()}   /ailines on | off")
         elif cmd in GAME_COMMANDS:
             kind, count = GAME_COMMANDS[cmd]
-            if cmd == "/kill" and len(parts) > 1 and parts[1].isdigit():
-                count = max(1, min(5, int(parts[1])))
+            if cmd == "/kill" and len(parts) > 1 and cmdargs.index(parts[1]) is not None:
+                count = max(1, min(5, cmdargs.index(parts[1])))
             p.game_event(kind, count)
             self.system_line(p.game.status())
         elif cmd == "/gg":
@@ -1766,8 +1815,8 @@ class ChatWindow:
                 p.save_settings()
                 self.system_line(f"Habit added: {name}. Check it off with /did <number>." if name
                                  else "Couldn't add that (empty, duplicate, or you have 8 already).", err=not name)
-            elif sub in ("rm", "remove", "del") and len(parts) > 2 and parts[2].isdigit():
-                name = p.habits.remove(int(parts[2]))
+            elif sub in ("rm", "remove", "del") and len(parts) > 2 and cmdargs.index(parts[2]) is not None:
+                name = p.habits.remove(cmdargs.index(parts[2]))
                 p.save_settings()
                 self.system_line(f"Removed: {name}" if name else "Which one? /habit shows the numbers.", err=not name)
             else:
@@ -1775,7 +1824,7 @@ class ChatWindow:
                     self.system_line(line)
         elif cmd == "/did":
             today = time.strftime("%Y-%m-%d")
-            ok, name = p.habits.check(int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0, today)
+            ok, name = p.habits.check((cmdargs.index(parts[1]) or 0) if len(parts) > 1 else 0, today)
             if ok:
                 p.save_settings()
                 self.system_line(f"{name}: done.")
@@ -1790,7 +1839,7 @@ class ChatWindow:
             self.system_line(f"Got it: {fact}" if fact else "Tell me something new: /remember I have a dog named Rex",
                              err=not fact)
         elif cmd == "/forget":
-            gone = p.memory.forget(int(parts[1])) if len(parts) > 1 and parts[1].isdigit() else None
+            gone = p.memory.forget(cmdargs.index(parts[1])) if len(parts) > 1 and cmdargs.index(parts[1]) is not None else None
             p.save_settings()
             self.system_line(f"Forgot: {gone}" if gone else "Which one? /facts shows the numbers.", err=not gone)
         elif cmd == "/facts":
@@ -1803,8 +1852,8 @@ class ChatWindow:
                              ("Already in your notes." if body.strip() else "What should I note? /note <text>"),
                              err=not saved)
         elif cmd == "/notes":
-            if len(parts) > 2 and parts[1].lower() in ("rm", "remove", "del") and parts[2].isdigit():
-                gone = p.notes.remove(int(parts[2]))
+            if len(parts) > 2 and parts[1].lower() in ("rm", "remove", "del") and cmdargs.index(parts[2]) is not None:
+                gone = p.notes.remove(cmdargs.index(parts[2]))
                 p.save_settings()
                 self.system_line(f"Deleted note: {gone}" if gone else "Which one? /notes shows the numbers.",
                                  err=not gone)
@@ -1813,11 +1862,12 @@ class ChatWindow:
                     self.system_line(line)
         elif cmd == "/feel":
             today = time.strftime("%Y-%m-%d")
-            if len(parts) > 1 and parts[1].isdigit() and 1 <= int(parts[1]) <= 5:
-                p.journal.add(today, int(parts[1]), text.split(None, 2)[2] if len(parts) > 2 else "")
+            score = cmdargs.index(parts[1]) if len(parts) > 1 else None
+            if score is not None and 1 <= score <= 5:
+                p.journal.add(today, score, text.split(None, 2)[2] if len(parts) > 2 else "")
                 p.save_settings()
                 p.mind.chatted(time.time())
-                self.system_line(p.journal.reply(int(parts[1]), p.rng))
+                self.system_line(p.journal.reply(score, p.rng))
             else:
                 self.system_line("/feel 1-5 [note]   for example: /feel 4 good day", err=True)
         elif cmd == "/journal":
@@ -1876,7 +1926,7 @@ class ChatWindow:
                 for line in p.todos.lines():
                     self.system_line(line)
         elif cmd == "/done":
-            done = p.todos.finish(int(parts[1])) if len(parts) > 1 and parts[1].isdigit() else None
+            done = p.todos.finish(cmdargs.index(parts[1])) if len(parts) > 1 and cmdargs.index(parts[1]) is not None else None
             if done:
                 self.system_line(f"Done: {done}")
                 p.react("happy")
@@ -2106,6 +2156,8 @@ class ChatWindow:
                                  + "   /wake on | off   (say 'Hey Capri ...' or 'Choom ...')")
         elif cmd == "/getears":
             p.install_ears()
+        elif cmd == "/update":
+            p.run_update(check=len(parts) > 1 and parts[1].lower() in ("check", "?", "status"))
         elif cmd == "/getbrain":
             arg = parts[1].lower() if len(parts) > 1 else "small"
             if arg == "remove":
@@ -2476,8 +2528,9 @@ class SettingsWindow:
                     lambda: (pet.notify(pet.see(not seeing, parent=self.win), secs=10), self.reopen()),
                     C_GREEN if seeing else C_PANEL2, C_BLACK if seeing else C_TEXT, "#3dffa0",
                     (self.fam, 9, "bold"), 14, 6).pack(side="left")
-        tk.Label(row2, text="sit on boxes + glance at what\nyou're doing (click again: off)", bg=C_PANEL, fg=C_DIM,
-                 font=(self.fam, 7), justify="left").pack(side="left", padx=8)
+        tk.Label(box, text="She sits on boxes on your screen and glances at what you're doing. Click again to turn "
+                           "it off.", bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=345,
+                 justify="left").pack(anchor="w", padx=10, pady=(2, 2))
         tk.Label(box, text="Auto-lock / auto-pause when you walk away (Reflexes) are never part of a preset.",
                  bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=345, justify="left").pack(
             anchor="w", padx=10, pady=(0, 6))
@@ -2628,7 +2681,8 @@ class SettingsWindow:
         self.check(box, "Awareness: notice which app is in front, and when I'm away"
                         + ("" if self.pet.win32.ok else " (Windows only)"), "aware", True, self.pet.set_aware,
                    state="normal" if self.pet.win32.ok else "disabled")
-        tk.Label(box, text="Awareness only reads the title of the front window. It's never stored, logged or sent.",
+        tk.Label(box, text="Awareness only reads the front window's title and program name. Never stored, logged "
+                           "or sent.",
                  bg=C_PANEL, fg=C_DIM, font=(self.fam, 8), wraplength=345, justify="left").pack(anchor="w", padx=10,
                                                                                                    pady=(2, 8))
 
@@ -3058,6 +3112,8 @@ class Capri:
         self.agent = None
         self.agent_events = queue.Queue()
         self.brain_events, self.ears_events = queue.Queue(), queue.Queue()
+        self.update_events, self.updating = queue.Queue(), False
+        self.played_at = 0.0
         self.heard_events, self.talk_requests = queue.Queue(), queue.Queue()
         self.brain_busy = self.ears_busy = self.listening = self.listen_stop = self.hotkey_on = False
         self.whisper = None
@@ -3237,7 +3293,7 @@ class Capri:
     def size_factor(self, now):
         if not self.auto_size:
             return 1.0
-        return sizing.auto_factor(gaming=bool(self.game), focusing=self.timer_mode == "focus" and bool(self.timer_end),
+        return sizing.auto_factor(gaming=self.in_game(), focusing=self.timer_mode == "focus" and bool(self.timer_end),
                                   sleeping=self.state == "sleep", excited=now < self.excited_until)
 
     def apply_size(self, force=False):
@@ -3261,7 +3317,12 @@ class Capri:
         mode = self.settings.get("tiny", "auto")
         if mode == "on":
             return True
-        return mode == "auto" and (bool(self.game) or (self.timer_mode == "focus" and bool(self.timer_end)))
+        return mode == "auto" and (self.in_game() or (self.timer_mode == "focus" and bool(self.timer_end)))
+
+    def in_game(self):
+        """A game session is on, or ANY game she recognises was in front in the last 90 s (so alt-tabbing to
+        Discord for a moment doesn't make her pop back to full size)."""
+        return bool(self.game) or time.time() - self.played_at < 90
 
     def set_tiny(self, mode):
         self.settings["tiny"] = mode
@@ -4367,6 +4428,71 @@ class Capri:
             except queue.Empty:
                 break
             self.start_listening()
+
+    def run_update(self, check=False):
+        """/update: fast-forward this copy with git, in a thread. Only ever started by the user. It never
+        overwrites files changed on this PC and never asks for a password. /update check only looks."""
+        import shutil
+        if getattr(sys, "frozen", False):
+            return self.notify(updater.MESSAGES["frozen"], err=True, secs=9)
+        if not updater.is_checkout(app_dir()):
+            return self.notify(updater.MESSAGES["not_git"], err=True, secs=10)
+        if not shutil.which("git"):
+            return self.notify(updater.MESSAGES["no_git"], err=True, secs=10)
+        if self.updating:
+            return self.notify("Already checking. Hang on.", err=True)
+        self.updating = True
+        self.notify("Checking for a newer version..." if check else "Getting the newest version...", secs=4)
+
+        def git(cmd, timeout):
+            import subprocess
+            return subprocess.run(cmd, cwd=app_dir(), env=updater.git_env(os.environ), capture_output=True, text=True,
+                                  timeout=timeout, stdin=subprocess.DEVNULL, encoding="utf-8", errors="replace",
+                                  creationflags=0x08000000 if sys.platform.startswith("win") else 0)
+
+        def work():
+            import subprocess
+            try:
+                if check:
+                    r = git(updater.FETCH, 90)
+                    if r.returncode != 0:
+                        return self.update_events.put(updater.parse_pull(r.returncode, r.stdout, r.stderr) + ((), 0))
+                    r = git(updater.BEHIND, 20)
+                    n = r.stdout.strip()
+                    if r.returncode != 0 or not n.isdigit():
+                        return self.update_events.put(("no_branch", "", (), 0))
+                    return self.update_events.put(("behind", n, (), 0))
+                r = git(updater.PULL, 180)
+                status, detail = updater.parse_pull(r.returncode, r.stdout, r.stderr)
+                news, more = [], 0
+                if status == "updated" and detail[0]:
+                    lg = git(updater.news_cmd(*detail), 20)
+                    if lg.returncode == 0:
+                        news, more = updater.subjects(lg.stdout)
+                self.update_events.put((status, detail, news, more))
+            except subprocess.TimeoutExpired:
+                self.update_events.put(("offline", "", (), 0))
+            except (OSError, subprocess.SubprocessError) as exc:
+                self.update_events.put(("error", str(exc)[:160], (), 0))
+        threading.Thread(target=work, daemon=True).start()
+
+    def drain_updates(self):
+        while True:
+            try:
+                status, detail, news, more = self.update_events.get_nowait()
+            except queue.Empty:
+                return
+            self.updating = False
+            lines = [report.scrub(ln) for ln in updater.report(status, detail if isinstance(detail, str) else "",
+                                                                news, more)]
+            good = status in ("updated", "current", "behind")
+            if status != "updated":
+                log(report.scrub("update: " + status + (" " + str(detail) if detail and status == "error" else "")))
+            self.say(lines[0], 8, speak=None)
+            if status == "updated":
+                self.react("happy")
+            if self.chat and self.chat.alive():
+                self.chat.system_line("\n".join(lines), err=not good)
 
     def install_ears(self):
         if listen.installed():
@@ -5695,9 +5821,11 @@ class Capri:
             self.save_settings()
             self.say("Heads up: I can see which app is in front (never what you type). Only a short hint like "
                      "'coding' goes to the AI when we chat. Right-click me > Awareness to turn it off.", 16)
-        title = self.win32.foreground_title()
-        cat = awareness.classify(title)                              # the title is not kept anywhere
-        self.game_tick(now, gamemode.detect_game(title), bool(title))
+        title, app = self.win32.foreground_title(), self.win32.foreground_app()
+        cat = awareness.classify(title, app)                         # title and program name are not kept anywhere
+        if cat in ("game", "cyberpunk"):
+            self.played_at = now
+        self.game_tick(now, gamemode.detect_game(title, app), bool(title))
         dt, self.last_watch = min(5.0, now - self.last_watch), now
         if self.settings.get("track_time", True) and idle < 60:      # only the category's minutes are saved
             self.daylog.add(time.strftime("%Y-%m-%d"), cat, dt)
@@ -5724,6 +5852,7 @@ class Capri:
         self.drain_reactor()
         self.drain_ai(now)
         self.drain_glances(now)
+        self.drain_updates()
         self.glance_tick(now)
         self.watch_size(now)
         self.watch_hear(now)
@@ -6030,6 +6159,8 @@ class Capri:
             tm.add_command(label=("* " if cur_tiny == key else "   ") + label, command=lambda k=key: self.set_tiny(k))
         m.add_cascade(label="Tiny mode (just her face)", menu=tm)
         m.add_command(label="Copy bug report", command=self.copy_report)
+        if updater.is_checkout(app_dir()) and not getattr(sys, "frozen", False):
+            m.add_command(label="Get the newest version", command=self.run_update)
         m.add_command(label=f"Calm mode: {'on' if self.calm else 'off'}", command=self.toggle_calm)
         m.add_command(label=f"Check-ins: {'on' if self.checkins else 'off'}", command=self.toggle_checkins)
         if self.win32.ok:
@@ -6178,16 +6309,19 @@ class Capri:
         dirs = pet_asset_dirs("intro")
         if not dirs:
             return False
+        zoom = intro.zoom(W)                      # 4K and up: build smaller frames, Tk enlarges them
+        w, h = W // zoom, H // zoom
+        W, H = w * zoom, h * zoom
         it = {"loading": True, "pil": None, "err": None, "asked": time.time(), "greet": greet, "W": W, "H": H,
               "x": int((wa[0] + wa[2]) / 2 - W / 2), "yup": int(wa[3] - H), "bottom": wa[3], "stem": None,
-              "happy": False, "win": None}
+              "happy": False, "win": None, "zoom": zoom, "frames": {}}
 
         def build():
             try:
                 out = {}
                 for st in intro.STEMS:
                     im = Image.open(os.path.join(dirs[0], st + ".webp")).convert("RGBA")
-                    out[st] = fast_crisp(im.resize((W, H), Image.LANCZOS))
+                    out[st] = fast_crisp(im.resize((w, h), Image.LANCZOS))
                 it["pil"] = out
             except Exception:
                 it["err"] = traceback.format_exc()
@@ -6197,9 +6331,19 @@ class Capri:
         self.go("idle", intro.DURATION + 15)
         return True
 
+    def intro_photo(self, im, zoom=1):
+        """One intro frame as a Tk image (enlarged by Tk when it was built small for a huge screen)."""
+        ph = ImageTk.PhotoImage(im, master=self.root)
+        if zoom <= 1:
+            return ph
+        big = tk.PhotoImage(master=self.root)
+        self.root.tk.call(big, "copy", str(ph), "-zoom", zoom, zoom)
+        return big
+
     def show_intro(self, it):
         """Frames are ready: make the window and start the clock."""
-        frames = {st: ImageTk.PhotoImage(im, master=self.root) for st, im in it.pop("pil").items()}
+        frames = it["frames"]
+        it["pil"] = None
         win = tk.Toplevel(self.root)
         win.overrideredirect(True)
         win.attributes("-topmost", True)
@@ -6221,10 +6365,17 @@ class Capri:
         if not it:
             return
         if it["loading"]:
-            if it["err"] or now - it["asked"] > 8:                # broken art or a very slow PC: skip to the greeting
+            if it["err"] or now - it["asked"] > 10:               # broken art or a very slow PC: skip to the greeting
                 log("intro skipped: " + (it["err"] or "frames took too long")[-300:])
                 return self.finish_intro(skipped=True)
-            if it["pil"] is not None:
+            pil = it["pil"]
+            if pil:                                               # one big frame per tick: the app never freezes
+                st = next(iter(pil))
+                try:
+                    it["frames"][st] = self.intro_photo(pil.pop(st), it["zoom"])
+                except (tk.TclError, MemoryError) as exc:
+                    it["err"] = f"frame {st}: {exc}"
+            elif pil is not None:
                 self.show_intro(it)
             return
         r = intro.at(now - it["t0"])

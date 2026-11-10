@@ -1,7 +1,7 @@
 # Capri — handoff for the next session
 
 Read this first, then `README.txt` (user-facing feature docs). State as of branch tip
-`claude/zen-ptolemy-6a26qh`, **392 unit tests passing** (1 skipped), nothing uncommitted.
+`claude/zen-ptolemy-6a26qh`, **409 unit tests passing** (1 skipped), nothing uncommitted.
 
 **Fresh container setup** (both were missing in the last session; without them 4 tests error and every smoke
 script dies on `import tkinter`):
@@ -67,7 +67,7 @@ combos) · `agent.py` (`/do` computer-use loop) · `voice.py` (Fish → Edge neu
 call routing) · `audioout.py` (play into virtual cable) · `listen.py` (mic, Whisper, endpointing, **intent()**,
 wake words, reminders parsing) · `hearing.py` (PC loopback, beats, ring buffer) · `call.py` (Discord-call
 conversation) · `localai.py` (llama.cpp + Qwen / Ollama / `CAPRI_LOCAL_URL`) · `launcher.py` · `presets.py` ·
-`sizing.py` · `clip.py` · `brief.py` · `boot.py` · `neon.py` · `ui.py` (cyberpunk widgets) · `personality.py`,
+`sizing.py` · `clip.py` · `cmdargs.py` (numbers after commands) · `updater.py` (/update) · `brief.py` · `boot.py` · `neon.py` · `ui.py` (cyberpunk widgets) · `personality.py`,
 `awareness.py`, `fun.py`, `habits.py`, `memory.py`, `journal.py`, `daylog.py`, `world.py`, `breach.py`,
 `simon.py`, `sfx.py`, `autostart.py`.
 `capri.py` = the app: `Capri` (pet, state machine, drawing, all feature glue), `ChatWindow`, `SettingsWindow`,
@@ -155,7 +155,7 @@ Real hardware reports from the user are the most valuable input — ask for exac
 
 ## 9. First moves for the new session
 
-1. `git pull`/checkout `claude/amazing-allen-ur4fi2`; run the unit tests (expect 333 OK).
+1. `git pull`/checkout `claude/amazing-allen-ur4fi2`; run the unit tests (expect 409 OK, 1 skipped) and `tools/smoke/run_all.sh`.
 2. Skim `README.txt` and this file; do not re-derive decisions listed above.
 3. Ask the user for real-Windows feedback on the §10 changes (exact `[ERR]` text + `capri.log`).
 
@@ -253,3 +253,39 @@ User decisions: **new skin is the default**, mini face = **chat avatar + tiny mo
   SOAK_SECS / SOAK_SEED), 46 (/see every 1 with a 3 s vision AI: one look at a time, chat still answers).
 - Later fixes: the behind-her edge rule applies only to the pet window (not chat/Settings, `self_mask`);
   cut-ins are never set in tiny mode. `Win32.foreground()` already skips her own process (checked).
+
+## 15. "keep doing stuff" batch 2 (user away from the PC; NOT run on Windows)
+
+- **Command fuzz** (`tools/smoke/smoke47.py`): every slash command x ~100 missing/weird/huge arguments (10k
+  inputs), then a restart on whatever got saved. `ChatWindow.command()` is NOT wrapped in try/except, so a raise
+  = "typed it, nothing happened". Found `/focus 1.2.3` (ValueError) and the `'²'.isdigit()` trap. All numbers
+  typed after commands now go through `cmdargs.minutes()` / `cmdargs.index()`. New commands are picked up
+  automatically (the list is read from the source); **stub any new command with real-world side effects in
+  smoke 47** (`/update` is stubbed: it would `git pull` this repo).
+- **Intro on 4K+**: `intro.zoom(W)` (2 from 2881 px wide): frames are built at 1/zoom and enlarged by Tk
+  (`Capri.intro_photo`), and become Tk images one per tick while loading. 4K: ready in 2.6 s (was ~4 s),
+  longest freeze 0.3 s (was 1.4 s), peak RSS 425 MB (was 720 MB).
+- **`/update`** (+ `/update check`, right-click > Get the newest version): `updater.py` parses
+  `git pull --ff-only --no-rebase` and builds chat lines with a what's-new list from the pulled commit titles
+  (so keep commit titles readable). User-started only, prompts disabled (`GIT_TERMINAL_PROMPT=0`), never
+  overwrites local edits, never switches branch. Not offered in a frozen exe or a non-git copy. Tests and
+  smoke 48 run it against a real local git origin (monkeypatch `capri.app_dir`).
+- `/report` scrubbing also removes GitHub tokens and `user:password@` inside URLs.
+- **Awareness by program name** (the user's "she always gets what I'm looking at wrong", for the no-AI path):
+  `Win32.foreground_app()` (OpenProcess 0x1000 + QueryFullProcessImageNameW on its own `WinDLL("kernel32")`,
+  cached per pid, '' on any failure, e.g. anti-cheat protected games) -> `awareness.classify(title, app)`:
+  1. program (`APPS`, `GAME_APPS`, any `*-win64-shipping` = Unreal game, `BROWSER_APPS` = web),
+  2. the app/site named at the END of the title (`TAILS`, then keywords on the last segment),
+  3. keywords anywhere, as whole words ("vim" is not in "Vimeo").
+  "" in APPS/TAILS = launcher/system window: no activity (the Steam client is no longer "playing").
+  `gamemode.detect_game(title, app)` maps exe -> supported game (`APP_GAMES`); unknown games set ctx "game" but
+  do NOT start game mode (on purpose: it would make her calm in every game without being asked).
+  Privacy wording (README, Settings, awareness.py docstring) now says "title and program name"; neither is kept
+  (smoke 49 checks settings + log).
+- Tiny mode "auto" and auto-size use `Capri.in_game()`: a game session OR any recognised game in front within
+  the last 90 s (`played_at`), so unknown games shrink her too and alt-tabbing doesn't flap.
+- Settings: the text beside "LET HER SEE MY SCREEN" was clipped on both sides; it's now a wrapped line below.
+  (Found by looking at a real screenshot: `ImageGrab.grab(bbox=...)` of the windows under Xvfb is worth doing
+  after any UI change.)
+- Not a bug: under Xvfb her body looks shredded on the dark fallback window because the art is black-bodied;
+  on Windows the window is transparent.

@@ -16,6 +16,13 @@ class ReportTests(unittest.TestCase):
             self.assertNotIn(secret, out)
         self.assertIn("~\\.capri\\capri.log", out)
 
+    def test_scrubs_git_logins(self):
+        out = R.scrub("fatal: unable to access 'https://sam:hunter2pw@github.com/a/b/': 403 ghp_"
+                      + "a1B2" * 9 + " github_pat_" + "x9_" * 10, home="/home/zz")
+        for secret in ("hunter2pw", "sam:", "ghp_a1B2", "github_pat_x9"):
+            self.assertNotIn(secret, out)
+        self.assertIn("github.com/a/b", out)
+
     def test_only_safe_settings(self):
         s = {"skin": "capri", "ai_vision": True, "vision_interval": 10, "notes": [{"text": "wifi pass"}],
              "memory": ["my dog"], "user_name": "Sam", "consented": {"agent": True}, "brain": "x" * 100}

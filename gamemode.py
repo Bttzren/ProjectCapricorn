@@ -74,11 +74,22 @@ VERDICT = {
 }
 
 
-def detect_game(title):
-    """Which supported game is this window title? None if none (also for browser tabs and video/social sites:
-    'Valorant clips - Twitch' is watching, not playing)."""
+# the game's program name (no .exe) -> key, for when the window title doesn't say it
+APP_GAMES = {"valorant-win64-shipping": "valorant", "valorant": "valorant", "cs2": "cs2", "r5apex": "apex",
+             "r5apex_dx12": "apex", "overwatch": "overwatch", "fortniteclient-win64-shipping": "fortnite",
+             "league of legends": "league", "rocketleague": "rocket", "cyberpunk2077": "cyberpunk"}
+
+
+def detect_game(title, app=""):
+    """Which supported game is in front? None if none (also for browser tabs and video/social sites:
+    'Valorant clips - Twitch' is watching, not playing, and '#valorant - Discord' is chatting)."""
     import awareness
-    if awareness.is_web(title):
+    a = awareness.app_key(app)
+    if awareness.is_web(title, a):
+        return None
+    if a in APP_GAMES:
+        return APP_GAMES[a]
+    if awareness.classify(title, a) not in ("game", "cyberpunk"):
         return None
     t = (title or "").lower()
     for key, (_name, words) in GAMES.items():
@@ -94,7 +105,7 @@ def parse_match(text):
         for sep, name in (("-", "rounds"), ("/", "kd"), (":", "rounds")):
             if sep in tok:
                 a, _, b = tok.partition(sep)
-                if a.isdigit() and b.isdigit() and int(a) < 1000 and int(b) < 1000:
+                if (a + b).isascii() and a.isdigit() and b.isdigit() and len(a) < 4 and len(b) < 4:
                     out[name] = (int(a), int(b))
                 break
     return out or None

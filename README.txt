@@ -27,9 +27,12 @@ AWARENESS (Windows only)
   chatting, writing, games (extra excited about Cyberpunk 2077), social media (she'll nudge you if
   you scroll for 25 minutes), or chatting with another AI. She also notices when you've been away
   for 10+ minutes (she naps) and greets you when you're back.
-  PRIVACY: she only reads the TITLE of the front window and turns it into a one-word category.
-  The title is never stored, logged or sent anywhere. She never sees what you type or what's on
-  your screen. When you chat, only a short hint such as "coding" is added to the AI's instructions.
+  She goes by the program first, so a Discord channel called #valorant is chatting, a YouTube video
+  about Minecraft is watching, the Steam store is not "playing", and any game she knows (or any Unreal
+  Engine game) counts as a game even when its window title says nothing.
+  PRIVACY: she only reads the TITLE of the front window and the NAME OF ITS PROGRAM (like "discord")
+  and turns them into a one-word category. Neither is stored, logged or sent anywhere. She never sees
+  what you type or what's on your screen. When you chat, only a short hint such as "coding" is added to the AI's instructions.
   Turn it off any time: right-click > Awareness, or /aware off.
 
 SETTINGS & HANDS
@@ -86,6 +89,12 @@ SOMETHING BROKE? /report  (or right-click her > Copy bug report)
   Copies a bug report to your clipboard (and saves capri-report.txt next to capri.log): versions, which
   features are on, and the recent errors. It never contains your keys, notes, memory, chats or window titles.
   Paste it to whoever is fixing her. If something breaks inside her she tells you (at most every 10 minutes).
+
+GET THE NEWEST VERSION: /update  (or right-click her > Get the newest version)
+  If you got Capri with git, this downloads the newest version and lists what's new. Then close her and
+  start her again. /update check only looks. It never overwrites files you changed yourself and never
+  touches your settings, notes or keys (those live in your user folder, in .capri). She never updates on
+  her own: only when you ask. (No git? Download the newest copy and replace the folder.)
 
 LOCAL AI THAT CAN SEE (/getbrain see  - free, private, no key)
   /getbrain see       Qwen 2.5 VL 3B: looks at your screen and reads text on it well. About 3 GB, wants ~6 GB

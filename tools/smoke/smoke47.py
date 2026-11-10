@@ -20,7 +20,7 @@ for name, ret in (("open_thing", None), ("do_control", None), ("start_agent", (F
                   ("install_hear", None), ("install_ears", None), ("install_brain", None), ("remove_brain", None),
                   ("install_voice", None), ("enable_wake", False), ("run_brief", None), ("run_clip", None),
                   ("start_spotter", False), ("look", None), ("enable_agent", False), ("enable_vision", False),
-                  ("enable_ledges", False)):
+                  ("enable_ledges", False), ("run_update", None)):
     stub(name, ret)
 p.hands.do = lambda action, arg=None: (did.append("hands.do"), (True, "ok (fuzz)"))[1]
 p.speak = lambda *a, **k: None                       # no TTS threads

@@ -14,12 +14,15 @@ SAFE_SETTINGS = ("skin", "tiny", "intro", "boot_anim", "size", "auto_size", "han
                  "roast", "track_time", "sfx", "radio", "talk_hotkey", "ai_lines")
 
 SECRET_PATTERNS = [
+    r"(?<=://)[^/\s:@]+(?::[^/\s@]*)?@",    # user:password@ inside a URL (before the e-mail rule)
     r"sk-ant-[A-Za-z0-9_\-]{8,}",          # Anthropic
     r"sk-[A-Za-z0-9_\-]{20,}",             # other sk- keys
     r"AIza[0-9A-Za-z_\-]{20,}",            # Google / Gemini
     r"\b[0-9a-f]{32,}\b",                  # long hex tokens (Fish Audio etc.)
     r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}",   # emails
     r"(?i)(x-api-key|authorization|api[_-]?key)\s*[:=]\s*\S+",
+    r"gh[pousr]_[A-Za-z0-9]{20,}",         # GitHub tokens
+    r"github_pat_[A-Za-z0-9_]{20,}",
 ]
 ERROR_WORDS = ("error", "failed", "traceback", "exception", "can't", "couldn't")
 MAX_LOG_LINES = 80

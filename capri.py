@@ -60,6 +60,7 @@ import simon
 import sizing
 import speech
 import ui
+import updater
 import vision
 import voice
 import world
@@ -1615,7 +1616,7 @@ class ChatWindow:
                              "/settings  /fly  /party  /aware  /voice  /fishkey  /pause  /mute  /volup  /shot  /lock  /press <keys>  "
                              "/type <text>  /click  /hands  /tag  /todo  /done  /roll  /coin  /8ball  /tp  /dance  "
                              "/sleep  /calm  /watch  /look  /ailines  /kill  /death  /rw  /rl  /gg  /kd  /roast  /match  /game  /hack  /simon  /sit  /ledges  /feed  /radio  /sfx  /birthday  /habit  /did  /note  /notes  /remember  /facts  /feel  "
-                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /report  /see  /size  /skin  /tiny  /intro  /express  /neon  /boot  /hear  /call  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /clear")
+                             "/journal  /day  /horoscope  /lore  /do  /stop  /agent  /preset  /powers  /report  /see  /size  /skin  /tiny  /intro  /express  /neon  /boot  /hear  /call  /open  /search  /brief  /desktop  /clip  /talk  /wake  /getears  /getbrain  /brain  /update  /clear")
         elif cmd == "/clear":
             self.clear()
         elif cmd == "/focus":
@@ -2115,6 +2116,8 @@ class ChatWindow:
                                  + "   /wake on | off   (say 'Hey Capri ...' or 'Choom ...')")
         elif cmd == "/getears":
             p.install_ears()
+        elif cmd == "/update":
+            p.run_update(check=len(parts) > 1 and parts[1].lower() in ("check", "?", "status"))
         elif cmd == "/getbrain":
             arg = parts[1].lower() if len(parts) > 1 else "small"
             if arg == "remove":
@@ -3067,6 +3070,7 @@ class Capri:
         self.agent = None
         self.agent_events = queue.Queue()
         self.brain_events, self.ears_events = queue.Queue(), queue.Queue()
+        self.update_events, self.updating = queue.Queue(), False
         self.heard_events, self.talk_requests = queue.Queue(), queue.Queue()
         self.brain_busy = self.ears_busy = self.listening = self.listen_stop = self.hotkey_on = False
         self.whisper = None
@@ -4376,6 +4380,72 @@ class Capri:
             except queue.Empty:
                 break
             self.start_listening()
+
+    def run_update(self, check=False):
+        """/update: fast-forward this copy with git, in a thread. Only ever started by the user. It never
+        overwrites files changed on this PC and never asks for a password. /update check only looks."""
+        import shutil
+        if getattr(sys, "frozen", False):
+            return self.notify(updater.MESSAGES["frozen"], err=True, secs=9)
+        if not updater.is_checkout(app_dir()):
+            return self.notify(updater.MESSAGES["not_git"], err=True, secs=10)
+        if not shutil.which("git"):
+            return self.notify(updater.MESSAGES["no_git"], err=True, secs=10)
+        if self.updating:
+            return self.notify("Already checking. Hang on.", err=True)
+        self.updating = True
+        self.notify("Checking for a newer version..." if check else "Getting the newest version...", secs=4)
+
+        def git(cmd, timeout):
+            import subprocess
+            return subprocess.run(cmd, cwd=app_dir(), env=updater.git_env(os.environ), capture_output=True, text=True,
+                                  timeout=timeout, stdin=subprocess.DEVNULL, encoding="utf-8", errors="replace",
+                                  creationflags=0x08000000 if sys.platform.startswith("win") else 0)
+
+        def work():
+            import subprocess
+            try:
+                if check:
+                    r = git(updater.FETCH, 90)
+                    if r.returncode != 0:
+                        return self.update_events.put(updater.parse_pull(r.returncode, r.stdout, r.stderr) + ((), 0))
+                    r = git(updater.BEHIND, 20)
+                    n = r.stdout.strip()
+                    if r.returncode != 0 or not n.isdigit():
+                        return self.update_events.put(("no_branch", "", (), 0))
+                    return self.update_events.put(("behind", n, (), 0))
+                r = git(updater.PULL, 180)
+                status, detail = updater.parse_pull(r.returncode, r.stdout, r.stderr)
+                news, more = [], 0
+                if status == "updated" and detail[0]:
+                    lg = git(updater.news_cmd(*detail), 20)
+                    if lg.returncode == 0:
+                        news, more = updater.subjects(lg.stdout)
+                self.update_events.put((status, detail, news, more))
+            except subprocess.TimeoutExpired:
+                self.update_events.put(("offline", "", (), 0))
+            except (OSError, subprocess.SubprocessError) as exc:
+                self.update_events.put(("error", str(exc)[:160], (), 0))
+        threading.Thread(target=work, daemon=True).start()
+
+    def drain_updates(self):
+        while True:
+            try:
+                status, detail, news, more = self.update_events.get_nowait()
+            except queue.Empty:
+                return
+            self.updating = False
+            lines = [report.scrub(ln) for ln in updater.report(status, detail if isinstance(detail, str) else "",
+                                                                news, more)]
+            good = status in ("updated", "current", "behind")
+            if status != "updated":
+                log(report.scrub("update: " + status + (" " + str(detail) if detail and status == "error" else "")))
+            self.say(lines[0], 8, speak=None)
+            if status == "updated":
+                self.react("happy")
+            if self.chat and self.chat.alive():
+                for ln in lines:
+                    self.chat.system_line(ln, err=not good)
 
     def install_ears(self):
         if listen.installed():
@@ -5733,6 +5803,7 @@ class Capri:
         self.drain_reactor()
         self.drain_ai(now)
         self.drain_glances(now)
+        self.drain_updates()
         self.glance_tick(now)
         self.watch_size(now)
         self.watch_hear(now)
@@ -6039,6 +6110,8 @@ class Capri:
             tm.add_command(label=("* " if cur_tiny == key else "   ") + label, command=lambda k=key: self.set_tiny(k))
         m.add_cascade(label="Tiny mode (just her face)", menu=tm)
         m.add_command(label="Copy bug report", command=self.copy_report)
+        if updater.is_checkout(app_dir()) and not getattr(sys, "frozen", False):
+            m.add_command(label="Get the newest version", command=self.run_update)
         m.add_command(label=f"Calm mode: {'on' if self.calm else 'off'}", command=self.toggle_calm)
         m.add_command(label=f"Check-ins: {'on' if self.checkins else 'off'}", command=self.toggle_checkins)
         if self.win32.ok:

@@ -87,6 +87,12 @@ SOMETHING BROKE? /report  (or right-click her > Copy bug report)
   features are on, and the recent errors. It never contains your keys, notes, memory, chats or window titles.
   Paste it to whoever is fixing her. If something breaks inside her she tells you (at most every 10 minutes).
 
+GET THE NEWEST VERSION: /update  (or right-click her > Get the newest version)
+  If you got Capri with git, this downloads the newest version and lists what's new. Then close her and
+  start her again. /update check only looks. It never overwrites files you changed yourself and never
+  touches your settings, notes or keys (those live in your user folder, in .capri). She never updates on
+  her own: only when you ask. (No git? Download the newest copy and replace the folder.)
+
 LOCAL AI THAT CAN SEE (/getbrain see  - free, private, no key)
   /getbrain see       Qwen 2.5 VL 3B: looks at your screen and reads text on it well. About 3 GB, wants ~6 GB
                       free RAM. It also chats, so it replaces the text-only local brain (one program runs).
